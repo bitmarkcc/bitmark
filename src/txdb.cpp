@@ -164,11 +164,44 @@ bool CBlockTreeDB::ReadTxIndex(const uint256 &txid, CDiskTxPos &pos) {
     return Read(make_pair('t', txid), pos);
 }
 
+bool CBlockTreeDB::ReadCodeIndex(const CGOutpoint &outpoint, CDiskTxPos &pos) {
+    return Read(make_pair("ch", outpoint), pos);
+}
+
+bool CBlockTreeDB::ReadCodeNextIndex(const CGOutpoint &opoint, CGOutpoint &opointN) {
+    return Read(make_pair("cn", opoint), opointN);
+}
+
+bool CBlockTreeDB::ReadCodePrevIndex(const CGOutpoint &opoint, CGOutpoint &opoitP) {
+    return Read(make_pair("cp", opoint), opointP);
+}
+
 bool CBlockTreeDB::WriteTxIndex(const std::vector<std::pair<uint256, CDiskTxPos> >&vect) {
     CLevelDBBatch batch;
     for (std::vector<std::pair<uint256,CDiskTxPos> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
         batch.Write(make_pair('t', it->first), it->second);
     return WriteBatch(batch);
+}
+
+bool CBlockTreeDB::WriteCodeIndex(const std::vector<std::pair<CGOutpoint, CDiskTxPos> >&vect) {
+    CLevelDBBatch batch;
+    for (std::vector<std::pair<CGOutpoint,CDiskTxPos> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
+      batch.Write(make_pair("ch", it->first), it->second);
+    return WriteBatch(batch);
+}
+
+bool CBlockTreeDB::WriteCodeNextIndex(const std::vector<std::pair<CGOutpoint, CGOutpoint> >&vect) {
+    CLevelDBBatch batch;
+    for (std::vector<std::pair<CGOutpoint,CGOutpoint> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
+      batch.Write(make_pair("cn", it->first), it->second);
+    return WriteBatch(batch);
+}
+
+bool CBlockTreeDB::WriteCodePrevIndex(const std::vector<std::pair<CGOutpoint, CGOutpoint> >&vect) {
+  CLevelDBBatch batch;
+  for (std::vector<std::pair<CGOutpoint,CGOutpoint> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
+    batch.Write(make_pair("cp", it->first), it->second);
+  return WriteBatch(batch);
 }
 
 bool CBlockTreeDB::WriteFlag(const std::string &name, bool fValue) {
