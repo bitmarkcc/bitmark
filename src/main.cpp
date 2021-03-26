@@ -3313,13 +3313,13 @@ bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state, CBloc
         }
 
         // Enforce block.nVersion=2 rule that the coinbase starts with serialized block height
-        if (block.nVersion >= 2)
-        {
-            CScript expect = CScript() << nHeight;
-            if (block.vtx[0].vin[0].scriptSig.size() < expect.size() ||
-                !std::equal(expect.begin(), expect.end(), block.vtx[0].vin[0].scriptSig.begin()))
-              return state.DoS(100, error("AcceptBlock() : block height mismatch in coinbase, nHeight=%d",nHeight), REJECT_INVALID, "bad-cb-height");
-        }
+        // if (block.nVersion >= 2)
+        // {
+        //     CScript expect = CScript() << nHeight;
+        //     if (block.vtx[0].vin[0].scriptSig.size() < expect.size() ||
+        //         !std::equal(expect.begin(), expect.end(), block.vtx[0].vin[0].scriptSig.begin()))
+        //       return state.DoS(100, error("AcceptBlock() : block height mismatch in coinbase, nHeight=%d",nHeight), REJECT_INVALID, "bad-cb-height");
+        // }
 
         // Reject block.nVersion=2 blocks when 95% of the network has upgraded:
 
