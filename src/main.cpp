@@ -4798,6 +4798,8 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         CBlockIndex *pindexLast = NULL;
         BOOST_FOREACH(const CBlockHeader& header, headers) {
             CValidationState state;
+            LogPrintf(header.hashPrevBlock);
+            LogPrintf(pindexLast->GetBlockHash());
             if (pindexLast != NULL && header.hashPrevBlock != pindexLast->GetBlockHash()) {
                 // Misbehaving(pfrom->GetId(), 20);
                 return error("non-continuous headers sequence");
