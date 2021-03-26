@@ -3336,7 +3336,7 @@ bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state, CBloc
             }
         }
 
-    qqqq}
+    }
 
     if (pindex == NULL)
         pindex = AddToBlockIndex(block);
