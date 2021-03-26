@@ -4837,7 +4837,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         CBlockIndex *pindexLast = NULL;
         BOOST_FOREACH(const CBlockHeader& header, headers) {
             CValidationState state;
-            LogPrintf("Prev hash = %s", header.hashPrevBlock.ToString());
+            LogPrintf("Prev hash = %s\n", header.hashPrevBlock.ToString());
             // LogPrintf("Current block header hash = %s", pindexLast->GetBlockHash().ToString());
             if (pindexLast != NULL && header.hashPrevBlock != pindexLast->GetBlockHash()) {
                 // Misbehaving(pfrom->GetId(), 20);
