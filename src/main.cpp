@@ -3300,17 +3300,16 @@ bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state, CBloc
             return state.DoS(100, error("%s : forked chain older than last checkpoint (height %d)", __func__, nHeight));
 
         // Reject block.nVersion=1 blocks when 95% (75% on testnet) of the network has upgraded:
-        // if (block.nVersion < 2 && 
-        //     CBlockIndex::IsSuperMajority(2, pindexPrev, Params().RejectBlockOutdatedMajority(), Params().ToCheckBlockUpgradeMajority()))
-        // {
-        //     return state.Invalid(error("%s : rejected nVersion=1 block", __func__),
-        //                          REJECT_OBSOLETE, "bad-version");
-        // }
-        // Reject block.nVersion=1 blocks
-        if (block.nVersion < 2)
+        if (block.nVersion < 2 && 
+            CBlockIndex::IsSuperMajority(2, pindexPrev, Params().RejectBlockOutdatedMajority(), Params().ToCheckBlockUpgradeMajority()))
         {
-            return state.Invalid(error("AcceptBlock() : rejected nVersion=1 block"), REJECT_OBSOLETE, "bad-version");
+            return state.Invalid(error("%s : rejected nVersion=1 block", __func__), REJECT_OBSOLETE, "bad-version");
         }
+        // Reject block.nVersion=1 blocks
+        // if (block.nVersion < 2)
+        // {
+        //     return state.Invalid(error("AcceptBlock() : rejected nVersion=1 block"), REJECT_OBSOLETE, "bad-version");
+        // }
 
         // Enforce block.nVersion=2 rule that the coinbase starts with serialized block height
         // if (block.nVersion >= 2)
@@ -4837,8 +4836,6 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         CBlockIndex *pindexLast = NULL;
         BOOST_FOREACH(const CBlockHeader& header, headers) {
             CValidationState state;
-            LogPrintf("Prev hash = %s\n", header.hashPrevBlock.ToString());
-            // LogPrintf("Current block header hash = %s", pindexLast->GetBlockHash().ToString());
             if (pindexLast != NULL && header.hashPrevBlock != pindexLast->GetBlockHash()) {
                 // Misbehaving(pfrom->GetId(), 20);
                 return error("non-continuous headers sequence");
