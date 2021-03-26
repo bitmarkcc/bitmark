@@ -3300,13 +3300,43 @@ bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state, CBloc
             return state.DoS(100, error("%s : forked chain older than last checkpoint (height %d)", __func__, nHeight));
 
         // Reject block.nVersion=1 blocks when 95% (75% on testnet) of the network has upgraded:
-        if (block.nVersion < 2 && 
-            CBlockIndex::IsSuperMajority(2, pindexPrev, Params().RejectBlockOutdatedMajority(), Params().ToCheckBlockUpgradeMajority()))
+        // if (block.nVersion < 2 && 
+        //     CBlockIndex::IsSuperMajority(2, pindexPrev, Params().RejectBlockOutdatedMajority(), Params().ToCheckBlockUpgradeMajority()))
+        // {
+        //     return state.Invalid(error("%s : rejected nVersion=1 block", __func__),
+        //                          REJECT_OBSOLETE, "bad-version");
+        // }
+        // Reject block.nVersion=1 blocks
+        if (block.nVersion < 2)
         {
-            return state.Invalid(error("%s : rejected nVersion=1 block", __func__),
-                                 REJECT_OBSOLETE, "bad-version");
+            return state.Invalid(error("AcceptBlock() : rejected nVersion=1 block"), REJECT_OBSOLETE, "bad-version");
         }
-    }
+
+        // Enforce block.nVersion=2 rule that the coinbase starts with serialized block height
+        if (block.nVersion >= 2)
+        {
+            CScript expect = CScript() << nHeight;
+            if (block.vtx[0].vin[0].scriptSig.size() < expect.size() ||
+                !std::equal(expect.begin(), expect.end(), block.vtx[0].vin[0].scriptSig.begin()))
+              return state.DoS(100, error("AcceptBlock() : block height mismatch in coinbase, nHeight=%d",nHeight), REJECT_INVALID, "bad-cb-height");
+        }
+
+        // Reject block.nVersion=2 blocks when 95% of the network has upgraded:
+
+        if (block.nVersion < 3 &&
+        CBlockIndex::IsSuperMajority(3, pindexPrev, 950, 1000))
+        {
+            return state.Invalid(error("AcceptBlock() : rejected nVersion=2 block"),
+            REJECT_OBSOLETE, "bad-version");
+        }
+
+        if (block.IsAuxpow() || block.GetAlgo() != ALGO_SCRYPT) {
+            if (pindexPrev->nHeight < nForkHeight-1 || !CBlockIndex::IsSuperMajority(4,pindexPrev,75,100)) {
+            return state.DoS(100,error("AcceptBlock() : new block format requires fork activation"),REJECT_INVALID,"bad-version-fork");
+            }
+        }
+
+    qqqq}
 
     if (pindex == NULL)
         pindex = AddToBlockIndex(block);
@@ -3348,15 +3378,24 @@ bool AcceptBlock(CBlock& block, CValidationState& state, CBlockIndex** ppindex, 
                              REJECT_INVALID, "bad-txns-nonfinal");
 
     // Enforce block.nVersion=2 rule that the coinbase starts with serialized block height
-    if (block.nVersion >= 2 &&
-        CBlockIndex::IsSuperMajority(2, pindex->pprev, Params().EnforceBlockUpgradeMajority(), Params().ToCheckBlockUpgradeMajority()))
+    // if (block.nVersion >= 2 &&
+    //     CBlockIndex::IsSuperMajority(2, pindex->pprev, Params().EnforceBlockUpgradeMajority(), Params().ToCheckBlockUpgradeMajority()))
+    // {
+    //     CScript expect = CScript() << nHeight;
+    //     if (block.vtx[0].vin[0].scriptSig.size() < expect.size() ||
+    //         !std::equal(expect.begin(), expect.end(), block.vtx[0].vin[0].scriptSig.begin())) {
+    //         pindex->nStatus |= BLOCK_FAILED_VALID;
+    //         return state.DoS(100, error("AcceptBlock() : block height mismatch in coinbase, nHeight=%d",nHeight), REJECT_INVALID, "bad-cb-height");
+    //     }
+    // }
+
+    if (block.nVersion >= 2)
     {
         CScript expect = CScript() << nHeight;
         if (block.vtx[0].vin[0].scriptSig.size() < expect.size() ||
-            !std::equal(expect.begin(), expect.end(), block.vtx[0].vin[0].scriptSig.begin())) {
-            pindex->nStatus |= BLOCK_FAILED_VALID;
-            return state.DoS(100, error("AcceptBlock() : block height mismatch in coinbase, nHeight=%d",nHeight), REJECT_INVALID, "bad-cb-height");
-        }
+            !std::equal(expect.begin(), expect.end(), block.vtx[0].vin[0].scriptSig.begin()))
+          return state.DoS(100, error("AcceptBlock() : block height mismatch in coinbase, nHeight=%d",nHeight),
+                             REJECT_INVALID, "bad-cb-height");
     }
 
     // Reject block.nVersion=2 blocks when 95% of the network has upgraded:
