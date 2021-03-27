@@ -866,10 +866,10 @@ public:
     {
         phashBlock = NULL;
         pprev = NULL;
-	pauxpow.reset();
+        pauxpow.reset();
         nHeight = 0;
         nMoneySupply = 0;
-	subsidyScalingFactor = 0;
+        subsidyScalingFactor = 0;
         nFile = 0;
         nDataPos = 0;
         nUndoPos = 0;
@@ -887,22 +887,22 @@ public:
     }
 
     CBlockIndex()
-      {
-	SetNull();
-      }
+    {
+        SetNull();
+    }
 
     CBlockIndex(const CBlockHeader& block)
     {
-      SetNull();
+        SetNull();
 
-      nVersion       = block.nVersion;
-      hashMerkleRoot = block.hashMerkleRoot;
-      nTime          = block.nTime;
-      nBits          = block.nBits;
-      nNonce         = block.nNonce;
-      hashReserved = block.hashReserved;
-      nNonce256 = block.nNonce256;
-      nSolution = block.nSolution;
+        nVersion       = block.nVersion;
+        hashMerkleRoot = block.hashMerkleRoot;
+        nTime          = block.nTime;
+        nBits          = block.nBits;
+        nNonce         = block.nNonce;
+        hashReserved = block.hashReserved;
+        nNonce256 = block.nNonce256;
+        nSolution = block.nSolution;
       
     }
 
@@ -932,25 +932,24 @@ public:
     CBlockHeader GetBlockHeader() const
     {
         CBlockHeader block;
-	if (IsAuxpow() && onFork())
-	  {
-	    const CDiskBlockPos pos = GetBlockPos();
-	    CAutoFile filein(OpenBlockFile(pos, true), SER_DISK, CLIENT_VERSION);
-	    if (filein==NULL)
-	      LogPrintf("ReadBlockFromDisk: OpenBlockFile failed for %s", "");
-	    try {
-	      filein >> block;
-	    }
-	    catch (const std::exception& e) {
-	      LogPrintf("%s: Deserialize or I/O error - %s at %s", __func__, e.what(), "");
-	    }
-	    if (!CheckAuxPowProofOfWork(block, Params()))
-	      LogPrintf("ReadBlockFromDisk: Errors in block header at %s", "");
-	    if (block.GetHash() != GetBlockHash())
-	      LogPrintf("ReadBlockFromDisk(CBlock&, CBlockIndex*): GetHash() doesn't match index for %s at %s",
-			   ToString(), "");
-	    return block;
-	  }
+        if (IsAuxpow() && onFork())
+        {
+            const CDiskBlockPos pos = GetBlockPos();
+            CAutoFile filein(OpenBlockFile(pos, true), SER_DISK, CLIENT_VERSION);
+            if (filein==NULL)
+            LogPrintf("ReadBlockFromDisk: OpenBlockFile failed for %s", "");
+            try {
+                filein >> block;
+            }
+            catch (const std::exception& e) {
+                LogPrintf("%s: Deserialize or I/O error - %s at %s", __func__, e.what(), "");
+            }
+            if (!CheckAuxPowProofOfWork(block, Params()))
+                LogPrintf("ReadBlockFromDisk: Errors in block header at %s", "");
+            if (block.GetHash() != GetBlockHash())
+                LogPrintf("ReadBlockFromDisk(CBlock&, CBlockIndex*): GetHash() doesn't match index for %s at %s", ToString(), "");
+            return block;
+        }
         block.nVersion       = nVersion;
         if (pprev)
             block.hashPrevBlock = pprev->GetBlockHash();

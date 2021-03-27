@@ -1780,14 +1780,14 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, int algo) {
 
 unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, int algo)
 {
-  if (RegTest()) return Params().ProofOfWorkLimit().GetCompact();
+    if (RegTest()) return Params().ProofOfWorkLimit().GetCompact();
     int nHeight = pindexLast->nHeight;
     int workAlgo = pindexLast->nHeight;
 
     if (nHeight < nForkHeight-1 || !CBlockIndex::IsSuperMajority(4,pindexLast,75,100) || RegTest()) {
-      workAlgo = 0;
+        workAlgo = 0;
     } else {
-      workAlgo = 1;
+        workAlgo = 1;
     }
 
     // workAlgo functions here as post_fork boolean; 0: pre-fork, 1: post-fork
@@ -1796,8 +1796,8 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, int algo)
 
         // Genesis block
         if (pindexLast == NULL) {
-	  return nProofOfWorkLimit;
-	}
+            return nProofOfWorkLimit;
+        }
 
         // Only change once per interval
         if ((pindexLast->nHeight+1) % nInterval != 0)
@@ -1818,10 +1818,10 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, int algo)
                     return pindex->nBits;
                 }
 		}*/
-	  if (pindexLast->nHeight == 0 && (RegTest() || TestNet())) {
-	    return nProofOfWorkLimit;
-	  }
-	  return pindexLast->nBits;
+            if (pindexLast->nHeight == 0 && (RegTest() || TestNet())) {
+                return nProofOfWorkLimit;
+            }
+            return pindexLast->nBits;
         }
 
         // Go back by what we want to be a days worth of blocks
@@ -1853,7 +1853,7 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, int algo)
         LogPrintf("Before: %08x  %s\n", pindexLast->nBits, CBigNum().SetCompact(pindexLast->nBits).getuint256().ToString());
         LogPrintf("After:  %08x  %s\n", bnNew.GetCompact(), bnNew.getuint256().ToString());
 
-         return bnNew.GetCompact();
+        return bnNew.GetCompact();
     } else {
       // Post 8mPoW fork
       return DarkGravityWave(pindexLast,algo);
@@ -4698,6 +4698,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         // we must use CBlocks, as CBlockHeaders won't include the 0x00 nTx count at the end
         vector<CBlock> vHeaders;
         int nLimit = MAX_HEADERS_RESULTS;
+        LogPrintf("ProcessMessage() => Getheaders: getheaders %d to %s from peer=%d\n", (pindex ? pindex->nHeight : -1), hashStop.ToString(), pfrom->id);
         LogPrint("net", "getheaders %d to %s from peer=%d\n", (pindex ? pindex->nHeight : -1), hashStop.ToString(), pfrom->id);
         for (; pindex; pindex = chainActive.Next(pindex))
         {
@@ -4857,6 +4858,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
             // Headers message had its maximum size; the peer may have more headers.
             // TODO: optimize: if pindexLast is an ancestor of chainActive.Tip or pindexBestHeader, continue
             // from there instead.
+            LogPrintf("ProcessMessage() => Headers: more getheaders (%d) to end to peer=%d (startheight:%d)\n", pindexLast->nHeight, pfrom->id, pfrom->nStartingHeight);
             LogPrint("net", "more getheaders (%d) to end to peer=%d (startheight:%d)\n", pindexLast->nHeight, pfrom->id, pfrom->nStartingHeight);
             pfrom->PushMessage("getheaders", chainActive.GetLocator(pindexLast), uint256(0));
         }
