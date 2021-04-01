@@ -205,6 +205,7 @@ enum
     SCRIPT_VERIFY_DERSIG = (1U << 6), // Require DER format for signatures
     SCRIPT_VERIFY_LOW_S = (1U << 7), // further requirement on DER signatures
     SCRIPT_VERIFY_COMMENT = (1U << 8),
+    SCRIPT_VERIFY_PUSHCODE = (1U << 9),
 };
 
 enum isminetype
@@ -370,11 +371,12 @@ enum opcodetype
 
     // expansion
     OP_NOP1 = 0xb0,
-    OP_NOP2 = 0xb1,
+    OP_NOP2 = 0xb1, //CHECKLOCKTIME
     OP_NOP3 = 0xb2,
     OP_COMMENT = 0xb3,
     OP_NOP4 = OP_COMMENT,
     OP_NOP5 = 0xb4,
+    OP_PUSHCODE = OP_NOP4,
     OP_NOP6 = 0xb5,
     OP_NOP7 = 0xb6,
     OP_NOP8 = 0xb7,

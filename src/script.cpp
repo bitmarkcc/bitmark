@@ -72,6 +72,7 @@ const char* GetTxnOutputType(txnouttype t)
     case TX_MULTISIG: return "multisig";
     case TX_NULL_DATA: return "nulldata";
     case TX_COMMENT: return "comment";
+    case TX_PUSHCODE: return "pushcode";
     }
     return NULL;
 }
@@ -201,7 +202,7 @@ const char* GetOpName(opcodetype opcode)
     case OP_NOP2                   : return "OP_NOP2";
     case OP_NOP3                   : return "OP_NOP3";
     case OP_NOP4                   : return "OP_COMMENT";
-    case OP_NOP5                   : return "OP_NOP5";
+    case OP_NOP5                   : return "OP_PUSHCODE";
     case OP_NOP6                   : return "OP_NOP6";
     case OP_NOP7                   : return "OP_NOP7";
     case OP_NOP8                   : return "OP_NOP8";
@@ -607,7 +608,110 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 		}
 	      }
 	      break;
-	    case OP_NOP5: case OP_NOP6: case OP_NOP7: case OP_NOP8: case OP_NOP9: case OP_NOP10:
+	    case OP_NOP5: // OP_PUSHCODE
+	      {
+		return false; // return false for now
+
+		if (!(flags & SCRIPT_VERIFY_PUSHCODE))
+		  break;
+
+		if (stack.size() < 1)
+		  return false;
+
+		if (stack.size() == 1) { // create new code
+		  valtype& code = stacktop(-1); // the bytecode
+		  if (code.size() < 1)
+		    return false;
+		  /popstack(stack);
+		}
+		else if (stack.size() == 2) {
+		  int nOutput = CScriptNum(stacktop(-2)).getint(); //nOutput of current tx
+		  valtype& code = stacktop(-1); // the bytecode
+		  if (code.size() < 1)
+		    return false;
+		  popstack(stack);
+		  popstack(stack);
+		}
+		else if (stack.size() == 3) { // add to end of existing code
+		  valtype& txid = stacktop(-3); // txid ref of fork
+		  if (txid.size() < 32)
+		    return false;
+		  int nOutput = CScriptNum(stacktop(-2)).getint(); //nOutput of txid
+		  valtype& code = stacktop(-1); // the bytecode
+		  if (code.size() < 1)
+		    return false;
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		}
+		else if (stack.size() == 4) {
+		  valtype& pushtype = stacktop(-4); // insert (0) or replace (1)
+		  if (pushtype.size() != 1)
+		    return false;
+		  int nOutput = CScriptNum(stacktop(-3)).getint(); //nOutput of current txid
+		  int nOutputPart = CScriptNum(stacktop(-2)).getint(); //nOutput of current txid, where to insert/replace
+		  valtype& code = stacktop(-1); // the bytecode
+		  if (code.size() < 1)
+		    return false;
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		}
+		else if (stack.size() == 5) {
+		  valtype& pushtype = stacktop(-4); //insert or replace
+		  if (pushtype.size() != 1)
+		    return false;
+		  int stacki = -5;
+		  valtype& stackcur = stacktop(stacki);
+		  if (stackcur.size()>=32) {
+		    valtype& txid = stackcur; // txid ref of fork
+		    stacki++;
+		  }
+		  int nOutput = CScriptNum(stacktop(stacki)).getint(); //nOutput of current txid
+		  stacki++;
+		  stackcur = stacktop(stacki);
+		  if (stackcur.size()>=32) {
+		    valtype& txidPart = stacktop(stacki); // txid ref of fork
+		    stacki++;
+		  }
+		  if (stacki != -2)
+		    return false;
+		  int nOutputPart = CScriptNum(stacktop(-2)).getint(); //nOutput of current txid, where to insert/replace
+		  valtype& code = stacktop(-1); // the bytecode
+		  if (code.size() < 1)
+		    return false;
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		}
+		else if (stack.size() == 6) { // insert before or replace part
+		  valtype& pushtype = stacktop(-6); // insert or replace
+		  if (pushtype.size() != 1)
+		    return false;
+		  valtype& txid = stacktop(-5); // txid ref of fork
+		  if (txid.size() < 32)
+		    return false;
+		  int nOutput = CScriptNum(stacktop(-4)).getint(); //nOutput of txid
+		  valtype& txidPart = stacktop(-3); // where to insert/replace
+		  if (txidPart < 32)
+		    return false;
+		  int nOutputPart = CScriptNum(stacktop(-2)).getint(); //nOutput of txidPart
+		  valtype& code = stacktop(-1); // the bytecode
+		  if (code.size() < 1)
+		    return false;
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		  popstack(stack);
+		}
+
+	      }
+	    case OP_NOP6: case OP_NOP7: case OP_NOP8: case OP_NOP9: case OP_NOP10:
 	      break;
 
                 case OP_IF:
@@ -1074,7 +1178,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
                     scriptCode.FindAndDelete(CScript(vchSig));
 
 		    bool fSuccess = CheckSignatureEncoding(vchSig, flags) && CheckPubKeyEncoding(vchPubKey, flags) &&
-		      CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nHashType, flags);
+*		      CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nHashType, flags);
 		    /*
 		    else {
 		      bool fSuccess = IsCanonicalSignature(vchSig, flags) && IsCanonicalPubKey(vchPubKey, flags) &&
@@ -1090,7 +1194,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
                     {
                         if (fSuccess)
                             popstack(stack);
-                        else
+*                       else
                             return false;
                     }
                 }
@@ -1108,7 +1212,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
                     int nKeysCount = CScriptNum(stacktop(-i)).getint();
                     if (nKeysCount < 0 || nKeysCount > 20)
                         return false;
-                    nOpCount += nKeysCount;
+*                   nOpCount += nKeysCount;
                     if (nOpCount > 201)
                         return false;
                     int ikey = ++i;
@@ -1126,7 +1230,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 
                     // Subset of script starting at the most recent codeseparator
                     CScript scriptCode(pbegincodehash, pend);
-
+*
                     // Drop the signatures, since there's no way for a signature to sign itself
                     for (int k = 0; k < nSigsCount; k++)
                     {
@@ -1142,7 +1246,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 
                         // Check signature
 			bool fOk = CheckSignatureEncoding(vchSig, flags) && CheckPubKeyEncoding(vchPubKey, flags) &&
-			  CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nHashType, flags);
+			  CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nH*shType, flags);
 
 			
                         /*bool fOk = IsCanonicalSignature(vchSig, flags) && IsCanonicalPubKey(vchPubKey, flags) &&
@@ -1441,6 +1545,8 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
         mTemplates.insert(make_pair(TX_NULL_DATA, CScript() << OP_RETURN));
 
 	mTemplates.insert(make_pair(TX_COMMENT, CScript() << OP_COMMENT));
+
+	mTemplates.insert(make_pair(TX_PUSHCODE, CScript() << OP_PUSHCODE));
     }
 
     // Shortcut for pay-to-script-hash, which are more constrained than the other types:
@@ -1462,8 +1568,8 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
       vSolutionsRet.clear();
 
       bool haveOpComment = false;
- 
-      
+      bool haveOpPushcode = false;
+       
       opcodetype opcode1, opcode2;
       vector<unsigned char> vch1, vch2;
 
@@ -1487,6 +1593,13 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
                 }
 	      if (typeRet == TX_COMMENT) {
 		if (!haveOpComment) {
+		  vSolutionsRet.clear();
+		  typeRet = TX_NONSTANDARD;
+		  return false;
+		}
+	      }
+	      else if (typeRet == TX_PUSHCODE) {
+		if (!haveOpPushcode) {
 		  vSolutionsRet.clear();
 		  typeRet = TX_NONSTANDARD;
 		  return false;
@@ -1550,6 +1663,9 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
 	    do {
 	      if (opcode1 == OP_COMMENT) {
 		haveOpComment = true;
+	      }
+	      else if (opcode1 == OP_PUSHCODE) {
+		haveOpPushcode = true;
 	      }
 	      else if (opcode1 == OP_0 || (opcode1 >= OP_1 && opcode1 <= OP_16)) {
 		char n = (char)CScript::DecodeOP_N(opcode1);
@@ -1964,7 +2080,7 @@ bool SignSignature(const CKeyStore &keystore, const CScript& fromPubKey, CTransa
     }
 
     // Test solution
-    return VerifyScript(txin.scriptSig, fromPubKey, txTo, nIn, SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY | SCRIPT_VERIFY_COMMENT, 0);
+    return VerifyScript(txin.scriptSig, fromPubKey, txTo, nIn, SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY | SCRIPT_VERIFY_PUSHCODE, 0);
 }
 
 bool SignSignature(const CKeyStore &keystore, const CTransaction& txFrom, CTransaction& txTo, unsigned int nIn, int nHashType)

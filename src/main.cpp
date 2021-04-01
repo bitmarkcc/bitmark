@@ -963,7 +963,7 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransa
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
-        if (!CheckInputs(tx, state, view, true, SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY | SCRIPT_VERIFY_COMMENT))
+        if (!CheckInputs(tx, state, view, true, SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY | SCRIPT_VERIFY_PUSHCODE))
         {
             return error("AcceptToMemoryPool: : ConnectInputs failed %s", hash.ToString());
         }
@@ -2249,9 +2249,9 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
       flags |= SCRIPT_VERIFY_DERSIG;
     }
 
-    /*if (TestNet()) {
-      flags |=  SCRIPT_VERIFY_COMMENT;
-      }*/
+    if (TestNet()) { // enable op_pushcode on testnet. disable op_comments for now
+      flags |=  SCRIPT_VERIFY_PUSHCODE;
+    }
     
     CBlockUndo blockundo;
 
@@ -2298,6 +2298,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 	  control.Add(vChecks);
 
 	  // check that OP_COMMENT references a real txid / output
+
 	  if (flags & SCRIPT_VERIFY_COMMENT) {
 	    vector<vector<unsigned char> > vSolutions;
 	    txnouttype whichType;
@@ -2347,8 +2348,97 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 	      }
 	    }
 	  }
+	  if (flags & SCRIPT_VERIFY_PUSHCODE) {
+	    vector<vector<unsigned char> > vSolutions;
+	    txnouttype whichType;
+	    for (int j=0; j<tx.vout.size(); j++) {
+	      const CScript& scriptPubKey = tx.vout[j].scriptPubKey;
+	      if (!Solver(scriptPubKey,whichType, vSolutions))
+		LogPrintf("non standard tx\n");
+	      if (whichType == TX_PUSHCODE) {
+		LogPrintf("have a TX_PUSHCODE\n");
+		int pushtype = -1;
+		valtype& txid;
+		int nOutput = -1;
+		valtype& txidPart;
+		int nOutputPart;
+		bool haveTxid = false;
+		bool haveTxidPart = false;
+		if (vSolutions.size() == 1) {
+		  LogPrintf("new code push\n");
+		}
+		else if (vSolutions.size() == 2) {
+		  nOutput = CScriptNum(vSolutions[0]).getint();
+		}
+		else if (vSolutions.size() == 3) {
+		  txid = vSolutions[0];
+		  if (txid.size() < 32)
+		    return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid txid\n"),REJECT_INVALID,"bad-pushcode");
+		  haveTxid = true;
+		  nOutput = CScriptNum(vSolutions[1]).getint();
+		}
+		else if (vSolutions.size() == 4) {
+		  pushtype = CScriptNum(vSolutions[0]).getint();
+		  nOutput = CScriptNum(vSolutions[1]).getint();
+		  nOutputPart = CScriptNum(vSolutions[2]).getint();
+		}
+		else if (vSolutions.size() == 5) {
+		  pushtype = CScriptNum(vSolutions[0]).getint();
+		  int soli = 1;
+		  valtype& solcur = vSolutions[soli];
+		  if (solcur.size() >= 32) {
+		    txid = solcur;
+		    soli++;
+		    haveTxid = true;
+		  }
+		  nOutput = CScriptNum(vSolutions[soli]).getint();
+		  soli++;
+		  solcur = vSolutions[soli];
+		  if (solcur.size() >= 32) {
+		    txidPart = solcur;
+		    soli++;
+		    haveTxidPart = true;
+		  }
+		  if (soli != 3)
+		    return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid format\n"),REJECT_INVALID,"bad-pushcode");
+		  nOutputPart = CScriptNum(vSolutions[3]).getint();
+		}
+		else if (vSolutions.size() == 6) {
+		   pushtype = CScriptNum(vSolutions[0]).getint();
+		   txid = vSolutions[1];
+		   haveTxid = true;
+		   nOutput = CScriptNum(vSolutions[2]).getint();
+		   txidPart = vSolutions[3];
+		   haveTxidPart = true;
+		   nOutputPart = CScriptNum(vSolutions[4]).getint();
+		   if (txid.size() < 32 || txidPart.size() < 32)
+		     return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid txid\n"),REJECT_INVALID,"bad-pushcode");
+		}
+		valtype bytecode = vSolutions[vSolutions.size()-1];
+		if (bytecode.size()<1)
+		  return state.DoS(100,error("ConnectBlock(): PUSHCODE with empty code\n"),REJECT_INVALID,"bad-pushcode");
+		CTransaction txMatch;
+		uint256 hashBlock;
+		if (haveTxid && !GetTransactionPast(uint256(HexStr(txid)),txMatch,hashBlock)) {
+		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a past txid\n"),REJECT_INVALID,"bad-pushcode-txid-ref");
+		}
+		CTransaction txMatchPart;
+		uint256 hashBlockPart;
+		if (haveTxidPart && !GetTransactionPast(uint256(HexStr(txidPart)),txMatchPart,hashBlockPart)) {
+		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a past txid\n"),REJECT_INVALID,"bad-pushcode-txid-ref");
+		}
+		if (!haveTxid)
+		  txMatch = tx;
+		if (!haveTxidPart)
+		  txMatchPart = tx;
+		if (nOutput > txMatch.vout.size()-1 || nOutputPart > txMatchPart.vout.size()-1)
+		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing an existing output\n"),REJECT_INVALID,"bad-pushcode-output-dne");
+		
+	      }
+	    }
+	  }
         }
-
++
         CTxUndo txundo;
         UpdateCoins(tx, state, view, txundo, pindex->nHeight, block.GetTxHash(i));
         if (!tx.IsCoinBase())
