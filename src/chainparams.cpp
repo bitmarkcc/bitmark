@@ -48,8 +48,8 @@ public:
         nEnforceBlockUpgradeMajority = 750;
         nRejectBlockOutdatedMajority = 950;
         nToCheckBlockUpgradeMajority = 1000;
-        nTargetTimespan = 14 * 24 * 60 * 60; // two weeks
-        nTargetSpacing = 10 * 60;
+        // No target timespan, continuous adjustment (DGW)
+        nTargetSpacing = 2 * 60;
         fStrictChainId = true;
         nAuxpowChainId = 0x005B;
         nEquihashN = 200;
@@ -164,8 +164,7 @@ public:
         nEnforceBlockUpgradeMajority = 51;
         nRejectBlockOutdatedMajority = 75;
         nToCheckBlockUpgradeMajority = 100;
-        nTargetTimespan = 14 * 24 * 60 * 60; // two weeks
-        nTargetSpacing = 10 * 60;
+        nTargetSpacing = 2 * 60;
         nRPCPort = 19266;
         bnProofOfWorkLimit = CBigNum(~uint256(0) >> 8);
         strDataDir = "testnet4";
@@ -224,8 +223,7 @@ public:
         nEnforceBlockUpgradeMajority = 750;
         nRejectBlockOutdatedMajority = 950;
         nToCheckBlockUpgradeMajority = 1000;
-        nTargetTimespan = 14 * 24 * 60 * 60; // two weeks
-        nTargetSpacing = 10 * 60;
+        nTargetSpacing = 2 * 60;
         bnProofOfWorkLimit = CBigNum(~uint256(0) >> 1);
         genesis.nTime = 1405274400;
         genesis.nBits = 0x207fffff;
