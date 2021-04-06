@@ -606,9 +606,9 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 		    return false;
 		  popstack(stack);
 		}
-	      }
+	      }/
 	      break;
-	    case OP_NOP5: // OP_PUSHCODE
+	    case OP_NOP5: // OP_PUSHCODE todo sync with code in main.cpp
 	      {
 		return false; // return false for now
 

@@ -395,9 +395,15 @@ enum opcodetype
     OP_INVALIDOPCODE = 0xff,
 };
 
+enum {
+  PUSHTYPE_INSERT = 0, // push to end, or insert before a part
+  PUSHTYPE_REPLACE = 1, // replace a part or range of parts, null code to delete
+  PUSHTYPE_TX = (1 << 1), // txid of branch specified
+  PUSHTYPE_TXPART1 = (1 << 2), // txid of part specified
+  PUSHTYPE_TXPART2 = (1 << 3) // txid of 2nd part specified, for range between part 1 and part 2
+};
+
 const char* GetOpName(opcodetype opcode);
-
-
 
 inline std::string ValueString(const std::vector<unsigned char>& vch)
 {
