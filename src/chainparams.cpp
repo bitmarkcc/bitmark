@@ -77,35 +77,6 @@ public:
         assert(hashGenesisBlock == uint256("0xc1fb746e87e89ae75bdec2ef0639a1f6786744639ce3d0ece1dcf979b79137cb"));
         assert(genesis.hashMerkleRoot == uint256("0xd4715adf41222fae3d4bf41af30c675bc27228233d0f3cfd4ae0ae1d3e760ba8"));
 
-	
-	// DNS Seeders - Verified 	03 08 21	March 8, 2021
-	//                               Domain                  Sub-Domain        Location  
-	vSeeds.push_back(CDNSSeedData("bitmark.guru",        "da.bitmark.guru"));    // DE Frank
-        vSeeds.push_back(CDNSSeedData("openmarks.com",     "btm.openmarks.com"));    // IL eli 
-        vSeeds.push_back(CDNSSeedData("bitmark.one",	   "shido.bitmark.one"));    // JP akio
-
-        vSeeds.push_back(CDNSSeedData("openmarks.com", "dnsseed.openmarks.com"));    // DE omar 
-        vSeeds.push_back(CDNSSeedData("zmark.org",		"ra.zmark.org"));    // CA sam
-        vSeeds.push_back(CDNSSeedData("chainetics.com", "marks.chainetics.com"));    // SG ben
-
-        vSeeds.push_back(CDNSSeedData("bitmark.one",        "biji.bitmark.one"));    // CA marks 
-        vSeeds.push_back(CDNSSeedData("avalax.com",	    "marks.avalax.com"));    // JP jin
-        vSeeds.push_back(CDNSSeedData("zmark.org",	     "shiba.zmark.org"));    // NJ j2    
-
-        vSeeds.push_back(CDNSSeedData("zmark.org",	      "btmk.zmark.org"));    // CA zappa
-	vSeeds.push_back(CDNSSeedData("bitmark.cc",	  "dnsseed.bitmark.cc"));    // NJ joe
-        vSeeds.push_back(CDNSSeedData("zmark.org",	       "btm.zmark.org"));    // NJ vinny j0    
-	
-//        vSeeds.push_back(CDNSSeedData("bitmark.one",   "biji.bitmark.one"));
-//        vSeeds.push_back(CDNSSeedData("bitmark.one",  "shido.bitmark.one"));
-//        vSeeds.push_back(CDNSSeedData("zmark.org",         "ra.zmark.org"));
-//        vSeeds.push_back(CDNSSeedData("zmark.org",      "shiba.zmark.org"));
-//        vSeeds.push_back(CDNSSeedData("zmark.org",       "btmk.zmark.org"));
-//        vSeeds.push_back(CDNSSeedData("bitmark.guru", "btmk.bitmark.guru"));
-//        vSeeds.push_back(CDNSSeedData("bitmark.guru",   "da.bitmark.guru"));
-//        vSeeds.push_back(CDNSSeedData("bitmark.one",      "da.bitmark.mx"));
-//        vSeeds.push_back(CDNSSeedData("zmark.org",        "btm.zmark.org"));
-
         // DNS Seeders - Verified       03 08 21   March 8, 2021 
         //                               Domain                  Sub-Domain        Location   
         vSeeds.push_back(CDNSSeedData("bitmark.guru",        "da.bitmark.guru"));    // DE Frank 
@@ -117,11 +88,11 @@ public:
         vSeeds.push_back(CDNSSeedData("chainetics.com", "marks.chainetics.com"));    // SG ben 
  
         vSeeds.push_back(CDNSSeedData("bitmark.one",        "biji.bitmark.one"));    // CA marks  
-        vSeeds.push_back(CDNSSeedData("avalax.com",         "marks.avalax.com"));    // JP jin 
-        vSeeds.push_back(CDNSSeedData("zmark.org",           "shiba.zmark.org"));    // NJ j2     
- 
-        vSeeds.push_back(CDNSSeedData("zmark.org",            "btmk.zmark.org"));    // CA zappa 
         vSeeds.push_back(CDNSSeedData("bitmark.cc",       "dnsseed.bitmark.cc"));    // NJ joe 
+        vSeeds.push_back(CDNSSeedData("zmark.org",            "btmk.zmark.org"));    // CA zappa 
+
+        vSeeds.push_back(CDNSSeedData("zmark.org",           "shiba.zmark.org"));    // NJ j2     
+        vSeeds.push_back(CDNSSeedData("avalax.com",         "marks.avalax.com"));    // JP jin 
         vSeeds.push_back(CDNSSeedData("zmark.org",             "btm.zmark.org"));    // NJ vinny j0     
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,85); // b

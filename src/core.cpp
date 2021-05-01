@@ -347,6 +347,9 @@ bool GetBlockVariant2 (const int nVersion) {
 
 bool CBlockIndex::IsSuperMajority(int minVersion, const CBlockIndex* pstart, unsigned int nRequired, unsigned int nToCheck)
 {
+  /* force the fork after a certain height */
+  //if (minVersion==4 && pstart->nHeight>=nForkHeightForce-1) return true;
+  
   unsigned int nFound = 0;
   for (unsigned int i = 0; i < nToCheck && nFound < nRequired && pstart != NULL; i++)
     {
