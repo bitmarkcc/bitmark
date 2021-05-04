@@ -2429,7 +2429,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		    return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid format\n"),REJECT_INVALID,"bad-pushcode");
 		  }
 		  else if (soli < 3) {
-		    if (!pushtype & PUSHTYPE_TXPART2)
+		    if (!(pushtype & PUSHTYPE_TXPART2))
 		      return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid format\n"),REJECT_INVALID,"bad-pushcode");
 		    nOutputPart = CScriptNum(vSolutions[2]).getint();
 		    havenOutput = true;
