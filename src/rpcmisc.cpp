@@ -670,3 +670,29 @@ Value chaindynamics(const Array& params, bool fHelp)
 
     return obj;
 }
+
+Value coins(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() > 1)
+        throw runtime_error(
+            "coins (start_height end_height)\n"
+            "Returns information about unspent outpoints created within the given range of blocks.\n"
+            "}\n"
+	    "\nResult:\n"
+	    "{\n"
+	    " \"sum of unspent outputs\": xxxxx           (numeric),\n"
+	    "}\n"
+        );
+
+    int start_height = 0;
+    int end_height = 0;
+    
+    if (params.size() > 0) {
+      start_height = params[0].get_int();
+      if (params.size() > 1) {
+	end_height = params[1].get_int();
+      }
+    }
+
+
+}
