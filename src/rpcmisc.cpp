@@ -709,12 +709,12 @@ Value coins(const Array& params, bool fHelp)
 
     CCoinsViewCache view(*pcoinsTip, true);
     int64_t nSat = 0;
-    for (int h = start_height; h <= end_height) {
+    for (int h = start_height; h <= end_height; h++) {
       CBlock block;
       if (!ReadBlockFromDisk(block, pindex))	
 	throw runtime_error ("can't read block\n");
       for (unsigned int i = 0; i < block.vtx.size(); i++) {
-	const CTransaction tx = block.vtx[i];
+	const CTransaction tx = block.vtx[i];2
 	const CCoins &coins = view.GetCoins(tx.GetCachedHash());
 	for (unsigned int j=0; j<tx.vout.size(); j++) {
 	  if(coins->IsAvailable(j))
