@@ -340,6 +340,7 @@ Object blockToJSON(const CBlock& block, const CBlockIndex* blockindex)
     CMerkleTx txGen(block.vtx[0]);
     txGen.SetMerkleBranch(&block);
     // Q? <<< Explanation of Block Variants
+    // A: Needed if we want miners to signal for multiple forks that use the same base nVersion.
     int blockVariant = 0;
     if (GetBlockVariant(block.nVersion)) blockVariant = 1;
     if (GetBlockVariant2(block.nVersion) && !GetBlockVariant(block.nVersion)) blockVariant = 2;
