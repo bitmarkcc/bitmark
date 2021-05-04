@@ -717,7 +717,7 @@ Value coins(const Array& params, bool fHelp)
 	const CTransaction tx = block.vtx[i];
 	const CCoins coins = view.GetCoins(tx.GetCachedHash());
 	for (unsigned int j=0; j<tx.vout.size(); j++) {
-	  if(coins->IsAvailable(j))
+	  if(coins.IsAvailable(j))
 	    nSat += tx.vout[j].nValue;
 	}
       }
