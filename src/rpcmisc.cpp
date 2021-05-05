@@ -715,7 +715,9 @@ Value coins(const Array& params, bool fHelp)
 	throw runtime_error ("can't read block\n");
       for (unsigned int i = 0; i < block.vtx.size(); i++) {
 	const CTransaction tx = block.vtx[i];
-	LogPrintf("get coins for tx %s\n",tx.GetCachedHash().GetHex().c_str());
+	//LogPrintf("get coins for tx %s\n",tx.GetCachedHash().GetHex().c_str());
+	if (!view.HaveCoins(tx.GetCachedHash()))
+	  continue;
 	const CCoins coins = view.GetCoins(tx.GetCachedHash());
 	for (unsigned int j=0; j<tx.vout.size(); j++) {
 	  if(coins.IsAvailable(j))
