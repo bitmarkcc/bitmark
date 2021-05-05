@@ -686,30 +686,30 @@ Value coins(const Array& params, bool fHelp)
 
     int start_height = 0;
     int end_height = 0;
-    CBlockIndex * pindex = 0;
+    CBlockIndex * pindex = chainActive.Tip();
 
     if (params.size() > 0) {
       start_height = params[0].get_int();
       if (params.size() > 1) {
 	end_height = params[1].get_int();
+	if (end_height > pindex->nHeight)
+	  end_height = pindex->nHeight;
 	while (pindex && pindex->nHeight > end_height) {
 	  pindex = pindex->pprev;
 	}
       }
       else {
-	pindex = chainActive.Tip();
 	end_height = pindex->nHeight;
       }
     }
     else {
-      pindex = chainActive.Tip();
       end_height = pindex->nHeight;
       start_height = pindex->nHeight-5000;
     }
 
     CCoinsViewCache view(*pcoinsTip, true);
     int64_t nSat = 0;
-    for (int h = start_height; h <= end_height; h++) {
+    for (int h = end_height; h <= start_height; h--) {
       CBlock block;
       if (!ReadBlockFromDisk(block, pindex))	
 	throw runtime_error ("can't read block\n");
@@ -721,6 +721,7 @@ Value coins(const Array& params, bool fHelp)
 	    nSat += tx.vout[j].nValue;
 	}
       }
+      pindex = pindex->pprev;
     }
 
     Object obj;
