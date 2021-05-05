@@ -673,7 +673,7 @@ Value chaindynamics(const Array& params, bool fHelp)
 
 Value coins(const Array& params, bool fHelp)
 {
-    if (fHelp || params.size() > 1)
+    if (fHelp || params.size() > 2)
         throw runtime_error(
             "coins (start_height end_height)\n"
             "Returns information about unspent outpoints created within the given range of blocks.\n"
