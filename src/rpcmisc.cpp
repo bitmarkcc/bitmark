@@ -709,7 +709,7 @@ Value coins(const Array& params, bool fHelp)
 
     CCoinsViewCache view(*pcoinsTip, true);
     int64_t nSat = 0;
-    for (int h = end_height; h <= start_height; h--) {
+    for (int h = end_height; h >= start_height; h--) {
       CBlock block;
       if (!ReadBlockFromDisk(block, pindex))	
 	throw runtime_error ("can't read block\n");
