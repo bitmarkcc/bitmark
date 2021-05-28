@@ -181,7 +181,7 @@ public:
         {
             const int64_t nOneWeek = 7*24*60*60;
             struct in_addr ip;
-            memcpy(&ip, &pnSeed[i], sizeof(ip));
+            memcpy(&ip, &pnSeedTest[i], sizeof(ip));
             CAddress addr(CService(ip, GetDefaultPort()));
             addr.nTime = GetTime() - GetRand(nOneWeek) - nOneWeek;
             vFixedSeeds.push_back(addr);
