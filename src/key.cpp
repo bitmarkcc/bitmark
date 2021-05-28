@@ -341,7 +341,7 @@ public:
         if (rec<0 || rec>=3)
             return false;
         ECDSA_SIG *sig = ECDSA_SIG_new();
-	#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	ECDSA_SIG_set0(sig,BN_new(),BN_new());
 	#endif
         ECDSA_SIG_get0(sig, (const BIGNUM **)&r, (const BIGNUM **)&s);
