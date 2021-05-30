@@ -75,7 +75,7 @@ public:
     CBigNum(const CBigNum& b)
     {
         init();
-        if (!BN_copy(bn, b.n))
+        if (!BN_copy(bn, b.bn))
         {
             BN_clear_free(bn);
             throw bignum_error("CBigNum::CBigNum(const CBigNum&) : BN_copy failed");
@@ -84,7 +84,7 @@ public:
 
     CBigNum& operator=(const CBigNum& b)
     {
-        if (!BN_copy(bn, b.n))
+        if (!BN_copy(bn, b.bn))
             throw bignum_error("CBigNum::operator= : BN_copy failed");
         return (*this);
     }
