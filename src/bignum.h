@@ -58,7 +58,7 @@ public:
 /** C++ wrapper for BIGNUM (OpenSSL bignum) */
 class CBigNum
 {
-protected:
+public:
     BIGNUM  *bn;
 
     void init()
@@ -66,7 +66,6 @@ protected:
         bn = BN_new();
     }
 
-public:
     CBigNum()
     {
         init();
