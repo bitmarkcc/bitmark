@@ -5,6 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "base58.h"
+#include "base38.h"
 #include "init.h"
 #include "main.h"
 #include "alert.h"
@@ -731,4 +732,132 @@ Value coins(const Array& params, bool fHelp)
     obj.push_back(Pair("sum of unspent outputs", ((double)nSat)/100000000.));
 
     return obj;
+}
+
+Value mark(const Array& params, bool fHelp) {
+  if (fHelp || params.size() < 1 || params.size() > 4 || params.size() == 3)
+    throw runtime_error(
+			"mark (data link address amount)\n"
+			"\nArguments:\n"
+			"1. \"hash\"     (string, optional) The hash to imbed into the blockchain (max 62 bytes, in hex format).\n"
+			"2. \"link\"     (string, optional) The link (URL, onion address, etc) where it is available. For plain URLs it is recommended to use URL plus hash of SSL certificate, separated by colon. (max 62 bytes)\n"
+			"3. \"address\"     (string, optional) A payment address, which can be used for paying the creator of the data for the hash, or the link servers\n"
+			"4. amount     (float, optional) The amount to pay. Required if address is given.\n"
+			"Returns the transaction id.\n"
+			"\"txid\" (string),\n"
+			);
+  int64_t nAmount = 0;
+  CBitmarkAddress address;
+  CWalletTx wtx;
+  Object hash;
+  Object link;
+  Object desc;
+  const char * hashHex = 0;
+  const char * hashType = 0;
+  const char * linkURL = 0;
+  const char * linkCertHashHex = 0;
+  const char * linkCertHashType = 0;
+  const char * descText = 0;
+  const char * descLang = 0;
+  Object marking = params[0].get_obj();
+
+  BOOST_FOREACH(const Pair& p, marking) {
+    LogPrintf("p.name = %s\n",p.name_.c_str());
+    const Object& o = p.value_.get_obj();
+    if (p.name_ == "hash") {
+      LogPrintf("check what hash has\n");
+      hashType = find_value(o,"type").get_str().c_str();
+      hashHex = find_value(o,"hex").get_str().c_str();
+    }
+    else if (p.name_ == "link") {
+       linkURL = find_value(o,"url").get_str().c_str();
+       linkCertHashType = find_value(o,"cert_hash_type").get_str().c_str();
+       linkCertHashHex = find_value(o,"cert_hash_hex").get_str().c_str();
+    }
+    else if (p.name_ == "desc") {
+      descLang = find_value(o,"lang").get_str().c_str();
+      descText = find_value(o,"text").get_str().c_str();
+    }
+
+  }
+
+ /*
+  Value val = find_value(oparam,"hash");
+  if (val.type() == obj_type) {
+    LogPrintf("have hash\n");
+    hash = val.get_obj();
+    val = find_value(hash,"hex");
+    if (val.type() == str_type)
+      hashHex = val.get_str().c_str();
+    val = find_value(hash,"type");
+    if (val.type() == str_type)
+      hashType = val.get_str().c_str();
+  }
+    val = find_value(oparam,"link");
+  if (val.type() == obj_type) {
+    link = val.get_obj();
+    val = find_value(link,"url");
+    if (val.type() == str_type)
+      linkURL = val.get_str().c_str();
+    val = find_value(link,"cert_hash_hex");
+    if (val.type() == str_type)
+      linkCertHashHex = val.get_str().c_str();
+    val = find_value(link,"cert_hash_type");
+    if (val.type() == str_type)
+      linkCertHashType = val.get_str().c_str();
+  }
+  val = find_value(oparam,"desc");
+  if (val.type() == obj_type) {
+    desc = val.get_obj();
+    val = find_value(desc,"text");
+    if (val.type() == str_type)
+      descText = val.get_str().c_str();
+    val = find_value(desc,"lang");
+    if (val.type() == str_type)
+      descLang = val.get_str().c_str();
+      }*/
+  LogPrintf("hashHex %s hashType %s\n",hashHex,hashType);
+  LogPrintf("linkURL %s linkCertHashHex %s linkCertHashType %s\n",linkURL,linkCertHashHex,linkCertHashType);
+  LogPrintf("descText %s descLang %s\n",descText,descLang);
+
+  /* tmp comment out
+  CBase38Data dHashType;
+  dHashType.SetString(hashType,0);
+  std::vector unsigned char vHash = ParseHex(hashHex);
+  
+  
+    if (!DecodeBase38(hashType,vHash))
+      throw runtime_error("Can't decode hash type");*/
+
+  /*  
+  const char * hash = params[0].get_str().c_str();
+  if (strlen(hash)==0)
+   throw runtime_error("Hash is empty\n");
+  if (strlen(hash)>63*2)
+    throw runtime_error("Hash must be at most 63 bytes\n");
+  LogPrintf("hash: %s\n",hash);
+  const char * link = 0;
+  if (params.size()>1) {
+    link = params[1].get_str().c_str();
+    if (!strlen(link)) {
+      link = 0;
+      }
+    
+    LogPrintf("link: %s\n",link);
+  }
+  if (params.size()==4) {
+    address = CBitmarkAddress(params[2].get_str());
+    if (!address.IsValid())
+      throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Bitmark address");
+    nAmount = AmountFromValue(params[3]);
+    EnsureWalletIsUnlocked();
+    string strError = pwalletMain->SendMoneyToDestination(address.Get(),nAmount,wtx,hash,link);
+  }
+  else {
+    EnsureWalletIsUnlocked();
+    LogPrintf("sendmoneytonodestination\n");
+    string strError = pwalletMain->SendMoneyToNoDestination(wtx,hash,link);
+  }
+  return wtx.GetHash().GetHex();*/
+  return "done";
 }

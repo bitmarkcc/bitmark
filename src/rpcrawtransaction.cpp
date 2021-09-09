@@ -40,16 +40,110 @@ void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeH
     if (!ExtractDestinations(scriptPubKey, type, addresses, nRequired))
     {
         out.push_back(Pair("type", GetTxnOutputType(type)));
-        return;
     }
+    else {
+      out.push_back(Pair("reqSigs", nRequired));
+      out.push_back(Pair("type", GetTxnOutputType(type)));
 
-    out.push_back(Pair("reqSigs", nRequired));
-    out.push_back(Pair("type", GetTxnOutputType(type)));
-
-    Array a;
-    BOOST_FOREACH(const CTxDestination& addr, addresses)
+      Array a;
+      BOOST_FOREACH(const CTxDestination& addr, addresses)
         a.push_back(CBitmarkAddress(addr).ToString());
-    out.push_back(Pair("addresses", a));
+      out.push_back(Pair("addresses", a));
+    }
+    
+    bool showMarking = false;
+    Object marking;
+    if (type == TX_NULL_DATA) {
+      string data = HexStr(scriptPubKey.begin()+2,scriptPubKey.end());
+      marking.push_back(Pair("data",data));
+      showMarking = true;
+    }
+    if (type == TX_MULTISIG) {
+      for (int i=0; i<8; i++) {
+	LogPrintf("%d : %02x\n",i,scriptPubKey[i]);
+      }
+      string d1name;
+      char d1code = scriptPubKey[3];
+      if (d1code == 'h') {
+	d1name = "hash";
+      }
+      else if (d1code == 'l') {
+	d1name = "link";
+      }
+      else if (d1code == 'd') {
+	d1name = "desc";
+      }
+      int d1len = scriptPubKey[4];
+      int pk1len = scriptPubKey[1];
+      LogPrintf("d1len = %d, pk1len = %d\n",d1len,pk1len);
+      if (d1len<=pk1len-3) {
+	string d1value;
+	if (d1code == 'l' || d1code == 'd') {
+	  int iStart = 5;
+	  int i = iStart;
+	  while (scriptPubKey[i]<=0x7e) {
+	    i++;
+	    if (scriptPubKey[i-1]>=0x20) {
+	      d1value += scriptPubKey[i-1];
+	    }
+	    else {
+	      d1value += ':';
+	      break;
+	    }
+	  }
+	  if (i-iStart<d1len)
+	    d1value += HexStr(scriptPubKey.begin()+i,scriptPubKey.begin()+iStart+d1len);
+	}
+	else {
+	  d1value = HexStr(scriptPubKey.begin()+5,scriptPubKey.begin()+5+d1len);
+	}
+	marking.push_back(Pair(d1name,d1value));
+      }
+      int spkLen = scriptPubKey.size();
+      int nPubkeys = addresses.size();
+      if (nPubkeys > 1) {
+	string d2name;
+	char d2code = scriptPubKey[1+1+pk1len+1+1];
+	if (d2code == 'h') {
+	  d2name = "hash";
+	}
+	else if (d2code == 'l') {
+	  d2name = "link";
+	}
+	else if (d2code == 'd') {
+	  d2name = "desc";
+	}
+	int d2len = scriptPubKey[2+pk1len+3];
+	int pk2len = scriptPubKey[2+pk1len];
+	LogPrintf("d2len = %d pk2len = %d\n",d2len,pk2len);
+	if (d2len<=pk2len-3) {
+	  string d2value;
+ 	  if (d2code == 'l' || d2code == 'd') {
+	    int iStart = 2+pk1len+4;
+	    int i = iStart;
+	    while (scriptPubKey[i]<=0x7e) {
+	      i++;
+	      if (scriptPubKey[i-1]>=0x20) {
+		d2value += scriptPubKey[i-1];
+	      }
+	      else {
+		d2value += ':';
+		break;
+	      }
+	    }
+	    if (i-iStart<d2len)
+	      d2value += HexStr(scriptPubKey.begin()+i,scriptPubKey.begin()+iStart+d2len);
+	  }
+	  else {
+	    d2value = HexStr(scriptPubKey.begin()+2+pk1len+4,scriptPubKey.begin()+2+pk1len+4+d2len);
+	  }
+	  marking.push_back(Pair(d2name,d2value));
+      }
+      }
+      showMarking = true;
+    }
+    if (showMarking)
+      out.push_back(Pair("marking", marking));
 }
 
 void TxToJSON(const CTransaction& tx, const uint256 hashBlock, Object& entry)

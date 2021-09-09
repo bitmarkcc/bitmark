@@ -1322,7 +1322,7 @@ bool CWallet::SelectCoins(int64_t nTargetValue, set<pair<const CWalletTx*,unsign
 
 
 bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
-                                CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl* coinControl)
+                                CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl* coinControl, const char * hash, const char * link)
 {
     int64_t nValue = 0;
     BOOST_FOREACH (const PAIRTYPE(CScript, int64_t)& s, vecSend)
@@ -1334,7 +1334,7 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
         }
         nValue += s.second;
     }
-    if (vecSend.empty() || nValue < 0)
+    if (/*vecSend.empty() ||*/ nValue < 0)
     {
         strFailReason = _("Transaction amounts must be positive");
         return false;
@@ -1438,11 +1438,137 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
                     {
                         // Insert change txn at random position:
                         vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
+			LogPrintf("insert change txn at position %d\n",position-wtxNew.vout.begin());
                         wtxNew.vout.insert(position, newTxOut);
                     }
                 }
                 else
                     reservekey.ReturnKey();
+
+		int hashPosition = -1;
+		if (hash) {
+		  CScript scriptHash;
+		  if (link) {
+		    char * hashHex = (char *)malloc(65*2+1);
+		    hashHex[0] = '0'; // to look like a pubkey
+		    hashHex[1] = '6';
+		    hashHex[2] = '6'; // 0x68 is 'h' for hash
+		    hashHex[3] = '8';
+		    int hashLen = strlen(hash); // next byte is length
+		    sprintf(hashHex+4,"%02x",(hashLen/2)&0xff);
+		    memcpy(hashHex+6,hash,hashLen);
+		    for (int i=hashLen+6; i<65*2; i++) {
+		      hashHex[i] = 'f';
+		    }
+		    hashHex[65*2] = 0;
+		    int lenLink = strlen(link);
+		    char * linkHex = (char *)malloc(65*2+1);
+		    linkHex[0] = '0'; // to look like a pubkey
+		    linkHex[1] = '6';
+		    linkHex[2] = '6'; // 0x6c is 'l' for link
+		    linkHex[3] = 'c';
+		    sprintf(linkHex+4,"%02x",0x00);
+		    int nConvert = 0;
+		    for (int i=0; i<lenLink; i++) {
+		      if (i>61)
+			break;
+		      nConvert++;
+		      if (link[i]==':') {
+			sprintf(linkHex+2*(i+3),"%02x",0x1f); // control character
+			break; // the rest is assumed to be in hex format (hash of cert)
+		      }
+		      else {
+			sprintf(linkHex+2*(i+3),"%02x",link[i]&0xff);
+		      }
+		    }
+		    bool filled = false;
+		    if (nConvert+lenLink==62*2)
+		      filled = true;
+		    if (nConvert<lenLink && !filled) {
+		      memcpy(linkHex+6+nConvert*2,link+nConvert,lenLink-nConvert);
+		    }
+		    if (!filled) {
+		      for (int i=2*(nConvert+3)+lenLink-nConvert; i<65*2; i++) {
+			linkHex[i] = 'f';
+		      }
+		    }
+		    linkHex[65*2] = 0;
+		    char* lenLinkHex = (char*)malloc(3);
+		    sprintf(lenLinkHex,"%02x",((nConvert+lenLink)/2)&0xff);
+		    linkHex[4] = lenLinkHex[0];
+		    linkHex[5] = lenLinkHex[1];
+		    free(lenLinkHex);
+		    LogPrintf("hashHex = %s (len %d)\n", hashHex,strlen(hashHex));
+		    LogPrintf("linkHex = %s (len %d)\n",linkHex,strlen(linkHex));
+		    CPubKey hashKey = CPubKey(ParseHex(hashHex));
+		    CPubKey linkKey = CPubKey(ParseHex(linkHex));
+
+		    CPubKey spendKey;
+		    if (!this->GetKeyFromPool(spendKey)) {
+		      strFailReason = _("Keypool ran out, please call keypoolrefill first");
+		      return false;
+		    }
+		    
+		    /*CKey key;
+		    key.MakeNewKey(false); // make new key for spending, because a standard tx needs to pass the dust limit
+		    CPubKey spendKey = key.GetPubKey();
+		    CBitmarkSecret privKey;
+		    privKey.SetKey(key);
+		    LogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),privKey.ToString().c_str());*/
+		    
+		    scriptHash = CScript() << OP_1 << hashKey << linkKey << spendKey << OP_3 << OP_CHECKMULTISIG;
+		    free(hashHex);
+		    free(linkHex);
+		  }
+		  else {
+		    scriptHash = CScript() << OP_RETURN << ParseHex(hash);
+		  }
+		  CTxOut newTxOut = CTxOut(10000,scriptHash); // 10000 sat
+		  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
+		  hashPosition = position - wtxNew.vout.begin();
+		  LogPrintf("hashPosition = %d\n",hashPosition);
+		  wtxNew.vout.insert(position, newTxOut);
+		}
+
+		/*if (link) {
+		  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
+		  int commentPosition = position-wtxNew.vout.begin();
+		  LogPrintf("comment position = %d\n",commentPosition);
+		  if (commentPosition <= dataPosition) {
+		    dataPosition++;
+		    LogPrintf("change data position to %d\n",dataPosition);
+		  }
+		  CScript scriptComment;
+		  int commentLen = strlen(comment);
+		  char * commentHex = (char *)malloc(commentLen*2+1);
+		  for (int i=0; i<commentLen; i++) {
+		    sprintf(commentHex+2*i,"%02x",comment[i]&0xff);
+		  }
+		  if (data && !txid && nOutput == -1) {
+		    LogPrintf("set nOutput to dataPosition\n");
+		    nOutput = dataPosition;
+		  }
+		  LogPrintf("nOutput = %d\n",nOutput);
+		  if (!txid and nOutput < 0) {
+		    LogPrintf("scriptComment variant 1\n");
+		    scriptComment = CScript() << ParseHex(commentHex) << OP_COMMENT;
+		  }
+		  else if (!txid) {
+		    LogPrintf("scriptComment variant 2\n");
+		    scriptComment = CScript() << (int64_t)nOutput << ParseHex(commentHex) << OP_COMMENT;
+		  }
+		  else if (nOutput < 0) {
+		    LogPrintf("scriptComment variant 3\n");
+		    scriptComment = CScript() << ParseHex(txid) << ParseHex(commentHex) << OP_COMMENT;
+		  }
+		  else {
+		    LogPrintf("scriptComment variant 4\n");
+		    scriptComment = CScript() << ParseHex(txid) << (int64_t)nOutput << ParseHex(commentHex) << OP_COMMENT;
+		  }
+		  LogPrintf("scriptComment = %s nOutput = %d\n",HexStr(scriptComment),nOutput);
+		  CTxOut newTxOut(0,scriptComment);
+		  wtxNew.vout.insert(position, newTxOut);
+		  }*/
 
                 // Fill vin
                 BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)
@@ -1486,11 +1612,11 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 }
 
 bool CWallet::CreateTransaction(CScript scriptPubKey, int64_t nValue,
-                                CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl* coinControl)
+                                CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl* coinControl, const char * hash, const char * link)
 {
     vector< pair<CScript, int64_t> > vecSend;
     vecSend.push_back(make_pair(scriptPubKey, nValue));
-    return CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, strFailReason, coinControl);
+    return CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, strFailReason, coinControl,hash,link);
 }
 
 // Call after CreateTransaction unless you want to abort
@@ -1543,7 +1669,7 @@ bool CWallet::CommitTransaction(CWalletTx& wtxNew, CReserveKey& reservekey)
 
 
 
-string CWallet::SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNew)
+string CWallet::SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNew, const char * hash, const char * link)
 {
     CReserveKey reservekey(this);
     int64_t nFeeRequired;
@@ -1555,7 +1681,7 @@ string CWallet::SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNe
         return strError;
     }
     string strError;
-    if (!CreateTransaction(scriptPubKey, nValue, wtxNew, reservekey, nFeeRequired, strError))
+    if (!CreateTransaction(scriptPubKey, nValue, wtxNew, reservekey, nFeeRequired, strError,0,hash,link))
     {
         if (nValue + nFeeRequired > GetBalance())
             strError = strprintf(_("Error: This transaction requires a transaction fee of at least %s because of its amount, complexity, or use of recently received funds!"), FormatMoney(nFeeRequired));
@@ -1569,9 +1695,38 @@ string CWallet::SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNe
     return "";
 }
 
+string CWallet::SendMoneyNoDestination(CWalletTx& wtxNew, const char * hash, const char * link)
+{
+ 
+  CReserveKey reservekey(this);
+  int64_t nFeeRequired;
+  vector< pair<CScript, int64_t> > vecSend; //empty vector so that money will go to a change address only
 
+  if (IsLocked())
+    {
+      string strError = _("Error: Wallet locked, unable to create transaction!");
+      LogPrintf("SendMoney() : %s", strError);
+      return strError;
+    }
+  string strError;
+  
+  if (!CreateTransaction(vecSend, wtxNew, reservekey, nFeeRequired, strError, 0, hash, link))
+    {
+      if (nFeeRequired > GetBalance())
+	strError = strprintf(_("Error: This transaction requires a transaction fee of at least %s because of its amount, complexity,\
+ or use of recently received funds!"), FormatMoney(nFeeRequired));
+      LogPrintf("SendMoney() : %s\n", strError);
+      return strError;
+    }
 
-string CWallet::SendMoneyToDestination(const CTxDestination& address, int64_t nValue, CWalletTx& wtxNew)
+  if (!CommitTransaction(wtxNew, reservekey))
+    return _("Error: The transaction was rejected! This might happen if some of the coins in your wallet were already spent, such as\
+ if you used a copy of wallet.dat and coins were spent in the copy but not marked as spent here.");
+
+  return "";
+}
+
+string CWallet::SendMoneyToDestination(const CTxDestination& address, int64_t nValue, CWalletTx& wtxNew, const char * hash, const char * link)
 {
     // Check amount
     if (nValue <= 0)
@@ -1583,11 +1738,17 @@ string CWallet::SendMoneyToDestination(const CTxDestination& address, int64_t nV
     CScript scriptPubKey;
     scriptPubKey.SetDestination(address);
 
-    return SendMoney(scriptPubKey, nValue, wtxNew);
+    return SendMoney(scriptPubKey, nValue, wtxNew, hash, link);
 }
 
 
+string CWallet::SendMoneyToNoDestination(CWalletTx& wtxNew, const char * hash, const char * link)
+{
+  if (nTransactionFee > GetBalance())
+    return _("Insufficient funds");
 
+  return SendMoneyNoDestination(wtxNew,hash,link);
+}
 
 DBErrors CWallet::LoadWallet(bool& fFirstRunRet)
 {

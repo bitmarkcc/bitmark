@@ -849,7 +849,7 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransa
 
     // Rather not work on nonstandard transactions (unless -testnet/-regtest)
     string reason;
-    if (Params().NetworkID() == CChainParams::MAIN && !IsStandardTx(tx, reason))
+    if (/*Params().NetworkID() == CChainParams::MAIN &&*/ !IsStandardTx(tx, reason))
         return state.DoS(0,
                          error("AcceptToMemoryPool : nonstandard transaction: %s", reason),
                          REJECT_NONSTANDARD, reason);
@@ -1016,6 +1016,8 @@ int CMerkleTx::GetBlocksToMaturity() const
 {
     if (!IsCoinBase())
         return 0;
+    if (RegTest())
+      return 0;
     return max(0, (COINBASE_MATURITY+1) - GetDepthInMainChain());
 }
 
@@ -1919,7 +1921,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, CCoinsViewCach
 
             // If prev is coinbase, check that it's matured
             if (coins.IsCoinBase()) {
-                if (nSpendHeight - coins.nHeight < COINBASE_MATURITY)
+	      if (!RegTest() && (nSpendHeight - coins.nHeight < COINBASE_MATURITY))
                     return state.Invalid(
                         error("CheckInputs() : tried to spend coinbase at depth %d", nSpendHeight - coins.nHeight),
                         REJECT_INVALID, "bad-txns-premature-spend-of-coinbase");

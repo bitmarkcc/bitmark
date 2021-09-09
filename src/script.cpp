@@ -1442,11 +1442,14 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
                 typeRet = tplate.first;
                 if (typeRet == TX_MULTISIG)
                 {
+		  LogPrintf("typeret = tx_multisig\n");
                     // Additional checks for TX_MULTISIG:
                     unsigned char m = vSolutionsRet.front()[0];
                     unsigned char n = vSolutionsRet.back()[0];
+		    LogPrintf("have m and n\n");
                     if (m < 1 || n < 1 || m > n || vSolutionsRet.size()-2 != n)
                         return false;
+		    LogPrintf("good m n\n");
                 }
                 return true;
             }
@@ -1460,12 +1463,15 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
             {
                 while (vch1.size() >= 33 && vch1.size() <= 65)
                 {
+		  LogPrintf("have a pubkey\n");
                     vSolutionsRet.push_back(vch1);
                     if (!script1.GetOp(pc1, opcode1, vch1))
                         break;
+		    LogPrintf("getop is good\n");
                 }
                 if (!script2.GetOp(pc2, opcode2, vch2))
                     break;
+		LogPrintf("script2 getop is good\n");
                 // Normal situation is to fall through
                 // to other if/else statements
             }
@@ -1611,8 +1617,10 @@ int ScriptSigArgsExpected(txnouttype t, const std::vector<std::vector<unsigned c
 bool IsStandard(const CScript& scriptPubKey, txnouttype& whichType)
 {
     vector<valtype> vSolutions;
-    if (!Solver(scriptPubKey, whichType, vSolutions))
+    if (!Solver(scriptPubKey, whichType, vSolutions)) {
+      LogPrintf("solver returned false\n");
         return false;
+    }
 
     if (whichType == TX_MULTISIG)
     {

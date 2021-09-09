@@ -28,7 +28,9 @@ BITMARK_CORE_H = \
   addrman.h \
   alert.h \
   allocators.h \
-  base58.h bignum.h \
+  base58.h \
+  base38.h \
+  bignum.h \
   bloom.h \
   chainparams.h \
   checkpoints.h \
@@ -125,6 +127,7 @@ libbitmark_wallet_a_SOURCES = \
 
 libbitmark_common_a_SOURCES = \
   base58.cpp \
+  base38.cpp \
   allocators.cpp \
   chainparams.cpp \
   core.cpp \

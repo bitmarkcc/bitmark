@@ -186,6 +186,7 @@ extern json_spirit::Value validateaddress(const json_spirit::Array& params, bool
 extern json_spirit::Value getinfo(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value chaindynamics(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value coins(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value mark(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value getwalletinfo(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value getblockchaininfo(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value getnetworkinfo(const json_spirit::Array& params, bool fHelp);
