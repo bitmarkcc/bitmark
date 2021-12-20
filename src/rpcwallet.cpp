@@ -342,7 +342,10 @@ Value sendtoaddress(const Array& params, bool fHelp)
 
     EnsureWalletIsUnlocked();
 
-    string strError = pwalletMain->SendMoneyToDestination(address.Get(), nAmount, wtx);
+    Mark default_mark1 = {std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>()};
+      
+    
+    string strError = pwalletMain->SendMoneyToDestination(address.Get(), nAmount, wtx, default_mark1);
     if (strError != "")
         throw JSONRPCError(RPC_WALLET_ERROR, strError);
 
@@ -786,7 +789,8 @@ Value sendfrom(const Array& params, bool fHelp)
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Account has insufficient funds");
 
     // Send
-    string strError = pwalletMain->SendMoneyToDestination(address.Get(), nAmount, wtx);
+    Mark default_mark1 = {std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>()};
+    string strError = pwalletMain->SendMoneyToDestination(address.Get(), nAmount, wtx, default_mark1);
     if (strError != "")
         throw JSONRPCError(RPC_WALLET_ERROR, strError);
 

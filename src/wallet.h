@@ -51,6 +51,20 @@ enum WalletFeature
     FEATURE_LATEST = 60000
 };
 
+typedef unsigned char uchar;
+
+struct Mark {
+  std::vector<uchar> hashType;
+  std::vector<uchar> hashHex;
+  std::vector<uchar> linkProtocol;
+  std::vector<uchar> linkHost;
+  std::vector<uchar> linkPort;
+  std::vector<uchar> linkPath;
+  std::vector<uchar> linkCertHashType;
+  std::vector<uchar> linkCertHashHex;  
+  std::vector<uchar> descLang;
+  std::vector<uchar> descText;
+};
 
 /** A key pool entry */
 class CKeyPool
@@ -266,14 +280,14 @@ public:
     int64_t GetUnconfirmedWatchOnlyBalance() const;
     int64_t GetImmatureWatchOnlyBalance() const;
     bool CreateTransaction(const std::vector<std::pair<CScript, int64_t> >& vecSend,
-                           CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl *coinControl = NULL, const char * hash = 0, const char * link = 0);
+                           CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl *coinControl = NULL, Mark mark = {std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>()});
     bool CreateTransaction(CScript scriptPubKey, int64_t nValue,
-                           CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl *coinControl = NULL, const char * hash = 0, const char * link = 0);
+                           CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl *coinControl = NULL, Mark mark = {std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>(),std::vector<uchar>()});
     bool CommitTransaction(CWalletTx& wtxNew, CReserveKey& reservekey);
-  std::string SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNew, const char * hash = 0, const char * link = 0);
-  std::string SendMoneyNoDestination(CWalletTx& wtxNew, const char * hash = 0, const char * link = 0);
-  std::string SendMoneyToDestination(const CTxDestination &address, int64_t nValue, CWalletTx& wtxNew, const char * hash = 0, const char * link = 0);
-  std::string SendMoneyToNoDestination(CWalletTx& wtxNew, const char * hash = 0, const char * link = 0);
+  std::string SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNew, Mark mark);
+  std::string SendMoneyNoDestination(CWalletTx& wtxNew, Mark mark);
+  std::string SendMoneyToDestination(const CTxDestination &address, int64_t nValue, CWalletTx& wtxNew, Mark mark);
+  std::string SendMoneyToNoDestination(CWalletTx& wtxNew, Mark mark);
 
     bool NewKeyPool();
     bool TopUpKeyPool(unsigned int kpSize = 0);
