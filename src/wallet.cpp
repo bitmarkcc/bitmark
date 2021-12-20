@@ -1475,7 +1475,38 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		std::vector<uchar> pubkey2;
 		pubkey2.push_back(6);
 		pubkey2.push_back(72);
-
+		int lenLinkProtocol = mark.linkProtocol.size();
+		printf("len link protocol = %d\n",lenLinkProtocol);
+		if (lenLinkProtocol>0) {
+		  pubkey2.push_back(lenLinkProtocol);
+		}
+		for (int i=0; i<lenLinkProtocol; i++) {
+		  pubkey2.push_back(mark.linkProtocol[i]);
+		}
+		int lenLinkHost = mark.linkHost.size();
+		printf("len link host = %d\n",lenLinkHost);
+		if (lenLinkHost>0) {
+		  pubkey2.push_back(lenLinkHost);
+		}
+		for (int i=0; i<lenLinkHost; i++) {
+		  pubkey2.push_back(mark.linkHost[i]);
+		}
+		int lenLinkCertHashType = mark.linkCertHashType.size();
+		printf("len link cert hash type = %d\n",lenLinkCertHashType);
+		if (lenLinkCertHashType>0) {
+		  pubkey2.push_back(lenLinkCertHashType);
+		}
+		for (int i=0; i<lenLinkCertHashType; i++) {
+		  pubkey2.push_back(mark.linkCertHashType[i]);
+		}
+		int lenLinkCertHashHex = mark.linkCertHashHex.size();
+		printf("len link cert hash hex = %d\n",lenLinkCertHashHex);
+		if (lenLinkCertHashHex>0) {
+		  pubkey2.push_back(lenLinkCertHashHex);
+		}
+		for (int i=0; i<lenLinkCertHashHex; i++) {
+		  pubkey2.push_back(mark.linkCertHashHex[i]);
+		}
 
 		CPubKey hashKey = CPubKey(pubkey1);
 		CPubKey linkKey = CPubKey(pubkey2);
@@ -1495,13 +1526,9 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		LogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),privKey.ToString().c_str());
 		
 		scriptHash = CScript() << OP_1 << hashKey << linkKey << spendKey << OP_3 << OP_CHECKMULTISIG;
-		free(hashHex);
-		free(linkHex);
 
 		CTxOut newTxOut = CTxOut(10000,scriptHash); // 10000 sat
 		vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
-		hashPosition = position - wtxNew.vout.begin();
-		LogPrintf("hashPosition = %d\n",hashPosition);
 		wtxNew.vout.insert(position, newTxOut);
 	    }
 		
