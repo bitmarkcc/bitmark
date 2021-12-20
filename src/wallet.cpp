@@ -1479,6 +1479,7 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 
 		CPubKey hashKey = CPubKey(pubkey1);
 		CPubKey linkKey = CPubKey(pubkey2);
+		CScript scriptHash;
 		
 		/*		CPubKey spendKey;
 		if (!this->GetKeyFromPool(spendKey)) {
@@ -1496,57 +1497,14 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		scriptHash = CScript() << OP_1 << hashKey << linkKey << spendKey << OP_3 << OP_CHECKMULTISIG;
 		free(hashHex);
 		free(linkHex);
+
+		CTxOut newTxOut = CTxOut(10000,scriptHash); // 10000 sat
+		vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
+		hashPosition = position - wtxNew.vout.begin();
+		LogPrintf("hashPosition = %d\n",hashPosition);
+		wtxNew.vout.insert(position, newTxOut);
 	    }
-	    else {
-	      scriptHash = CScript() << OP_RETURN << ParseHex(hash);
-	    }
-	    CTxOut newTxOut = CTxOut(10000,scriptHash); // 10000 sat
-	    vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
-	    hashPosition = position - wtxNew.vout.begin();
-	    LogPrintf("hashPosition = %d\n",hashPosition);
-	    wtxNew.vout.insert(position, newTxOut);
-	}
-	
-	if (link) {
-	  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
-	  int commentPosition = position-wtxNew.vout.begin();
-	  LogPrintf("comment position = %d\n",commentPosition);
-	  if (commentPosition <= dataPosition) {
-	  dataPosition++;
-	  LogPrintf("change data position to %d\n",dataPosition);
-	  }
-	  CScript scriptComment;
-	  int commentLen = strlen(comment);
-	  char * commentHex = (char *)malloc(commentLen*2+1);
-	  for (int i=0; i<commentLen; i++) {
-	  sprintf(commentHex+2*i,"%02x",comment[i]&0xff);
-	  }
-	  if (data && !txid && nOutput == -1) {
-	  LogPrintf("set nOutput to dataPosition\n");
-	  nOutput = dataPosition;
-	  }
-	  LogPrintf("nOutput = %d\n",nOutput);
-	  if (!txid and nOutput < 0) {
-	  LogPrintf("scriptComment variant 1\n");
-	  scriptComment = CScript() << ParseHex(commentHex) << OP_COMMENT;
-	  }
-	  else if (!txid) {
-	  LogPrintf("scriptComment variant 2\n");
-	  scriptComment = CScript() << (int64_t)nOutput << ParseHex(commentHex) << OP_COMMENT;
-	  }
-	  else if (nOutput < 0) {
-	  LogPrintf("scriptComment variant 3\n");
-	  scriptComment = CScript() << ParseHex(txid) << ParseHex(commentHex) << OP_COMMENT;
-	  }
-	  else {
-	  LogPrintf("scriptComment variant 4\n");
-	  scriptComment = CScript() << ParseHex(txid) << (int64_t)nOutput << ParseHex(commentHex) << OP_COMMENT;
-	  }
-	  LogPrintf("scriptComment = %s nOutput = %d\n",HexStr(scriptComment),nOutput);
-	  CTxOut newTxOut(0,scriptComment);
-	  wtxNew.vout.insert(position, newTxOut);
-	  }*/
-	
+		
 	// Fill vin
 	BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)
 	  wtxNew.vin.push_back(CTxIn(coin.first->GetHash(),coin.second));
