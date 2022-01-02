@@ -830,8 +830,10 @@ Value mark(const Array& params, bool fHelp) {
       descLang = val.get_str().c_str();
       }*/
   LogPrintf("hashHex %s hashType %s\n",hashHex,hashType);
-  LogPrintf("linkProtocol %s linkHost %s linkPort %s linkPath %s linkCertHashHex %s linkCertHashType %s\n",linkProtocol,linkHost,linkPort,linkPath,linkCertHashHex,linkCertHashType);
-  LogPrintf("descText %s descLang %s\n",descText,descLang);
+  if (linkProtocol)
+    LogPrintf("linkProtocol %s linkHost %s linkPort %s linkPath %s linkCertHashHex %s linkCertHashType %s\n",linkProtocol,linkHost,linkPort,linkPath,linkCertHashHex,linkCertHashType);
+  if (descText && descLang)
+    LogPrintf("descText %s descLang %s\n",descText,descLang);
 
   // check format of data
 
@@ -844,24 +846,24 @@ Value mark(const Array& params, bool fHelp) {
     throw runtime_error("hash hex must be of hex format");
 
   printf("check linkprotocol\n");
-  if (!IsBase38(linkProtocol))
+  if (linkProtocol && !IsBase38(linkProtocol))
     throw runtime_error("link protocol must be base38");
   printf("check linkhost\n");
-  if (!IsBase38(linkHost))
+  if (linkHost && !IsBase38(linkHost))
     throw runtime_error("link host must be base38");
   printf("check linkPort\n");
-  if (!IsBase38(linkPort))
+  if (linkPort && !IsBase38(linkPort))
     throw runtime_error("link port must be base38");
   printf("check linkPath\n");
-  if (!IsBase38(linkPath))
+  if (linkPath && !IsBase38(linkPath))
     throw runtime_error("link path must be base38");
-  if (!IsBase38(linkCertHashType))
+  if (linkCertHashType && !IsBase38(linkCertHashType))
     throw runtime_error("link cert hash type must be base38");
-  if (!IsHex(string(linkCertHashHex)))
+  if (linkCertHashHex && !IsHex(string(linkCertHashHex)))
     throw runtime_error("link cert hash hex must be of hex format");
-  if (!IsBase38(descLang))
+  if (descLang && !IsBase38(descLang))
     throw runtime_error("desc lang must be base38");
-  if (!IsBase38(descText))
+  if (descText && !IsBase38(descText))
     throw runtime_error("desc text must be base38");
   
   Mark mark;
@@ -897,37 +899,39 @@ Value mark(const Array& params, bool fHelp) {
   LogPrintf("\n");*/
 
   std::vector<uchar> vLinkProtocol;
-  if (!DecodeBase38(linkProtocol,vLinkProtocol))
+  if (linkProtocol && !DecodeBase38(linkProtocol,vLinkProtocol))
     throw runtime_error("Can't decode link protocol");
   mark.linkProtocol = vLinkProtocol;
   std::vector<uchar> vLinkHost;
-  if (!DecodeBase38(linkHost,vLinkHost))
+  if (linkHost && !DecodeBase38(linkHost,vLinkHost))
     throw runtime_error("Can't decode link host");
   mark.linkHost = vLinkHost;
   std::vector<uchar> vLinkPort;
-  if (!DecodeBase38(linkPort,vLinkPort))
+  if (linkPort && !DecodeBase38(linkPort,vLinkPort))
     throw runtime_error("Can't decode link port");
   mark.linkPort = vLinkPort;
   std::vector<uchar> vLinkPath;
-  if (!DecodeBase38(linkPath,vLinkPath))
+  if (linkPath && !DecodeBase38(linkPath,vLinkPath))
     throw runtime_error("Can't decode link path");
   mark.linkPath = vLinkPath;
   std::vector<uchar> vLinkCertHashType;
-  if (!DecodeBase38(linkCertHashType,vLinkCertHashType))
+  if (linkCertHashType && !DecodeBase38(linkCertHashType,vLinkCertHashType))
     throw runtime_error("Can't decode link cert hash type");
   mark.linkCertHashType = vLinkCertHashType;
-  std::vector<uchar> vLinkCertHashHex = ParseHex(linkCertHashHex);
-  if (vLinkCertHashHex.size() < 32)
+  std::vector<uchar> vLinkCertHashHex;
+  if (linkCertHashHex)
+    vLinkCertHashHex = ParseHex(linkCertHashHex);
+  if (linkCertHashHex && vLinkCertHashHex.size() < 32)
     throw runtime_error("Link Cert Hash must be at least 32 bytes");
   mark.linkCertHashHex = vLinkCertHashHex;
 
   std::vector<uchar> vDescLang;
-  if (!DecodeBase38(descLang,vDescLang))
+  if (descLang && !DecodeBase38(descLang,vDescLang))
     throw runtime_error("Can't decode desc lang");
   mark.descLang = vDescLang;
 
   std::vector<uchar> vDescText;
-  if (!DecodeBase38(descText,vDescText))
+  if (descText && !DecodeBase38(descText,vDescText))
     throw runtime_error("Can't decode desc text");
   mark.descText = vDescText;
  

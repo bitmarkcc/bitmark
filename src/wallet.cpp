@@ -1366,12 +1366,12 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
                     }
                     wtxNew.vout.push_back(txout);
                 }
-
+		
                 // Choose coins to use
                 set<pair<const CWalletTx*,unsigned int> > setCoins;
                 int64_t nValueIn = 0;
                 if (!SelectCoins(nTotalValue, setCoins, nValueIn, coinControl))
-                {
+		  {
                     strFailReason = _("Insufficient funds");
                     return false;
                 }
@@ -1397,7 +1397,7 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
                 }
 
                 if (nChange > 0)
-                {
+		  {
                     // Fill a vout to ourself
                     // TODO: pass in scriptChange instead of reservekey so
                     // change transaction isn't always pay-to-bitmark-address
@@ -1409,34 +1409,34 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 
                     // no coin control: send change to newly generated address
                     else
-                    {
+		      {
                         // Note: We use a new key here to keep it from being obvious which side is the change.
                         //  The drawback is that by not reusing a previous key, the change may be lost if a
                         //  backup is restored, if the backup doesn't have the new private key for the change.
                         //  If we reused the old key, it would be possible to add code to look for and
                         //  rediscover unknown transactions that were written with keys of ours to recover
                         //  post-backup change.
-
+			
                         // Reserve a new key pair from key pool
                         CPubKey vchPubKey;
                         bool ret;
                         ret = reservekey.GetReservedKey(vchPubKey);
                         assert(ret); // should never fail, as we just unlocked
-
+			
                         scriptChange.SetDestination(vchPubKey.GetID());
-                    }
-
+		      }
+		    
                     CTxOut newTxOut(nChange, scriptChange);
-
+		    
                     // Never create dust outputs; if we would, just
                     // add the dust to the fee.
                     if (newTxOut.IsDust(CTransaction::nMinRelayTxFee))
-                    {
+		      {
                         nFeeRet += nChange;
                         reservekey.ReturnKey();
-                    }
+		      }
                     else
-                    {
+		      {
                         // Insert change txn at random position:
                         vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
 			LogPrintf("insert change txn at position %d\n",position-wtxNew.vout.begin());
@@ -1446,126 +1446,228 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
                 else
                     reservekey.ReturnKey();
 
-		printf("get hash position\n");
-
-		std::vector<uchar> pubkey1;
-		pubkey1.push_back(6);
-		pubkey1.push_back(68);
-		int lenHashType = mark.hashType.size();
-		printf("len hash type = %d\n",lenHashType);
-		if (lenHashType>0) {
-		  pubkey1.push_back(lenHashType);
-		}
-		for (int i=0; i<lenHashType; i++) {
-		  pubkey1.push_back(mark.hashType[i]);
-		}
-		string sPubkey1 = EncodeBase38(mark.hashType);
-		LogPrintf("sPubkey1 = %s\n",sPubkey1.c_str());
-		int lenHashHex = mark.hashHex.size();
-		printf("len hash hex = %d\n",lenHashHex);
-		if (lenHashHex>0) {
-		  pubkey1.push_back(lenHashHex);
-		}
-		for (int i=0; i<lenHashHex; i++) {
-		  pubkey1.push_back(mark.hashHex[i]);
-		}
-		sPubkey1 = EncodeBase38(mark.hashHex);
-		LogPrintf("sPubkey1 = %s\n",sPubkey1.c_str());
-
-		std::vector<uchar> pubkey2;
-		pubkey2.push_back(6);
-		pubkey2.push_back(72);
-		int lenLinkProtocol = mark.linkProtocol.size();
-		printf("len link protocol = %d\n",lenLinkProtocol);
-		if (lenLinkProtocol>0) {
-		  pubkey2.push_back(lenLinkProtocol);
-		}
-		for (int i=0; i<lenLinkProtocol; i++) {
-		  pubkey2.push_back(mark.linkProtocol[i]);
-		}
-		int lenLinkHost = mark.linkHost.size();
-		printf("len link host = %d\n",lenLinkHost);
-		if (lenLinkHost>0) {
-		  pubkey2.push_back(lenLinkHost);
-		}
-		for (int i=0; i<lenLinkHost; i++) {
-		  pubkey2.push_back(mark.linkHost[i]);
-		}
-		int lenLinkCertHashType = mark.linkCertHashType.size();
-		printf("len link cert hash type = %d\n",lenLinkCertHashType);
-		if (lenLinkCertHashType>0) {
-		  pubkey2.push_back(lenLinkCertHashType);
-		}
-		for (int i=0; i<lenLinkCertHashType; i++) {
-		  pubkey2.push_back(mark.linkCertHashType[i]);
-		}
-		int lenLinkCertHashHex = mark.linkCertHashHex.size();
-		printf("len link cert hash hex = %d\n",lenLinkCertHashHex);
-		if (lenLinkCertHashHex>0) {
-		  pubkey2.push_back(lenLinkCertHashHex);
-		}
-		for (int i=0; i<lenLinkCertHashHex; i++) {
-		  pubkey2.push_back(mark.linkCertHashHex[i]);
-		}
-
-		CPubKey hashKey = CPubKey(pubkey1);
-		CPubKey linkKey = CPubKey(pubkey2);
-		CScript scriptHash;
-		
-		/*		CPubKey spendKey;
-		if (!this->GetKeyFromPool(spendKey)) {
-		  strFailReason = _("Keypool ran out, please call keypoolrefill first");
-		  return false;
-		  }*/
-		
 		CKey key;
-		key.MakeNewKey(false); // make new key for spending, because a standard tx needs to pass the dust limit
+		key.MakeNewKey(false);
 		CPubKey spendKey = key.GetPubKey();
 		CBitmarkSecret privKey;
 		privKey.SetKey(key);
 		LogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),privKey.ToString().c_str());
+
+		bool haveH = false;
+		bool haveL = false;
+		bool haveD = false;
+
+		std::vector<uchar> pubkeyH;
+		unsigned int lenHashHex = mark.hashHex.size();
+		if (lenHashHex) {
+		  pubkeyH.push_back(6);
+		  pubkeyH.push_back('h');
+		  unsigned int lenHashType = mark.hashType.size();
+		  if (lenHashType > 15) {
+		    pubkeyH.push_back(0x10);
+		    pubkeyH.push_back(lenHashType);
+		  }
+		  else {
+		    pubkeyH.push_back(0x10+lenHashType);
+		  }
+		  for (int i=0; i<lenHashType; i++) {
+		    pubkeyH.push_back(mark.hashType[i]);
+		  }
+		  if (lenHashHex > 15) {
+		    pubkeyH.push_back(0x20);
+		    pubkeyH.push_back(lenHashHex);
+		  }
+		  else {
+		    pubkeyH.push_back(0x20+lenHashHex);
+		  }
+		  for (int i=0; i<lenHashHex; i++) {
+		    pubkeyH.push_back(mark.hashHex[i]);
+		  }
+		  while (pubkeyH.size()<65) {
+		    pubkeyH.push_back(0);
+		  }
+		  haveH = true;
+		}
+
+		unsigned int lenLinkHost = mark.linkHost.size();
+		std::vector<uchar> pubkeyL;
+		if (lenLinkHost) {
+		  pubkeyL.push_back(6);
+		  pubkeyL.push_back('l');
+		  int lenLinkProtocol = mark.linkProtocol.size();
+		  if (lenLinkProtocol > 15) {
+		    pubkeyL.push_back(0x10);
+		    pubkeyL.push_back(lenLinkProtocol);
+		  }
+		  else {
+		    pubkeyL.push_back(0x10+lenLinkProtocol);
+		  }
+		  for (int i=0; i<lenLinkProtocol; i++) {
+		    pubkeyL.push_back(mark.linkProtocol[i]);
+		  }
+		  int lenLinkHost = mark.linkHost.size();
+		  if (lenLinkHost > 15) {
+		    pubkeyL.push_back(0x20);
+		    pubkeyL.push_back(lenLinkHost);
+		  }
+		  else {
+		    pubkeyL.push_back(0x20+lenLinkHost);
+		  }
+		  for (int i=0; i<lenLinkHost; i++) {
+		    pubkeyL.push_back(mark.linkHost[i]);
+		  }
+		  int lenLinkPort = mark.linkPort.size();
+		  if (lenLinkPort > 15) {
+		    pubkeyL.push_back(0x30);
+		    pubkeyL.push_back(lenLinkPort);
+		  }
+		  else {
+		    pubkeyL.push_back(0x30+lenLinkPort);
+		  }
+		  for (int i=0; i<lenLinkPort; i++) {
+		    pubkeyL.push_back(mark.linkPort[i]);
+		  }
+		  int lenLinkPath = mark.linkPath.size();
+		  if (lenLinkPath > 15) {
+		    pubkeyL.push_back(0x40);
+		    pubkeyL.push_back(lenLinkPath);
+		  }
+		  else {
+		    pubkeyL.push_back(0x40+lenLinkPath);
+		  }
+		  for (int i=0; i<lenLinkPath; i++) {
+		    pubkeyL.push_back(mark.linkPath[i]);
+		  }
+		  int lenLinkCertHashType = mark.linkCertHashType.size();
+		  if (lenLinkCertHashType > 15) {
+		    pubkeyL.push_back(0x50);
+		    pubkeyL.push_back(lenLinkCertHashType);
+		  }
+		  else {
+		    pubkeyL.push_back(0x50+lenLinkCertHashType);
+		  }
+		  for (int i=0; i<lenLinkCertHashType; i++) {
+		    pubkeyL.push_back(mark.linkCertHashType[i]);
+		  }
+		  int lenLinkCertHashHex = mark.linkCertHashHex.size();
+		  if (lenLinkCertHashHex > 15) {
+		    pubkeyL.push_back(0x60);
+		    pubkeyL.push_back(lenLinkCertHashHex);
+		  }
+		  else {
+		    pubkeyL.push_back(0x60+lenLinkCertHashHex);
+		  }
+		  for (int i=0; i<lenLinkCertHashHex; i++) {
+		    pubkeyL.push_back(mark.linkCertHashHex[i]);
+		  }
+		  while (pubkeyL.size()<65) {
+		    pubkeyL.push_back(0);
+		  }
+		  haveL = true;
+		}
+
+		std::vector<uchar> pubkeyD;
+		unsigned int lenDescText = mark.descText.size();
+		if (lenDescText) {
+		  pubkeyD.push_back(6);
+		  pubkeyD.push_back('d');
+		  unsigned int lenDescLang = mark.descLang.size();
+		  if (lenDescLang > 15) {
+		    pubkeyD.push_back(0x10);
+		    pubkeyD.push_back(lenDescLang);
+		  }
+		  else {
+		    pubkeyD.push_back(0x10+lenDescLang);
+		  }
+		  for (int i=0; i<lenDescLang; i++) {
+		    pubkeyD.push_back(mark.descLang[i]);
+		  }
+		  if (lenDescText > 15) {
+		    pubkeyD.push_back(0x20);
+		    pubkeyD.push_back(lenDescText);
+		  }
+		  else {
+		    pubkeyD.push_back(0x20+lenDescText);
+		  }
+		  for (int i=0; i<lenDescText; i++) {
+		    pubkeyD.push_back(mark.descText[i]);
+		  }
+		  while (pubkeyD.size()<65) {
+		    pubkeyD.push_back(0);
+		  }
+		  haveD = true;
+		}
+
+		CPubKey hashKey;
+		CPubKey linkKey;
+		CPubKey descKey;
+		if (haveH) {
+		  hashKey = CPubKey(pubkeyH);
+		}
+		else {
+		  hashKey = spendKey;
+		}
+		if (haveL) {
+		  linkKey = CPubKey(pubkeyL);
+		}
+		else {
+		  linkKey = spendKey;
+		}
+		if (haveD) {
+		  descKey = CPubKey(pubkeyD);
+		}
+		else {
+		  descKey = spendKey;
+		}
 		
-		scriptHash = CScript() << OP_1 << hashKey << linkKey << spendKey << OP_3 << OP_CHECKMULTISIG;
+		CScript scriptHash;
+
+		if (haveL) {
+		  scriptHash = CScript() << OP_1 << hashKey << linkKey << descKey << OP_3 << OP_CHECKMULTISIG;
+		}
+		else {
+		  scriptHash = CScript() << OP_1 << hashKey << descKey << linkKey << OP_3 << OP_CHECKMULTISIG;
+		}
 
 		CTxOut newTxOut = CTxOut(10000,scriptHash); // 10000 sat
 		vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
 		wtxNew.vout.insert(position, newTxOut);
-	    }
 		
-	// Fill vin
-	BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)
-	  wtxNew.vin.push_back(CTxIn(coin.first->GetHash(),coin.second));
-	
-	// Sign
-	int nIn = 0;
-	BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)
-	  if (!SignSignature(*this, *coin.first, wtxNew, nIn++))
-	    {
-	      strFailReason = _("Signing transaction failed");
-	      return false;
-	    }
-	
-	// Limit size
-	unsigned int nBytes = ::GetSerializeSize(*(CTransaction*)&wtxNew, SER_NETWORK, PROTOCOL_VERSION);
-	if (nBytes >= MAX_STANDARD_TX_SIZE)
-	  {
-	    strFailReason = _("Transaction too large");
-	    return false;
-	  }
+		
+		// Fill vin
+		BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)
+		  wtxNew.vin.push_back(CTxIn(coin.first->GetHash(),coin.second));
+		
+		// Sign
+		int nIn = 0;
+		BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)
+		  if (!SignSignature(*this, *coin.first, wtxNew, nIn++))
+		    {
+		      strFailReason = _("Signing transaction failed");
+		      return false;
+		    }
+		
+		// Limit size
+		unsigned int nBytes = ::GetSerializeSize(*(CTransaction*)&wtxNew, SER_NETWORK, PROTOCOL_VERSION);
+		if (nBytes >= MAX_STANDARD_TX_SIZE)
+		  {
+		    strFailReason = _("Transaction too large");
+		    return false;
+		  }
                 dPriority = wtxNew.ComputePriority(dPriority, nBytes);
-
+		
                 // Check that enough fee is included
                 int64_t nPayFee = nTransactionFee * (1 + (int64_t)nBytes / 1000);
                 bool fAllowFree = AllowFree(dPriority);
                 int64_t nMinFee = GetMinFee(wtxNew, nBytes, fAllowFree, GMF_SEND);
                 if (nFeeRet < max(nPayFee, nMinFee))
-                {
+		  {
                     nFeeRet = max(nPayFee, nMinFee);
                     continue;
-                }
-
+		  }
+		
                 wtxNew.fTimeReceivedIsTxTime = true;
-
+		
                 break;
             }
         }
@@ -1678,7 +1780,7 @@ string CWallet::SendMoneyNoDestination(CWalletTx& wtxNew, Mark mark)
 	strError = strprintf(_("Error: This transaction requires a transaction fee of at least %s because of its amount, complexity,\
  or use of recently received funds!"), FormatMoney(nFeeRequired));
       LogPrintf("SendMoney() : %s\n", strError);
-      return strError;
+      //return strError;
     }
 
   if (!CommitTransaction(wtxNew, reservekey))

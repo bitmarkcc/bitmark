@@ -573,4 +573,6 @@ template <typename Callable> void TraceThread(const char* name,  Callable func)
     }
 }
 
+std::string hexify(std::vector<unsigned char> const & v);
+
 #endif
