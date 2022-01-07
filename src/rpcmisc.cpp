@@ -839,10 +839,10 @@ Value mark(const Array& params, bool fHelp) {
 
   printf("check data format\n");
   
-  if (!IsBase38(hashType))
+  if (hashType && !IsBase38(hashType))
     throw runtime_error("hash type must be base38");
 
-  if (!IsHex(string(hashHex)))
+  if (hashHex && !IsHex(string(hashHex)))
     throw runtime_error("hash hex must be of hex format");
 
   printf("check linkprotocol\n");
@@ -869,7 +869,7 @@ Value mark(const Array& params, bool fHelp) {
   Mark mark;
   
   std::vector<uchar> vHashType;
-  if (!DecodeBase38(hashType,vHashType))
+  if (hashType && !DecodeBase38(hashType,vHashType))
     throw runtime_error("Can't decode hash type");
   mark.hashType = vHashType;
 
@@ -889,7 +889,7 @@ Value mark(const Array& params, bool fHelp) {
      mark.hashType = vHashType;*/
   
   std::vector<uchar> vHashHex = ParseHex(hashHex);
-  if (vHashHex.size() < 32)
+  if (hashHex && vHashHex.size() < 32)
     throw runtime_error("Hash must be at least 32 bytes");
   mark.hashHex = vHashHex;
   /*LogPrintf("vHashHex = \n");

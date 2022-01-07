@@ -1527,17 +1527,17 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		  for (int i=0; i<lenLinkPort; i++) {
 		    pubkeyL.push_back(mark.linkPort[i]);
 		  }
-		  int lenLinkPath = mark.linkPath.size();
+		  /*int lenLinkPath = mark.linkPath.size();
 		  if (lenLinkPath > 15) {
 		    pubkeyL.push_back(0x40);
 		    pubkeyL.push_back(lenLinkPath);
 		  }
 		  else {
 		    pubkeyL.push_back(0x40+lenLinkPath);
-		  }
+		    }
 		  for (int i=0; i<lenLinkPath; i++) {
 		    pubkeyL.push_back(mark.linkPath[i]);
-		  }
+		    }*/
 		  int lenLinkCertHashType = mark.linkCertHashType.size();
 		  if (lenLinkCertHashType > 15) {
 		    pubkeyL.push_back(0x50);
@@ -1622,11 +1622,14 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		
 		CScript scriptHash;
 
-		if (haveL) {
+		if (haveH && haveL) {
 		  scriptHash = CScript() << OP_1 << hashKey << linkKey << descKey << OP_3 << OP_CHECKMULTISIG;
 		}
-		else {
+		else if (haveH && haveD) {
 		  scriptHash = CScript() << OP_1 << hashKey << descKey << linkKey << OP_3 << OP_CHECKMULTISIG;
+		}
+		else if (haveL && haveD) {
+		  scriptHash = CScript() << OP_1 << linkKey << descKey << hashKey << OP_3 << OP_CHECKMULTISIG;
 		}
 
 		CTxOut newTxOut = CTxOut(10000,scriptHash); // 10000 sat
