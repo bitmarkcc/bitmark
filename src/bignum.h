@@ -58,14 +58,6 @@ public:
 /** C++ wrapper for BIGNUM (OpenSSL bignum) */
 class CBigNum
 {
-protected:
-    BIGNUM  *bn;
-
-    void init()
-    {
-        bn = BN_new();
-    }
-
 public:
     BIGNUM  *bn;
 
@@ -101,26 +93,12 @@ public:
         BN_clear_free(bn);
     }
 
-<<<<<<< HEAD
-    BIGNUM *operator &() const
-    {
-        return bn;
-    }
-
     CBigNum(signed char n)      { init(); if (n >= 0) setulong(n); else setint64(n); }
     CBigNum(short n)            { init(); if (n >= 0) setulong(n); else setint64(n); }
     CBigNum(int n)              { init(); if (n >= 0) setulong(n); else setint64(n); }
     CBigNum(long n)             { init(); if (n >= 0) setulong(n); else setint64(n); }
     CBigNum(long long n)        { init(); setint64(n); }
 
-=======
-    CBigNum(signed char n)      { init(); if (n >= 0) setulong(n); else setint64(n); }
-    CBigNum(short n)            { init(); if (n >= 0) setulong(n); else setint64(n); }
-    CBigNum(int n)              { init(); if (n >= 0) setulong(n); else setint64(n); }
-    CBigNum(long n)             { init(); if (n >= 0) setulong(n); else setint64(n); }
-    CBigNum(long long n)        { init(); setint64(n); }
-
->>>>>>> ak/0.9.7.4
     CBigNum(unsigned char n)    { init(); setulong(n); }
     CBigNum(unsigned short n)   { init(); setulong(n); }
     CBigNum(unsigned int n)     { init(); setulong(n); }
@@ -203,11 +181,7 @@ public:
         BN_mpi2bn(pch, p - pch, bn);
     }
 
-<<<<<<< HEAD
-    uint64 getuint64()
-=======
   uint64 getuint64()
->>>>>>> ak/0.9.7.4
     {
         unsigned int nSize = BN_bn2mpi(bn, NULL);
         if (nSize < 4)
@@ -369,13 +343,8 @@ public:
         else
         {
             CBigNum bn1;
-<<<<<<< HEAD
-            BN_rshift(&bn1, bn, 8*(nSize-3));
-            nCompact = BN_get_word(&bn1);
-=======
             BN_rshift(bn1.bn, bn, 8*(nSize-3));
             nCompact = BN_get_word(bn1.bn);
->>>>>>> ak/0.9.7.4
         }
         // The 0x00800000 bit denotes the sign.
         // Thus, if it is already set, divide the mantissa by 256 and increase the exponent.
@@ -434,16 +403,6 @@ public:
         CBigNum bn0 = 0;
         std::string str;
         CBigNum bn1 = *this;
-<<<<<<< HEAD
-        BN_set_negative(&bn1, false);
-        CBigNum dv;
-        CBigNum rem;
-        if (BN_cmp(&bn1, &bn0) == 0)
-            return "0";
-        while (BN_cmp(&bn1, &bn0) > 0)
-        {
-            if (!BN_div(&dv, &rem, &bn1, &bnBase, pctx))
-=======
         BN_set_negative(bn1.bn, false);
         CBigNum dv;
         CBigNum rem;
@@ -452,7 +411,6 @@ public:
         while (BN_cmp(bn1.bn, bn0.bn) > 0)
         {
             if (!BN_div(dv.bn, rem.bn, bn1.bn, bnBase.bn, pctx))
->>>>>>> ak/0.9.7.4
                 throw bignum_error("CBigNum::ToString() : BN_div failed");
             bn1 = dv;
             unsigned int c = rem.getulong();
@@ -496,11 +454,7 @@ public:
 
     CBigNum& operator+=(const CBigNum& b)
     {
-<<<<<<< HEAD
-        if (!BN_add(bn, bn, &b))
-=======
         if (!BN_add(bn, bn, b.bn))
->>>>>>> ak/0.9.7.4
             throw bignum_error("CBigNum::operator+= : BN_add failed");
         return *this;
     }
@@ -514,11 +468,7 @@ public:
     CBigNum& operator*=(const CBigNum& b)
     {
         CAutoBN_CTX pctx;
-<<<<<<< HEAD
-        if (!BN_mul(bn, bn, &b, pctx))
-=======
         if (!BN_mul(bn, bn, b.bn, pctx))
->>>>>>> ak/0.9.7.4
             throw bignum_error("CBigNum::operator*= : BN_mul failed");
         return *this;
     }

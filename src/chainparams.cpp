@@ -77,18 +77,6 @@ public:
         assert(hashGenesisBlock == uint256("0xc1fb746e87e89ae75bdec2ef0639a1f6786744639ce3d0ece1dcf979b79137cb"));
         assert(genesis.hashMerkleRoot == uint256("0xd4715adf41222fae3d4bf41af30c675bc27228233d0f3cfd4ae0ae1d3e760ba8"));
 
-        // DNS Seeders - Verified, December 15, 2017 - dBKeys
-
-//        vSeeds.push_back(CDNSSeedData("bitmark.one",   "biji.bitmark.one"));
-//        vSeeds.push_back(CDNSSeedData("bitmark.one",  "shido.bitmark.one"));
-//        vSeeds.push_back(CDNSSeedData("zmark.org",         "ra.zmark.org"));
-//        vSeeds.push_back(CDNSSeedData("zmark.org",      "shiba.zmark.org"));
-//        vSeeds.push_back(CDNSSeedData("zmark.org",       "btmk.zmark.org"));
-//        vSeeds.push_back(CDNSSeedData("bitmark.guru", "btmk.bitmark.guru"));
-//        vSeeds.push_back(CDNSSeedData("bitmark.guru",   "da.bitmark.guru"));
-//        vSeeds.push_back(CDNSSeedData("bitmark.one",      "da.bitmark.mx"));
-//        vSeeds.push_back(CDNSSeedData("zmark.org",        "btm.zmark.org"));
-
         // DNS Seeders - Verified       03 08 21   March 8, 2021 
         //                               Domain                  Sub-Domain        Location   
         vSeeds.push_back(CDNSSeedData("bitmark.guru",        "da.bitmark.guru"));    // DE Frank 

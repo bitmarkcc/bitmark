@@ -323,7 +323,6 @@ public:
                 }
             }
             assert(fOk);
-            ECDSA_SIG_get0(sig, (const BIGNUM **)&r, (const BIGNUM **)&s);
             BN_bn2bin(r,&p64[32-(nBitsR+7)/8]);
             BN_bn2bin(s,&p64[64-(nBitsS+7)/8]);
         }

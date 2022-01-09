@@ -435,15 +435,8 @@ Value getwork(const Array& params, bool fHelp)
         CBlock* pblock = &pblocktemplate->block; // pointer for convenience
 
 	if ((pindexPrev->nHeight >= nForkHeight - 1 && CBlockIndex::IsSuperMajority(4,pindexPrev,75,100))) {
+	  //pblock->nVersion = 3;
 	  pblock->SetAlgo(miningAlgo);
-	}
-
-	if ((pindexPrev->nHeight >= nForkHeight - 1 && CBlockIndex::IsSuperMajorityVariant12(4,true,pindexPrev,950,1000))) {
-	  pblock->SetVariant(true);
-	}
-
-	if ((pindexPrev->nHeight >= nForkHeight - 1 && CBlockIndex::IsSuperMajorityVariant2(4,true,pindexPrev,950,1000))) {
-	  pblock->SetVariant2(true);
 	}
 
         // Update nTime
@@ -731,7 +724,6 @@ Value submitblock(const Array& params, bool fHelp)
     return Value::null;
 }
 
-#ifdef ENABLE_WALLET
 Value getauxblock(const Array& params, bool fHelp)
 {
   if (fHelp || (params.size() != 0 && params.size() != 2))
@@ -882,4 +874,3 @@ Value getauxblock(const Array& params, bool fHelp)
     return "rejected";
   return Value::null;
 }
-#endif

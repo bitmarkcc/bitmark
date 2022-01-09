@@ -1202,14 +1202,6 @@ bool onFork (const CBlockIndex * pindex) { // major changes: multi algo PoW, mer
   return pindex->onFork();
 }
 
-bool onFork2(const CBlockIndex * pindex) { // minor/technical changes
-  return pindex->onFork2();
-}
-
-bool onFork3(const CBlockIndex * pindex) { // strict subsidy
-  return pindex->onFork3();
-}
-
 int64_t GetBlockValue(CBlockIndex* pindex, int64_t nFees, bool noScale)
 {
     // for testnet
@@ -1245,10 +1237,9 @@ int64_t GetBlockValue(CBlockIndex* pindex, int64_t nFees, bool noScale)
     }
 
     unsigned int scalingFactor = 0;
-
     if (onForkNow && !noScale) {
       scalingFactor = pindex->subsidyScalingFactor;
-      if (!scalingFactor.getuint()) { // find the key block and recalculate
+      if (!scalingFactor) { // find the key block and recalculate
 	CBlockIndex * pprev_algo = pindex;
 	do {
 	  if (update_ssf(pprev_algo->nVersion)) {
@@ -1564,7 +1555,7 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, int algo) {
       if (lastInRow>=9 && !lastInRowMod) {
 	bnNew /= 3;
       }
-      else if (!justHadSurge || smultiply && CBlockIndex::IsSuperMajorityVariant12(4,true,pindexLast,950,1000)) {
+      else if (!justHadSurge) {
 	bnNew *= nActualTimespan;
 	bnNew /= _nTargetTimespan;
       }
@@ -4981,8 +4972,8 @@ bool update_ssf (int nVersion) {
   return nVersion & BLOCK_VERSION_UPDATE_SSF;
 }
 
-CBigNum get_ssf (CBlockIndex * pindex) {
-  CBigNum scalingFactor = CBigNum(0); // ensures that it has no effect
+unsigned int get_ssf (CBlockIndex * pindex) {
+  unsigned int scalingFactor = 0; // ensures that it has no effect
   CBlockIndex * pprev_algo = pindex;
   CBigNum hashes_peak = CBigNum(0);
   CBigNum hashes_cur = CBigNum(0);
