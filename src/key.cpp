@@ -80,6 +80,7 @@ int ECDSA_SIG_recover_key_GFp(EC_KEY *eckey, ECDSA_SIG *ecsig, const unsigned ch
     EC_POINT *Q = NULL;
     BIGNUM *rr = NULL;
     BIGNUM *zero = NULL;
+    BIGNUM *r = 0;
     BIGNUM *s = 0;
     int n = 0;
     int i = recid / 2;
@@ -92,8 +93,8 @@ int ECDSA_SIG_recover_key_GFp(EC_KEY *eckey, ECDSA_SIG *ecsig, const unsigned ch
     x = BN_CTX_get(ctx);
     if (!BN_copy(x, order)) { ret=-1; goto err; }
     if (!BN_mul_word(x, i)) { ret=-1; goto err; }
-    ECDSA_SIG_get0(ecsig, (const BIGNUM **)&s, 0);
-    if (!BN_add(x, x, s)) { ret=-1; goto err; }
+    ECDSA_SIG_get0(ecsig, (const BIGNUM **)&r, (const BIGNUM **)&s);
+    if (!BN_add(x, x, r)) { ret=-1; goto err; }
     // if (!BN_add(x, x, ecsig->r)) { ret=-1; goto err; }
     field = BN_CTX_get(ctx);
     if (!EC_GROUP_get_curve_GFp(group, field, NULL, NULL, ctx)) { ret=-2; goto err; }
@@ -115,11 +116,9 @@ int ECDSA_SIG_recover_key_GFp(EC_KEY *eckey, ECDSA_SIG *ecsig, const unsigned ch
     if (!BN_zero(zero)) { ret=-1; goto err; }
     if (!BN_mod_sub(e, zero, e, order, ctx)) { ret=-1; goto err; }
     rr = BN_CTX_get(ctx);
-    ECDSA_SIG_get0(ecsig, (const BIGNUM **)&s, 0);
-    if (!BN_mod_inverse(rr, s, order, ctx)) { ret=-1; goto err; }
+    if (!BN_mod_inverse(rr, r, order, ctx)) { ret=-1; goto err; }
     // if (!BN_mod_inverse(rr, ecsig->r, order, ctx)) { ret=-1; goto err; }
     sor = BN_CTX_get(ctx);
-    ECDSA_SIG_get0(ecsig, 0, (const BIGNUM **)&s);
     if (!BN_mod_mul(sor, s, rr, order, ctx)) { ret=-1; goto err; }
     // if (!BN_mod_mul(sor, ecsig->s, rr, order, ctx)) { ret=-1; goto err; }
     eor = BN_CTX_get(ctx);
@@ -219,6 +218,7 @@ public:
     }
 
     bool Sign(const uint256 &hash, std::vector<unsigned char>& vchSig) {
+      BIGNUM *r = 0;
         BIGNUM *s = 0;
         vchSig.clear();
         ECDSA_SIG *sig = ECDSA_do_sign((unsigned char*)&hash, sizeof(hash), pkey);
@@ -231,7 +231,7 @@ public:
         BIGNUM *halforder = BN_CTX_get(ctx);
         EC_GROUP_get_order(group, order, ctx);
         BN_rshift1(halforder, order);
-        ECDSA_SIG_get0(sig, 0, (const BIGNUM **)&s);
+        ECDSA_SIG_get0(sig, (const BIGNUM **)&r, (const BIGNUM **)&s);
         if (BN_cmp(s, halforder) > 0) {
             // enforce low S values, by negating the value (modulo the order) if above order/2.
             BN_sub(s, order, s);
@@ -342,6 +342,9 @@ public:
         if (rec<0 || rec>=3)
             return false;
         ECDSA_SIG *sig = ECDSA_SIG_new();
+	#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	ECDSA_SIG_set0(sig,BN_new(),BN_new());
+	#endif
         ECDSA_SIG_get0(sig, (const BIGNUM **)&r, (const BIGNUM **)&s);
         BN_bin2bn(&p64[0],  32, r);
         BN_bin2bn(&p64[32], 32, s);

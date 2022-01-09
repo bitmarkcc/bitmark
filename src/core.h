@@ -17,6 +17,7 @@
 #include "chainparams.h"
 #include "pureheader.h"
 
+// SSF - Subsidy Scaling Factor
 static const int nSSF = 720/NUM_ALGOS; //interval for ssf updates
 
 class CBlockHeader;
@@ -984,6 +985,18 @@ public:
             return 0;
 	unsigned int algo_weight = GetAlgoWeight(this->GetAlgo());
 	CBigNum weight(algo_weight);
+	/*if (RegTest()) {
+	  int exponent = Params().WorkExponent();
+	  LogPrintf("exponent = %d\n",exponent);
+	  CBigNum baseWork = CBigNum(0);
+	  if (exponent>=0) {
+	    baseWork = (CBigNum(1)<<exponent);
+	  }
+	  LogPrintf("baseWork = %.8f\n",baseWork.getuint256().getdouble());
+	  CBigNum varWork = (CBigNum(1)<<256) / (bnTarget/weight+1);
+	  LogPrintf("varWork = %.8f\n",varWork.getuint256().getdouble());
+	  return baseWork + varWork;
+	  }*/
 	//LogPrintf("algo is %d and weight is %lu\n",nVersion & BLOCK_VERSION_ALGO,weight.getulong());
         return (CBigNum(1)<<256) / (bnTarget/weight+1);
     }

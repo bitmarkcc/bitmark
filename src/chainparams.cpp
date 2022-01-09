@@ -27,9 +27,6 @@ unsigned int pnSeed[] =
         0x5E89B1E3,             // ge.bitmark.io        IP = 94.137.177.227     anton
         0x8BA27A8A,             // jp.bitmark.io        IP = 139.162.122.138    akio
         0x2D2141A1,             // us.bitmark.io        IP = 45.33.65.161       joe
-//        0xCC447A12,             // tx.bitmark.io        IP = 204.68.122.18      tex
-//        0xCC447A07,             // seed.bitmark.mx      IP = 204.68.122.7       jules
-//        0xCC447A0B,             // one.zmark.org        IP = 204.68.122.11      per
 	0x8BA223AA,		// sg.bitmark.co	IP = 139.162.35.170     ben
 };
 
@@ -103,11 +100,11 @@ public:
         vSeeds.push_back(CDNSSeedData("chainetics.com", "marks.chainetics.com"));    // SG ben 
  
         vSeeds.push_back(CDNSSeedData("bitmark.one",        "biji.bitmark.one"));    // CA marks  
-        vSeeds.push_back(CDNSSeedData("avalax.com",         "marks.avalax.com"));    // JP jin 
-        vSeeds.push_back(CDNSSeedData("zmark.org",           "shiba.zmark.org"));    // NJ j2     
- 
-        vSeeds.push_back(CDNSSeedData("zmark.org",            "btmk.zmark.org"));    // CA zappa 
         vSeeds.push_back(CDNSSeedData("bitmark.cc",       "dnsseed.bitmark.cc"));    // NJ joe 
+        vSeeds.push_back(CDNSSeedData("zmark.org",            "btmk.zmark.org"));    // CA zappa 
+
+        vSeeds.push_back(CDNSSeedData("zmark.org",           "shiba.zmark.org"));    // NJ j2     
+        vSeeds.push_back(CDNSSeedData("avalax.com",         "marks.avalax.com"));    // JP jin 
         vSeeds.push_back(CDNSSeedData("zmark.org",             "btm.zmark.org"));    // NJ vinny j0     
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,85); // b
@@ -196,7 +193,7 @@ public:
         {
             const int64_t nOneWeek = 7*24*60*60;
             struct in_addr ip;
-            memcpy(&ip, &pnSeed[i], sizeof(ip));
+            memcpy(&ip, &pnSeedTest[i], sizeof(ip));
             CAddress addr(CService(ip, GetDefaultPort()));
             addr.nTime = GetTime() - GetRand(nOneWeek) - nOneWeek;
             vFixedSeeds.push_back(addr);
@@ -255,6 +252,7 @@ public:
 	nEquihashN = 200;
 	nEquihashK = 9;
 	fMineBlocksOnDemand = true;
+	//nWorkExponent = 30;
 	//printf("regtest hashGenesisBlock = %s\n",hashGenesisBlock.GetHex().c_str());
 	//printf("powhashgenesis = %s\n",genesis.GetPoWHash().GetHex().c_str());
         assert(hashGenesisBlock == uint256("0x168329a349fc93768bfb02e536bbe1e1847d77a65764564552122fa9268d8841"));

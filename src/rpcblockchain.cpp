@@ -42,6 +42,8 @@ double GetDifficulty(const CBlockIndex* blockindex, int algo, bool weighted, boo
     }
     unsigned int nBits = 0;
     unsigned int algoWeight = 1;
+    // Q? <<<  Please comment on working of this code
+    // 3 Cases 
     if (weighted) algoWeight = GetAlgoWeight(algo);
     if (next) {
       nBits = GetNextWorkRequired(chainActive.Tip(),algo);
@@ -132,7 +134,7 @@ double GetPeakHashrate (const CBlockIndex* blockindex, int algo) {
 	  return std::numeric_limits<double>::max();
 	}
 	//LogPrintf("hashes = %f, time = %f\n",(double)hashes_bn.getulong(),(double)time_f);
-	double hashes = (((hashes_bn/time_f)/1000000)/1000).getulong();
+	double hashes = (((hashes_bn/time_f)/1000000)/1000).getuint256().getdouble();
 	//LogPrintf("hashes per sec = %f\n",hashes);
 	if (hashes>hashes_peak) hashes_peak = hashes;
       }
@@ -196,7 +198,7 @@ double GetCurrentHashrate (const CBlockIndex* blockindex, int algo) { //as used 
 	return std::numeric_limits<double>::max();
       }
       //LogPrintf("return %lu / %f\n",(double)hashes_bn.getulong(),(double)time_f);
-      return (((hashes_bn/time_f)/1000000)/1000).getulong();
+      return (((hashes_bn/time_f)/1000000)/1000).getuint256().getdouble();
     }
     blockindex = get_pprev_algo(blockindex,-1);
   } while (blockindex);
@@ -346,7 +348,6 @@ Object blockToJSON(const CBlock& block, const CBlockIndex* blockindex)
     result.push_back(Pair("height", blockindex->nHeight));
     result.push_back(Pair("version", block.nVersion));
     result.push_back(Pair("coreversion",GetBlockVersion(block.nVersion)));
-    result.push_back(Pair("variant",blockVariant));
     int algo = GetAlgo(block.nVersion);
     result.push_back(Pair("algo",GetAlgoName(algo)));
     bool auxpow = block.IsAuxpow();

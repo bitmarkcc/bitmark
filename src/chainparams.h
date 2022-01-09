@@ -73,6 +73,7 @@ public:
     unsigned int EquihashN() const { return nEquihashN; }
     unsigned int EquihashK() const { return nEquihashK; }
     bool MineBlocksOnDemand() const { return fMineBlocksOnDemand; }
+<<<<<<< HEAD
 
     // Fork2 in suspension (3/21/21)
     //int64_t GetFork2Height() const { return nForkHeight2; }
@@ -91,6 +92,10 @@ public:
     //int     CEM_MaxNativeBlockRewardReduction(int64_t blockHeight) const { return OnFork2(blockHeight) ? 80 : 50; }
 
 
+=======
+  int WorkExponent() const { return nWorkExponent; }
+    
+>>>>>>> ak/0.9.7.4
 protected:
     CChainParams() {}
 
@@ -111,6 +116,8 @@ protected:
     unsigned int nEquihashN = 0;
     unsigned int nEquihashK = 0;
     bool fMineBlocksOnDemand = true;
+  // for testing the overflow issue on regtest
+  int nWorkExponent = -1;
  
 };
 

@@ -12,6 +12,8 @@
 // target servers or GUI users specifically.
 const std::string CLIENT_NAME("Pfennig");
 
+// https://github.com/bitcoin/bitcoin/issues/4221
+// Standard convention in software release cycles: dev, alpha, beta, rc & stable.
 // Client version number
 #define CLIENT_VERSION_SUFFIX   "-beta"
 

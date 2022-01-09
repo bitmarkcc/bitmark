@@ -155,21 +155,21 @@ struct CMainSignals {
 }
 
 void RegisterWallet(CWalletInterface* pwalletIn) {
-    g_signals.SyncTransaction.connect(boost::bind(&CWalletInterface::SyncTransaction, pwalletIn, _1, _2, _3));
-    g_signals.EraseTransaction.connect(boost::bind(&CWalletInterface::EraseFromWallet, pwalletIn, _1));
-    g_signals.UpdatedTransaction.connect(boost::bind(&CWalletInterface::UpdatedTransaction, pwalletIn, _1));
-    g_signals.SetBestChain.connect(boost::bind(&CWalletInterface::SetBestChain, pwalletIn, _1));
-    g_signals.Inventory.connect(boost::bind(&CWalletInterface::Inventory, pwalletIn, _1));
+    g_signals.SyncTransaction.connect(boost::bind(&CWalletInterface::SyncTransaction, pwalletIn, boost::placeholders::_1, boost::placeholders::_2, boost::placeholders::_3));
+    g_signals.EraseTransaction.connect(boost::bind(&CWalletInterface::EraseFromWallet, pwalletIn, boost::placeholders::_1));
+    g_signals.UpdatedTransaction.connect(boost::bind(&CWalletInterface::UpdatedTransaction, pwalletIn, boost::placeholders::_1));
+    g_signals.SetBestChain.connect(boost::bind(&CWalletInterface::SetBestChain, pwalletIn, boost::placeholders::_1));
+    g_signals.Inventory.connect(boost::bind(&CWalletInterface::Inventory, pwalletIn, boost::placeholders::_1));
     g_signals.Broadcast.connect(boost::bind(&CWalletInterface::ResendWalletTransactions, pwalletIn));
 }
 
 void UnregisterWallet(CWalletInterface* pwalletIn) {
     g_signals.Broadcast.disconnect(boost::bind(&CWalletInterface::ResendWalletTransactions, pwalletIn));
-    g_signals.Inventory.disconnect(boost::bind(&CWalletInterface::Inventory, pwalletIn, _1));
-    g_signals.SetBestChain.disconnect(boost::bind(&CWalletInterface::SetBestChain, pwalletIn, _1));
-    g_signals.UpdatedTransaction.disconnect(boost::bind(&CWalletInterface::UpdatedTransaction, pwalletIn, _1));
-    g_signals.EraseTransaction.disconnect(boost::bind(&CWalletInterface::EraseFromWallet, pwalletIn, _1));
-    g_signals.SyncTransaction.disconnect(boost::bind(&CWalletInterface::SyncTransaction, pwalletIn, _1, _2, _3));
+    g_signals.Inventory.disconnect(boost::bind(&CWalletInterface::Inventory, pwalletIn, boost::placeholders::_1));
+    g_signals.SetBestChain.disconnect(boost::bind(&CWalletInterface::SetBestChain, pwalletIn, boost::placeholders::_1));
+    g_signals.UpdatedTransaction.disconnect(boost::bind(&CWalletInterface::UpdatedTransaction, pwalletIn, boost::placeholders::_1));
+    g_signals.EraseTransaction.disconnect(boost::bind(&CWalletInterface::EraseFromWallet, pwalletIn, boost::placeholders::_1));
+    g_signals.SyncTransaction.disconnect(boost::bind(&CWalletInterface::SyncTransaction, pwalletIn, boost::placeholders::_1, boost::placeholders::_2, boost::placeholders::_3));
 }
 
 void UnregisterAllWallets() {
@@ -1244,7 +1244,8 @@ int64_t GetBlockValue(CBlockIndex* pindex, int64_t nFees, bool noScale)
       emitted = NUM_ALGOS * get_mpow_ms_correction(pindex);
     }
 
-    CBigNum scalingFactor = CBigNum(0);
+    unsigned int scalingFactor = 0;
+
     if (onForkNow && !noScale) {
       scalingFactor = pindex->subsidyScalingFactor;
       if (!scalingFactor.getuint()) { // find the key block and recalculate
@@ -1738,7 +1739,7 @@ void CheckForkWarningConditions()
     if (pindexBestForkTip && chainActive.Height() - pindexBestForkTip->nHeight >= 180)
         pindexBestForkTip = NULL;
 
-    if (pindexBestForkTip || (pindexBestInvalid && pindexBestInvalid->nChainWork > chainActive.Tip()->nChainWork + (chainActive.Tip()->GetBlockWorkAv() * 30).getuint256()))
+    if (pindexBestForkTip || (pindexBestInvalid && pindexBestInvalid->nChainWork > chainActive.Tip()->nChainWork + (chainActive.Tip()->GetBlockWorkAv() * 24).getuint256()))
     {
         if (!fLargeWorkForkFound)
         {
@@ -1781,16 +1782,16 @@ void CheckForkWarningConditionsOnNewFork(CBlockIndex* pindexNewForkTip)
         pfork = pfork->pprev;
     }
 
-    // We define a condition which we should warn the user about as a fork of at least 31 blocks
+    // We define a condition which we should warn the user about as a fork of at least 25 blocks
     // who's tip is within 180 blocks (+/- 6 hours if no one mines it) of ours
-    // We use 31 blocks rather arbitrarily as it represents just under 10% of sustained network
+    // We use 25 blocks rather arbitrarily as it represents just under 10% of sustained network
     // hash rate operating on the fork.
     // or a chain that is entirely longer than ours and invalid (note that this should be detected by both)
     // We define it this way because it allows us to only store the highest fork tip (+ base) which meets
-    // the 31-block condition and from this always have the most-likely-to-cause-warning fork
-    //  31 was previously set to 7 blocks
+    // the 25-block condition and from this always have the most-likely-to-cause-warning fork
+    //  25 was previously set to 7 blocks
     if (pfork && (!pindexBestForkTip || (pindexBestForkTip && pindexNewForkTip->nHeight > pindexBestForkTip->nHeight)) &&
-            pindexNewForkTip->nChainWork - pfork->nChainWork > (pfork->GetBlockWorkAv() * 31).getuint256() &&
+            pindexNewForkTip->nChainWork - pfork->nChainWork > (pfork->GetBlockWorkAv() * 25).getuint256() &&
             chainActive.Height() - pindexNewForkTip->nHeight < 180)
     {
         pindexBestForkTip = pindexNewForkTip;
@@ -2124,23 +2125,17 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
     bool onForkNow = onFork(pindex);
     
     // Force min version after fork
+       // Q? <<<  commit 2880624
+       // Comment on version 4, 4.1, 4.2 etc
+       // <<<<< Fix unwarranted initial blockchain download (IBD) stalls >>>>>
+       // Look at commit c59e3fe
     if (onForkNow && block.nVersion<4) {
       LogPrintf("version<4 and after fork 1\n");
       return false;
     }
-
-    if (onFork2(pindex) && (GetBlockVersion(block.nVersion)<4 || (!GetBlockVariant(block.nVersion)&&!GetBlockVariant2(block.nVersion)))) {
-      LogPrintf("version<4.1 and after fork 2\n");
-      return false;
-    }
-
-    if (onFork3(pindex) && (GetBlockVersion(block.nVersion)<4 || !GetBlockVariant2(block.nVersion))) {
-      LogPrintf("version<4.2 and after fork 2b\n");
-      return false;
-    }
     
     // Check SSF
-    if (onForkNow) { //new multi algo blocks are identified like this
+    if (onForkNow) { //new multi-algo era blocks are identified like this
       CBlockIndex * pprev_algo = pindex;
       if (update_ssf(pindex->nVersion)) {
 	for (int i=0; i<nSSF; i++) {
@@ -2189,12 +2184,16 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
     // can be duplicated to remove the ability to spend the first instance -- even after
     // being sent to another address.
     // See BIP30 and http://r6.ca/blog/20120206T005236Z.html for more information.
+    //				from the blog of Russel O'Connor
     // This logic is not necessary for memory pool transactions, as AcceptToMemoryPool
     // already refuses previously-known transaction ids entirely.
     // This rule was originally applied all blocks whose timestamp was after March 15, 2012, 0:00 UTC.
     // Now that the whole chain is irreversibly beyond that time it is applied to all blocks except the
     // two in the chain that violate it. This prevents exploiting the issue against nodes in their
     // initial block download.
+
+    // Q? <<<
+    // Since Bitmark blockchain started in July of 2014, does this apply  ?
 
 	for (unsigned int i = 0; i < block.vtx.size(); i++) {
 		uint256 hash = block.GetTxHash(i);
@@ -2294,13 +2293,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
                                REJECT_INVALID, "bad-cb-amount");
 
     if (block.vtx[0].GetValueOut() < block_value_needed) {
-      LogPrintf("coinbase pays less than block value\n");
-      if (onFork3(pindex)) {
-	int64_t block_subsidy_needed = GetBlockValue(pindex,0,false);
-	if (block.vtx[0].GetValueOut() < block_subsidy_needed) {
-	  return state.DoS(100,error("ConnectBlock(): coinbase pays less than strict subsidy (actual=%d vs min=%d",block.vtx[0].GetValueOut(),block_subsidy_needed),REJECT_INVALID,"low-cb-amount");
-	}
-      }
+      LogPrintf("block %d coinbase (%lld) pays less than block value (%lld)\n",pindex->nHeight,block.vtx[0].GetValueOut(),block_value_needed);
     }
 
     if (!control.Wait())
@@ -4994,7 +4987,6 @@ CBigNum get_ssf (CBlockIndex * pindex) {
   CBigNum hashes_peak = CBigNum(0);
   CBigNum hashes_cur = CBigNum(0);
   for (int i=0; i<365; i++) { // use at most a year's worth of history
-    //LogPrintf("i=%d\n",i);
     pprev_algo = get_pprev_algo(pprev_algo,-1);
     if (!pprev_algo) {
       break;
@@ -5002,12 +4994,12 @@ CBigNum get_ssf (CBlockIndex * pindex) {
     CBigNum hashes = pprev_algo->GetBlockWork();
     unsigned int time_f = pprev_algo->GetMedianTimePast();
     unsigned int time_i = 0;
-    for (int j=0; j<nSSF-1; j++) {  // nSSF blocks = 24 hours, using only blocks from the same algo as the target block
+    for (int j=0; j<nSSF-1; j++) { // nSSF blocks = 24 hours, using only blocks from the same algo as the target block
       pprev_algo = get_pprev_algo(pprev_algo,-1);
       if (!pprev_algo) {
 	hashes = CBigNum(0);
 	break;
-      }
+     }
       hashes += pprev_algo->GetBlockWork();
       time_i = pprev_algo->GetMedianTimePast();
     }
@@ -5029,21 +5021,30 @@ CBigNum get_ssf (CBlockIndex * pindex) {
       //LogPrintf("time_f = %d while time_i = %d\n",time_f,time_i);
       return scalingFactor;
     }
-    //LogPrintf("hashes = %lu, time = %u\n",hashes.getulong(),time_f);
+    //LogPrintf("hashes = %.8e, time = %u\n",hashes.getuint256().getdouble(),time_f);
     hashes = (hashes*100000000)/time_f;
-    //LogPrintf("hashes per sec = %f\n",hashes);
+    //LogPrintf("hashes per sec = %.8e\n",hashes.getuint256().getdouble());
     if (hashes>hashes_peak) hashes_peak = hashes;
     if (i==0) hashes_cur = hashes;
   }
+  /*if (RegTest()) {
+    double hashes_cur_d = hashes_cur.getuint256().getdouble();
+    double hashes_peak_d = hashes_peak.getuint256().getdouble();
+    LogPrintf("hashes_cur = %.8e hashes_peak = %.8e\n",hashes_cur_d,hashes_peak_d);
+    LogPrintf("(long) hashes_cur = %ld hashes_peak = %lu\n",hashes_cur.getulong(),hashes_peak.getulong());
+    for (int i=0; i<1000; i++) {
+      hashes_cur = i;
+      hashes_peak = 1000;
+      CBigNum bnScalingFactor = (100000000*hashes_peak)/(hashes_peak-hashes_cur);
+      scalingFactor = (unsigned int)(bnScalingFactor.getuint64());
+      LogPrintf("%u : %u scalingFactor %u\n",i,1000,scalingFactor);
+    }
+    }*/
   if (hashes_peak > CBigNum(0) && hashes_cur != hashes_peak) {
-    if (onFork2(pindex)) {
-      scalingFactor = (100000000*hashes_peak)/(hashes_peak-hashes_cur);
-    }
-    else {
-      scalingFactor = CBigNum(((100000000*hashes_peak)/(hashes_peak-hashes_cur)).getuint());
-    }
+    scalingFactor = ((100000000*hashes_peak)/(hashes_peak-hashes_cur)).getuint();
   }
-  //LogPrintf("return scaling factor %lu\n",scalingFactor);
+  /*if (RegTest())
+    LogPrintf("return scaling factor %lu\n",scalingFactor);*/
   return scalingFactor;
 }
 
