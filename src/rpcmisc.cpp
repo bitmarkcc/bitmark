@@ -829,7 +829,8 @@ Value mark(const Array& params, bool fHelp) {
     if (val.type() == str_type)
       descLang = val.get_str().c_str();
       }*/
-  LogPrintf("hashHex %s hashType %s\n",hashHex,hashType);
+  if (hashHex)
+    LogPrintf("hashHex %s hashType %s\n",hashHex,hashType);
   if (linkProtocol)
     LogPrintf("linkProtocol %s linkHost %s linkPort %s linkPath %s linkCertHashHex %s linkCertHashType %s\n",linkProtocol,linkHost,linkPort,linkPath,linkCertHashHex,linkCertHashType);
   if (descText && descLang)
@@ -854,20 +855,24 @@ Value mark(const Array& params, bool fHelp) {
   printf("check linkPort\n");
   if (linkPort && !IsBase38(linkPort))
     throw runtime_error("link port must be base38");
-  printf("check linkPath\n");
+  printf("check linkPath a\n");
   if (linkPath && !IsBase38(linkPath))
     throw runtime_error("link path must be base38");
+  printf("a\n");
   if (linkCertHashType && !IsBase38(linkCertHashType))
     throw runtime_error("link cert hash type must be base38");
+  printf("b\n");
   if (linkCertHashHex && !IsHex(string(linkCertHashHex)))
     throw runtime_error("link cert hash hex must be of hex format");
+  printf("c\n");
   if (descLang && !IsBase38(descLang))
     throw runtime_error("desc lang must be base38");
+  printf("d\n");
   if (descText && !IsBase38(descText))
     throw runtime_error("desc text must be base38");
   
   Mark mark;
-  
+  printf("1a\n");
   std::vector<uchar> vHashType;
   if (hashType && !DecodeBase38(hashType,vHashType))
     throw runtime_error("Can't decode hash type");
@@ -887,17 +892,20 @@ Value mark(const Array& params, bool fHelp) {
   if (!DecodeBase38(dHashType,advHashType))
      throw runtime_error("Can't decode hash type");
      mark.hashType = vHashType;*/
-  
-  std::vector<uchar> vHashHex = ParseHex(hashHex);
+  printf("1b\n");
+  LogPrintf("do vHashHex\n");  
+  std::vector<uchar> vHashHex;
+  if (hashHex) {
+    vHashHex = ParseHex(hashHex);
+  }
   if (hashHex && vHashHex.size() < 32)
     throw runtime_error("Hash must be at least 32 bytes");
   mark.hashHex = vHashHex;
-  /*LogPrintf("vHashHex = \n");
+  LogPrintf("vHashHex = \n");
   for (int i=0; i<vHashHex.size(); i++) {
     LogPrintf("%c",vHashHex[i]);
   }
-  LogPrintf("\n");*/
-
+  LogPrintf("\n");
   std::vector<uchar> vLinkProtocol;
   if (linkProtocol && !DecodeBase38(linkProtocol,vLinkProtocol))
     throw runtime_error("Can't decode link protocol");
