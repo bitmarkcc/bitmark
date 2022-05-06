@@ -25,3 +25,11 @@ function ASSERT_GREATERTHAN {
 	return 1
     fi
 }
+
+function RET0 {
+    $@
+    while [[ "$?" != "0" ]]
+    do
+	$@
+    done
+}

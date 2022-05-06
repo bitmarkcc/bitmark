@@ -1632,9 +1632,11 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		  scriptHash = CScript() << OP_1 << linkKey << descKey << hashKey << OP_3 << OP_CHECKMULTISIG;
 		}
 
-		CTxOut newTxOut = CTxOut(10000,scriptHash); // 10000 sat
-		vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
-		wtxNew.vout.insert(position, newTxOut);
+		if (scriptHash.size()>0) {
+		  CTxOut newTxOut = CTxOut(10000,scriptHash); // 10000 sat
+		  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
+		  wtxNew.vout.insert(position, newTxOut);
+		}
 		
 		
 		// Fill vin
