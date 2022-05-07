@@ -1,5 +1,5 @@
 dnl require autoconf 2.60 (AS_ECHO/AS_ECHO_N)
-AC_PREREQ([2.71])
+AC_PREREQ([2.60])
 # Even number: Stable Release    Odd number: Development Version 
 # 0985
 define(_CLIENT_VERSION_MAJOR, 0)
@@ -380,12 +380,14 @@ if test x$use_glibc_compat != xno; then
   #__fdelt_chk's params and return type have changed from long unsigned int to long int.
   # See which one is present here.
   AC_MSG_CHECKING(__fdelt_chk type)
-  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#ifdef _FORTIFY_SOURCE
+  AC_TRY_COMPILE([#ifdef _FORTIFY_SOURCE
                     #undef _FORTIFY_SOURCE
                   #endif
                   #define _FORTIFY_SOURCE 2
                   #include <sys/select.h>
-     extern "C" long unsigned int __fdelt_warn(long unsigned int);]], [[]])],[ fdelt_type="long unsigned int"],[ fdelt_type="long int"])
+     extern "C" long unsigned int __fdelt_warn(long unsigned int);],[],
+    [ fdelt_type="long unsigned int"],
+    [ fdelt_type="long int"])
   AC_MSG_RESULT($fdelt_type)
   AC_DEFINE_UNQUOTED(FDELT_TYPE, $fdelt_type,[parameter and return value type for __fdelt_chk])
 
@@ -427,8 +429,11 @@ AC_CHECK_HEADERS([stdio.h stdlib.h unistd.h strings.h sys/types.h sys/stat.h])
 
 dnl Check for MSG_NOSIGNAL
 AC_MSG_CHECKING(for MSG_NOSIGNAL)
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <sys/socket.h>]], [[ int f = MSG_NOSIGNAL; ]])],[ AC_MSG_RESULT(yes); AC_DEFINE(HAVE_MSG_NOSIGNAL, 1,[Define this symbol if you have MSG_NOSIGNAL]) ],[ AC_MSG_RESULT(no)
-])
+AC_TRY_COMPILE([#include <sys/socket.h>],
+ [ int f = MSG_NOSIGNAL; ],
+ [ AC_MSG_RESULT(yes); AC_DEFINE(HAVE_MSG_NOSIGNAL, 1,[Define this symbol if you have MSG_NOSIGNAL]) ],
+ [ AC_MSG_RESULT(no)]
+)
 
 LEVELDB_CPPFLAGS=
 LIBLEVELDB=
@@ -505,17 +510,19 @@ TEMP_LIBS="$LIBS"
 LIBS="$LIBS $BOOST_LIBS $BOOST_CHRONO_LIB"
 TEMP_CPPFLAGS="$CPPFLAGS"
 CPPFLAGS="$CPPFLAGS $BOOST_CPPFLAGS"
-AC_LINK_IFELSE([AC_LANG_PROGRAM([[
+AC_TRY_LINK([
   #include <boost/thread/thread.hpp>
   #include <boost/version.hpp>
-  ]], [[
+  ],[
   #if BOOST_VERSION >= 105000 && (!defined(BOOST_HAS_NANOSLEEP) || BOOST_VERSION >= 105200)
       boost::this_thread::sleep_for(boost::chrono::milliseconds(0));
   #else
    choke me
   #endif
-  ]])],[boost_sleep=yes; BOOST_LIBS="$BOOST_LIBS $BOOST_CHRONO_LIB";
-     AC_DEFINE(HAVE_WORKING_BOOST_SLEEP_FOR, 1, [Define this symbol if boost sleep_for works])],[boost_sleep=no])
+  ],
+  [boost_sleep=yes; BOOST_LIBS="$BOOST_LIBS $BOOST_CHRONO_LIB";
+     AC_DEFINE(HAVE_WORKING_BOOST_SLEEP_FOR, 1, [Define this symbol if boost sleep_for works])],
+  [boost_sleep=no])
 LIBS="$TEMP_LIBS"
 CPPFLAGS="$TEMP_CPPFLAGS"
 fi
@@ -525,17 +532,19 @@ TEMP_LIBS="$LIBS"
 LIBS="$LIBS $BOOST_LIBS"
 TEMP_CPPFLAGS="$CPPFLAGS"
 CPPFLAGS="$CPPFLAGS $BOOST_CPPFLAGS"
-AC_LINK_IFELSE([AC_LANG_PROGRAM([[
+AC_TRY_LINK([
   #include <boost/version.hpp>
   #include <boost/thread.hpp>
   #include <boost/date_time/posix_time/posix_time_types.hpp>
-  ]], [[
+  ],[
   #if BOOST_VERSION <= 105600
       boost::this_thread::sleep(boost::posix_time::milliseconds(0));
   #else
    choke me
   #endif
-  ]])],[boost_sleep=yes; AC_DEFINE(HAVE_WORKING_BOOST_SLEEP, 1, [Define this symbol if boost sleep works])],[boost_sleep=no])
+  ],
+  [boost_sleep=yes; AC_DEFINE(HAVE_WORKING_BOOST_SLEEP, 1, [Define this symbol if boost sleep works])],
+  [boost_sleep=no])
 LIBS="$TEMP_LIBS"
 CPPFLAGS="$TEMP_CPPFLAGS"
 fi
