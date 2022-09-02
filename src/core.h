@@ -254,7 +254,7 @@ public:
     uint256 GetHash() const;
     uint256 GetCachedHash() const;
     bool IsNewerThan(const CTransaction& old) const;
-
+  
     // Return sum of txouts.
     int64_t GetValueOut() const;
     // GetValueIn() is a method on CCoinsViewCache, because
@@ -267,7 +267,7 @@ public:
     {
         return (vin.size() == 1 && vin[0].prevout.IsNull());
     }
-
+  
     friend bool operator==(const CTransaction& a, const CTransaction& b)
     {
       return (a.nVersion  == b.nVersion &&
@@ -837,7 +837,10 @@ public:
 
     // Number of transactions in this block.
     // Note: in a potential headers-first mode, this number cannot be relied upon
-    unsigned int nTx;
+  unsigned int nTx;
+
+  // map transaction hashes to nFees
+  std::map<uint256,int64_t> nFees;
 
     // (memory only) Number of transactions in the chain up to and including this block
     unsigned int nChainTx; // change to 64-bit type when necessary; won't happen before 2030
@@ -871,6 +874,7 @@ public:
         nUndoPos = 0;
         nChainWork = 0;
         nTx = 0;
+	nFees.clear();
         nChainTx = 0;
         nStatus = 0;
         nSequenceId = 0;
@@ -1121,6 +1125,7 @@ public:
 	READWRITE(VARINT(nMoneySupply));
 	READWRITE(VARINT(nStatus));
 	READWRITE(VARINT(nTx));
+	READWRITE(nFees);
 	if (nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO))
 	  READWRITE(VARINT(nFile));
 	if (nStatus & BLOCK_HAVE_DATA)
@@ -1175,6 +1180,7 @@ public:
 	READWRITE(VARINT(nMoneySupply));
 	READWRITE(VARINT(nStatus));
 	READWRITE(VARINT(nTx));
+	READWRITE(nFees);
 	if (nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO))
 	  READWRITE(VARINT(nFile));
 	if (nStatus & BLOCK_HAVE_DATA)
@@ -1228,6 +1234,7 @@ public:
 	READWRITE(VARINT(nMoneySupply));
 	READWRITE(VARINT(nStatus));
 	READWRITE(VARINT(nTx));
+	READWRITE(nFees);
 	if (nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO))
 	  READWRITE(VARINT(nFile));
 	if (nStatus & BLOCK_HAVE_DATA)

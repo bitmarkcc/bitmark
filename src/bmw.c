@@ -33,6 +33,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <limits.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C"{
@@ -626,6 +627,7 @@ bmw32_init(sph_bmw_small_context *sc, const sph_u32 *iv)
 static void
 bmw32(sph_bmw_small_context *sc, const void *data, size_t len)
 {
+
 	unsigned char *buf;
 	size_t ptr;
 	sph_u32 htmp[16];
@@ -654,6 +656,7 @@ bmw32(sph_bmw_small_context *sc, const void *data, size_t len)
 		if (clen > len)
 			clen = len;
 		memcpy(buf + ptr, data, clen);
+
 		data = (const unsigned char *)data + clen;
 		len -= clen;
 		ptr += clen;
@@ -661,6 +664,7 @@ bmw32(sph_bmw_small_context *sc, const void *data, size_t len)
 			sph_u32 *ht;
 
 			compress_small(buf, h1, h2);
+
 			ht = h1;
 			h1 = h2;
 			h2 = ht;
@@ -670,6 +674,8 @@ bmw32(sph_bmw_small_context *sc, const void *data, size_t len)
 	sc->ptr = ptr;
 	if (h1 != sc->H)
 		memcpy(sc->H, h1, sizeof sc->H);
+
+
 }
 
 static void
@@ -692,6 +698,7 @@ bmw32_close(sph_bmw_small_context *sc, unsigned ub, unsigned n,
 		ptr = 0;
 		h = h1;
 	}
+
 	memset(buf + ptr, 0, (sizeof sc->buf) - 8 - ptr);
 #if SPH_64
 	sph_enc64le_aligned(buf + (sizeof sc->buf) - 8,
@@ -702,10 +709,14 @@ bmw32_close(sph_bmw_small_context *sc, unsigned ub, unsigned n,
 	sph_enc32le_aligned(buf + (sizeof sc->buf) - 4,
 		SPH_T32(sc->bit_count_high));
 #endif
+
+	fflush(stdout);
+
 	compress_small(buf, h, h2);
 	for (u = 0; u < 16; u ++)
 		sph_enc32le_aligned(buf + 4 * u, h2[u]);
 	compress_small(buf, final_s, h1);
+
 	out = dst;
 	for (u = 0, v = 16 - out_size_w32; u < out_size_w32; u ++, v ++)
 		sph_enc32le(out + 4 * u, h1[v]);

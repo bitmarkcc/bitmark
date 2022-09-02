@@ -45,7 +45,7 @@ char lmdcode (uchar c) {
   }
 }
 
-void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeHex)
+void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeHex, int64_t weight)
 {
   txnouttype type;
   vector<CTxDestination> addresses;
@@ -282,6 +282,7 @@ void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeH
     showMarking = true;
      
     if (showMarking)
+      marking.push_back(Pair("weight",weight));
       out.push_back(Pair("marking", marking));
   }
 }
@@ -310,6 +311,16 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, Object& entry)
         vin.push_back(in);
     }
     entry.push_back(Pair("vin", vin));
+
+    CBlockIndex* pindex = 0;
+    if (hashBlock != 0) {
+      entry.push_back(Pair("blockhash", hashBlock.GetHex()));
+      map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.find(hashBlock);
+      if (mi != mapBlockIndex.end() && (*mi).second) {
+	pindex = (*mi).second;
+      }
+    }
+      
     Array vout;
     for (unsigned int i = 0; i < tx.vout.size(); i++)
     {
@@ -318,28 +329,20 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, Object& entry)
         out.push_back(Pair("value", ValueFromAmount(txout.nValue)));
         out.push_back(Pair("n", (int64_t)i));
         Object o;
-        ScriptPubKeyToJSON(txout.scriptPubKey, o, true);
+        ScriptPubKeyToJSON(txout.scriptPubKey, o, true, pindex->nFees[tx.GetCachedHash()]);
         out.push_back(Pair("scriptPubKey", o));
         vout.push_back(out);
     }
     entry.push_back(Pair("vout", vout));
-
-    if (hashBlock != 0)
-    {
-        entry.push_back(Pair("blockhash", hashBlock.GetHex()));
-        map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.find(hashBlock);
-        if (mi != mapBlockIndex.end() && (*mi).second)
-        {
-            CBlockIndex* pindex = (*mi).second;
-            if (chainActive.Contains(pindex))
-            {
-                entry.push_back(Pair("confirmations", 1 + chainActive.Height() - pindex->nHeight));
-                entry.push_back(Pair("time", (int64_t)pindex->nTime));
-                entry.push_back(Pair("blocktime", (int64_t)pindex->nTime));
-            }
-            else
-                entry.push_back(Pair("confirmations", 0));
-        }
+    
+    if (chainActive.Contains(pindex)) {
+      entry.push_back(Pair("nFees",pindex->nFees[tx.GetCachedHash()]));
+      entry.push_back(Pair("confirmations", 1 + chainActive.Height() - pindex->nHeight));
+      entry.push_back(Pair("time", (int64_t)pindex->nTime));
+      entry.push_back(Pair("blocktime", (int64_t)pindex->nTime));
+    }
+    else {
+      entry.push_back(Pair("confirmations", 0));
     }
 }
 
@@ -426,6 +429,7 @@ Value getrawtransaction(const Array& params, bool fHelp)
 
     Object result;
     result.push_back(Pair("hex", strHex));
+
     TxToJSON(tx, hashBlock, result);
     return result;
 }
@@ -730,7 +734,7 @@ Value decodescript(const Array& params, bool fHelp)
     } else {
         // Empty scripts are valid
     }
-    ScriptPubKeyToJSON(script, r, false);
+    ScriptPubKeyToJSON(script, r, false, 0);
 
     r.push_back(Pair("p2sh", CBitmarkAddress(script.GetID()).ToString()));
     return r;

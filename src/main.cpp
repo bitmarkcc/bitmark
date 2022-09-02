@@ -1856,7 +1856,7 @@ void static InvalidBlockFound(CBlockIndex *pindex, const CValidationState &state
 
 void UpdateTime(CBlockHeader& block, const CBlockIndex* pindexPrev)
 {
-    block.nTime = max(pindexPrev->GetMedianTimePast()+1, GetAdjustedTime());
+  block.nTime = max(pindexPrev->GetMedianTimePast()+1, GetAdjustedTime());
 
     // Updating time can change work required on testnet: // Why?
     /*if (TestNet()) {
@@ -2225,7 +2225,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
     vPos.reserve(block.vtx.size());
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
-        const CTransaction &tx = block.vtx[i];
+        CTransaction &tx = block.vtx[i];
 
         nInputs += tx.vin.size();
         nSigOps += GetLegacySigOpCount(tx);
@@ -2239,18 +2239,24 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
                 return state.DoS(100, error("ConnectBlock() : inputs missing/spent"),
                                  REJECT_INVALID, "bad-txns-inputs-missingorspent");
 
-			// Add in sigops done by pay-to-script-hash inputs;
-			// this is to prevent a "rogue miner" from creating
-			// an incredibly-expensive-to-validate block.
-			nSigOps += GetP2SHSigOpCount(tx, view);
-			if (nSigOps > MAX_BLOCK_SIGOPS)
-				return state.DoS(100, error("ConnectBlock() : too many sigops"),
-								 REJECT_INVALID, "bad-blk-sigops");
+	    // Add in sigops done by pay-to-script-hash inputs;
+	    // this is to prevent a "rogue miner" from creating
+	    // an incredibly-expensive-to-validate block.
+	    nSigOps += GetP2SHSigOpCount(tx, view);
+	    if (nSigOps > MAX_BLOCK_SIGOPS)
+	      return state.DoS(100, error("ConnectBlock() : too many sigops"),
+			       REJECT_INVALID, "bad-blk-sigops");
+	    
+	    int64_t nFeesTx = view.GetValueIn(tx)-tx.GetValueOut();
+	    LogPrintf("block height %d set fees to %lld, tx hash %s\n",pindex->nHeight,nFeesTx,tx.GetHash().GetHex().c_str());
+	    pindex->nFees[tx.GetHash()] = nFeesTx;
+	    LogPrintf("nFeesTx = %lld\n",nFeesTx);
+	    nFees += nFeesTx;
 
-            nFees += view.GetValueIn(tx)-tx.GetValueOut();
+	    const CTransaction &tx_const = tx;
 
             std::vector<CScriptCheck> vChecks;
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, nScriptCheckThreads ? &vChecks : NULL))
+            if (!CheckInputs(tx_const, state, view, fScriptChecks, flags, nScriptCheckThreads ? &vChecks : NULL))
                 return false;
             control.Add(vChecks);
         }

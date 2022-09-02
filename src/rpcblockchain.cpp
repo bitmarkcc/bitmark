@@ -16,7 +16,7 @@
 using namespace json_spirit;
 using namespace std;
 
-void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeHex);
+void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeHex, int64_t weight);
 
 double GetDifficulty(const CBlockIndex* blockindex, int algo, bool weighted, bool next)
 {
@@ -688,7 +688,7 @@ Value gettxout(const Array& params, bool fHelp)
         ret.push_back(Pair("confirmations", pindex->nHeight - coins.nHeight + 1));
     ret.push_back(Pair("value", ValueFromAmount(coins.vout[n].nValue)));
     Object o;
-    ScriptPubKeyToJSON(coins.vout[n].scriptPubKey, o, true);
+    ScriptPubKeyToJSON(coins.vout[n].scriptPubKey, o, true, 0);
     ret.push_back(Pair("scriptPubKey", o));
     ret.push_back(Pair("version", coins.nVersion));
     ret.push_back(Pair("coinbase", coins.fCoinBase));
