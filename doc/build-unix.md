@@ -11,6 +11,11 @@ To Build
 
 This will build bitmark-qt as well if the dependencies are met.
 
+Note: gcc version greater than or equal to 11 not supported (such as the default gcc on Ubuntu 22).
+In this case, you can install gcc-10 and run
+CC="gcc-10" ./configure
+instead of just ./configure
+
 Dependencies
 ---------------------
 
