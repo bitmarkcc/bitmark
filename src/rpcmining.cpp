@@ -108,7 +108,7 @@ Value GetNetworkHashPS(int lookup, int height, int algo) {
     //uint256 workDiff = pb->nChainWork - pb0->nChainWork;
     int64_t timeDiff = maxTime - minTime;
 
-    return ((hashes_bn.getuint256().get_double()) / ((double)timeDiff));
+    return ((hashes_bn.getuint256().getdouble()) / ((double)timeDiff));
 }
 
 Value getnetworkhashps(const Array& params, bool fHelp)
