@@ -280,10 +280,10 @@ void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeH
       }
       }*/
     showMarking = true;
-     
-    if (showMarking)
-      marking.push_back(Pair("weight",weight));
-      out.push_back(Pair("marking", marking));
+  }
+  if (showMarking) {
+    marking.push_back(Pair("weight",weight));
+    out.push_back(Pair("marking", marking));
   }
 }
 
@@ -329,7 +329,7 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, Object& entry)
         out.push_back(Pair("value", ValueFromAmount(txout.nValue)));
         out.push_back(Pair("n", (int64_t)i));
         Object o;
-        ScriptPubKeyToJSON(txout.scriptPubKey, o, true, pindex->nFees[tx.GetCachedHash()]);
+        ScriptPubKeyToJSON(txout.scriptPubKey, o, true, pindex->nFees[tx.GetCachedHash()]+1);
         out.push_back(Pair("scriptPubKey", o));
         vout.push_back(out);
     }
