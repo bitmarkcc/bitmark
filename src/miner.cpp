@@ -116,10 +116,7 @@ CBlockTemplate* CreateNewBlock(const CScript& scriptPubKeyIn)
         return NULL;
     CBlock *pblock = &pblocktemplate->block; // pointer for convenience
     CBlockIndex* pindexPrev = chainActive.Tip();
-    if (!confAlgoIsSet) {
-      miningAlgo = GetArg("-miningalgo", miningAlgo);
-      confAlgoIsSet = true;
-    }
+
     // To simulate v3 blocks occuring after nForkHeight
     if (TestNet() && pindexPrev->nHeight < 300 && miningAlgo==0) {
       pblock->nVersion = 3;
@@ -791,6 +788,11 @@ void static BitmarkMiner(CWallet *pwallet)
 void GenerateBitmarks(bool fGenerate, CWallet* pwallet, int nThreads)
 {
 
+  if (!confAlgoIsSet) {
+    miningAlgo = GetArg("-miningalgo", miningAlgo);
+    confAlgoIsSet = true;
+  }
+  
     static boost::thread_group* minerThreads = NULL;
 
     if (nThreads < 0) {

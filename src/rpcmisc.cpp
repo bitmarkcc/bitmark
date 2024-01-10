@@ -591,6 +591,11 @@ Value chaindynamics(const Array& params, bool fHelp)
 	    "}\n"
         );
 
+    if (!confAlgoIsSet) {
+      miningAlgo = GetArg("-miningalgo", miningAlgo);
+      confAlgoIsSet = true;
+    }
+
     proxyType proxy;
     GetProxy(NET_IPV4, proxy);
 

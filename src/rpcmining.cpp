@@ -224,6 +224,11 @@ Value setgenerate(const Array& params, bool fHelp)
             fGenerate = false;
     }
 
+    if (!confAlgoIsSet) {
+      miningAlgo = GetArg("-miningalgo", miningAlgo);
+      confAlgoIsSet = true;
+    }
+
     if (params.size() > 2) {
       miningAlgo = params[2].get_int();
     }
@@ -327,6 +332,11 @@ Value getmininginfo(const Array& params, bool fHelp)
             + HelpExampleRpc("getmininginfo", "")
         );
 
+    if (!confAlgoIsSet) {
+      miningAlgo = GetArg("-miningalgo", miningAlgo);
+      confAlgoIsSet = true;
+    }
+
     Object obj;
     obj.push_back(Pair("blocks",           (int)chainActive.Height()));
     obj.push_back(Pair("currentblocksize", (uint64_t)nLastBlockSize));
@@ -395,6 +405,11 @@ Value getwork(const Array& params, bool fHelp)
     typedef map<uint256, pair<CBlock*, CScript> > mapNewBlock_t;
     static mapNewBlock_t mapNewBlock;    // FIXME: thread safety
     static vector<CBlockTemplate*> vNewBlockTemplate;
+
+    if (!confAlgoIsSet) {
+      miningAlgo = GetArg("-miningalgo", miningAlgo);
+      confAlgoIsSet = true;
+    }
 
     if (params.size() == 0)
     {
@@ -561,6 +576,11 @@ Value getblocktemplate(const Array& params, bool fHelp)
             + HelpExampleCli("getblocktemplate", "")
             + HelpExampleRpc("getblocktemplate", "")
          );
+
+    if (!confAlgoIsSet) {
+      miningAlgo = GetArg("-miningalgo", miningAlgo);
+      confAlgoIsSet = true;
+    }
 
     std::string strMode = "template";
     if (params.size() > 0)
@@ -769,6 +789,12 @@ Value getauxblock(const Array& params, bool fHelp)
 			+ HelpExampleCli("getauxblock", "\"hash\" \"serialised auxpow\"")
 			+ HelpExampleRpc("getauxblock", "")
 			);
+
+  if (!confAlgoIsSet) {
+    miningAlgo = GetArg("-miningalgo", miningAlgo);
+    confAlgoIsSet = true;
+  }
+  
   if (pwalletMain == NULL)
     throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Method not found (disabled)");
   if (vNodes.empty())
