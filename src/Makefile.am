@@ -1,6 +1,9 @@
 include Makefile.include
 
-AM_CPPFLAGS += -I$(builddir)
+AM_CPPFLAGS += -I$(builddir) -I$(srcdir)/secp256k1/include
+
+$(LIBSECP256K1): $(wildcard secp256k1/src/*.h) $(wildcard secp256k1/src/*.c) $(wildcard secp256k1/include/*)
+	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C $(@D) $(@F)
 
 noinst_LIBRARIES = \
   libbitmark_server.a \
@@ -20,8 +23,8 @@ if BUILD_BITMARK_CLI
   bin_PROGRAMS += bitmark-cli
 endif
 
-SUBDIRS = . $(BUILD_QT) $(BUILD_TEST)
-DIST_SUBDIRS = . qt test
+SUBDIRS = . $(BUILD_QT) $(BUILD_TEST) $(BUILD_SECP)
+DIST_SUBDIRS = . qt test secp256k1
 .PHONY: FORCE
 # bitmark core #
 BITMARK_CORE_H = \
@@ -217,7 +220,8 @@ bitmarkd_LDADD = \
   libbitmark_cli.a \
   libbitmark_common.a \
   $(LIBLEVELDB) \
-  $(LIBMEMENV)
+  $(LIBMEMENV) \
+  $(LIBSECP256K1)
 
 if ENABLE_WALLET
 bitmarkd_LDADD += libbitmark_wallet.a
@@ -236,7 +240,8 @@ bitmarkd_LDADD += $(BOOST_LIBS) $(BDB_LIBS)
 bitmark_cli_LDADD = \
   libbitmark_cli.a \
   libbitmark_common.a \
-  $(BOOST_LIBS)
+  $(BOOST_LIBS) \
+  $(LIBSECP256K1)
 bitmark_cli_SOURCES = bitmark-cli.cpp
 #
 
@@ -264,4 +269,5 @@ EXTRA_DIST = leveldb Makefile.include
 
 clean-local:
 	-$(MAKE) -C leveldb clean
+	-$(MAKE) -C secp256k1 clean
 	rm -f leveldb/*/*.gcno leveldb/helpers/memenv/*.gcno

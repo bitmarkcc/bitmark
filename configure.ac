@@ -124,6 +124,7 @@ AC_ARG_WITH([homebrew],
   [use_homebrew=$withval],
   [use_homebrew=auto])
 
+LT_INIT
 
 AC_CONFIG_SRCDIR([src])
 AC_CONFIG_HEADERS([src/bitmark-config.h])
@@ -708,6 +709,8 @@ else
   AC_MSG_RESULT([no])
 fi
 
+BUILD_SECP="secp256k1"
+
 if test "x$use_tests$build_bitmarkd$use_qt" = "xnonono"; then
   AC_MSG_ERROR([No targets! Please specify at least one of: --enable-cli --enable-daemon --enable-gui or --enable-tests])
 fi
@@ -745,7 +748,11 @@ AC_SUBST(LEVELDB_TARGET_FLAGS)
 AC_SUBST(BUILD_TEST)
 AC_SUBST(BUILD_QT)
 AC_SUBST(BUILD_TEST_QT)
+AC_SUBST(BUILD_SECP)
 AC_CONFIG_FILES([Makefile src/Makefile src/test/Makefile src/qt/Makefile src/qt/test/Makefile share/setup.nsi share/qt/Info.plist])
 AC_CONFIG_FILES([qa/pull-tester/run-bitmarkd-for-test.sh],[chmod +x qa/pull-tester/run-bitmarkd-for-test.sh])
 AC_CONFIG_FILES([qa/pull-tester/build-tests.sh],[chmod +x qa/pull-tester/build-tests.sh])
+
+AC_CONFIG_SUBDIRS([src/secp256k1])
+
 AC_OUTPUT

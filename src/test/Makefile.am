@@ -32,6 +32,7 @@ if ENABLE_WALLET
 test_bitmark_LDADD += $(LIBBITMARK_WALLET)
 endif
 test_bitmark_LDADD += $(BDB_LIBS)
+test_bitmark_LDADD += $(LIBSECP256K1)
 
 test_bitmark_SOURCES = \
   alert_tests.cpp \
