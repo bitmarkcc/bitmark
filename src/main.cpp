@@ -1548,7 +1548,7 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, int algo) {
     bool smultiply = false;
     if (time_since_last_algo > 9600) { //160 min for special retarget
       smultiplier = time_since_last_algo/9600;
-      LogPrintf("special retarget for algo %d with time_since_last_algo = %d (height %d), smultiplier %d\n",algo,time_since_last_algo,pindexLast->nHeight, smultiplier);
+      if (fDebug) LogPrintf("Resurrector activated for algo %d with time_since_last_algo = %d (height %d), smultiplier %d\n",algo,time_since_last_algo,pindexLast->nHeight, smultiplier);
       nActualTimespan = 10*smultiplier*_nTargetTimespan;
       smultiply = true;
     }
@@ -1668,7 +1668,7 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, int algo)
 
         // Limit adjustment step
         int64_t nActualTimespan = pindexLast->GetBlockTime() - pindexFirst->GetBlockTime();
-        LogPrintf("  nActualTimespan = %d  before bounds\n", nActualTimespan);
+        LogPrintf("GetNextWorkRequired: nActualTimespan = %d  before bounds\n", nActualTimespan);
         if (nActualTimespan < nTargetTimespan/4)
             nActualTimespan = nTargetTimespan/4;
         if (nActualTimespan > nTargetTimespan*4)
@@ -1684,11 +1684,13 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, int algo)
             bnNew = Params().ProofOfWorkLimit();
 
         /// debug print
-        LogPrintf("GetNextWorkRequired RETARGET\n");
-        LogPrintf("nTargetTimespan = %d    nActualTimespan = %d\n", nTargetTimespan, nActualTimespan);
-        LogPrintf("Before: %08x  %s\n", pindexLast->nBits, CBigNum().SetCompact(pindexLast->nBits).getuint256().ToString());
-        LogPrintf("After:  %08x  %s\n", bnNew.GetCompact(), bnNew.getuint256().ToString());
-
+	if (fDebug) {
+	  LogPrintf("GetNextWorkRequired RETARGET\n");
+	  LogPrintf("nTargetTimespan = %d    nActualTimespan = %d\n", nTargetTimespan, nActualTimespan);
+	  LogPrintf("Before: %08x  %s\n", pindexLast->nBits, CBigNum().SetCompact(pindexLast->nBits).getuint256().ToString());
+	  LogPrintf("After:  %08x  %s\n", bnNew.GetCompact(), bnNew.getuint256().ToString());
+	}
+	  
          return bnNew.GetCompact();
     } else {
       // Post 8mPoW fork
@@ -1963,7 +1965,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, CCoinsViewCach
         // before the last block chain checkpoint. This is safe because block merkle hashes are
         // still computed and checked, and any change will be caught at the next checkpoint.
         if (fScriptChecks) {
-	  LogPrintf("fScriptChecks true\n");
+	  //LogPrintf("fScriptChecks true\n");
             for (unsigned int i = 0; i < tx.vin.size(); i++) {
                 const COutPoint &prevout = tx.vin[i].prevout;
                 const CCoins &coins = inputs.GetCoins(prevout.hash);
@@ -2294,7 +2296,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
                                REJECT_INVALID, "bad-cb-amount");
 
     if (block.vtx[0].GetValueOut() < block_value_needed) {
-      LogPrintf("coinbase pays less than block value\n");
+      if (fDebug) LogPrintf("coinbase pays less than block value\n");
       if (onFork3(pindex)) {
 	int64_t block_subsidy_needed = GetBlockValue(pindex,0,false);
 	if (block.vtx[0].GetValueOut() < block_subsidy_needed) {
@@ -2439,7 +2441,7 @@ bool static DisconnectTip(CValidationState &state) {
     CBlock block;
     if (!ReadBlockFromDisk(block, pindexDelete)) {
       //return state.Abort(_("Failed to read block (disconnecttip)"));
-      LogPrintf("Failed to read block (disconnecttip)\n");
+      LogPrintf("Failed to read block (DisconnectTip)\n");
       return false;
     }
     // Apply the block atomically to the chain state.
@@ -2483,7 +2485,7 @@ bool static ConnectTip(CValidationState &state, CBlockIndex *pindexNew) {
     CBlock block;
     if (!ReadBlockFromDisk(block, pindexNew)) {
       //return state.Abort("Failed to read block (connecttip)"));
-      LogPrintf("Failed to read block (connecttip)\n");
+      LogPrintf("Failed to read block (ConnectTip)\n");
       return false;
     }
     // Apply the block atomically to the chain state.
@@ -2918,7 +2920,7 @@ bool AcceptBlock(CBlock& block, CValidationState& state, CDiskBlockPos* dbp)
 	int block_algo = GetAlgo(block.nVersion);
 	unsigned int next_work_required = GetNextWorkRequired(pindexPrev, block_algo);
         if (block.nBits != next_work_required) {
-	  LogPrintf("nbits = %d, required = %d\n",block.nBits,next_work_required);
+	  if (fDebug) LogPrintf("nbits = %d, required = %d\n",block.nBits,next_work_required);
 	  return state.DoS(100, error("AcceptBlock() : incorrect proof of work"),
 			   REJECT_INVALID, "bad-diffbits");
 	}

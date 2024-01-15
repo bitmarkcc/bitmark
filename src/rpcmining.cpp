@@ -265,7 +265,7 @@ Value setgenerate(const Array& params, bool fHelp)
     {
         mapArgs["-gen"] = (fGenerate ? "1" : "0");
         mapArgs ["-genproclimit"] = itostr(nGenProcLimit);
-	LogPrintf("do generatebitmarks\n");
+	//LogPrintf("do generatebitmarks\n");
         GenerateBitmarks(fGenerate, pwalletMain, nGenProcLimit);
     }
 
@@ -731,7 +731,7 @@ Value submitblock(const Array& params, bool fHelp)
         );
 
     vector<unsigned char> blockData(ParseHex(params[0].get_str()));
-    LogPrintf("block submitted:\n%s\n",params[0].get_str());
+    //LogPrintf("block submitted:\n%s\n",params[0].get_str());
     CDataStream ssBlock(blockData, SER_NETWORK, PROTOCOL_VERSION);
     CBlock pblock;
     try {
@@ -741,7 +741,7 @@ Value submitblock(const Array& params, bool fHelp)
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block decode failed");
     }
 
-    LogPrintf("block algo is %d\n",pblock.GetAlgo());
+    if (fDebug) LogPrintf("submitted block with algo %d\n",pblock.GetAlgo());
 
     CValidationState state;
     bool fAccepted = ProcessBlock(state, NULL, &pblock);
@@ -884,7 +884,7 @@ Value getauxblock(const Array& params, bool fHelp)
     throw JSONRPCError(RPC_INVALID_PARAMETER, "block hash unknown");
   CBlock& block = *mit->second;
   const char * block_str = params[1].get_str().c_str();
-  if (fDebug) LogPrintf("getauxblock block_str = %s\n",block_str);
+  //if (fDebug) LogPrintf("getauxblock block_str = %s\n",block_str);
   const std::vector<unsigned char> vchAuxPow = ParseHex(params[1].get_str());
   CDataStream ss(vchAuxPow, SER_GETHASH, PROTOCOL_VERSION);
   CAuxPow pow;
