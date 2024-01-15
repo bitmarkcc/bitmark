@@ -9,12 +9,18 @@ To Build
 	./configure
 	make
 
-This will build bitmark-qt as well if the dependencies are met.
+This will build bitmark-qt as well if the dependencies are met. The binaries (bitmarkd and bitmark-cli)
+are placed in src/. For ./configure options, run:
+./configure --help
+--prefix is a useful option if you want to install the binaries (make install) to a non default location
+that doesn't require root access.
 
-Note: gcc version greater than or equal to 11 not supported (such as the default gcc on Ubuntu 22).
-In this case, you can install gcc-10 and run
-CC="gcc-10" ./configure
-instead of just ./configure
+Note: gcc version greater than or equal to 9 is recommended (such as the default on Ubuntu 20).
+For lower versions of gcc, configure may fail and you can try:
+CFLAGS="-g -O2 -fPIC" ./configure
+Boost greater than or equal to 1.71 is recommended (such as the default on Ubuntu 20).
+Lower versions of boost may not compile Bitmark, and thus you may need to obtain boost from
+https://www.boost.org
 
 Dependencies
 ---------------------
