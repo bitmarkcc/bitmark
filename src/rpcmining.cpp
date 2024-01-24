@@ -129,7 +129,12 @@ Value getnetworkhashps(const Array& params, bool fHelp)
             + HelpExampleRpc("getnetworkhashps", "")
        );
 
-    return GetNetworkHashPS(params.size() > 0 ? params[0].get_int() : 120, params.size() > 1 ? params[1].get_int() : -1, params.size() > 2 ? params[2].get_int() : ALGO_SCRYPT);
+      if (!confAlgoIsSet) {
+	miningAlgo = GetArg("-miningalgo", miningAlgo);
+	confAlgoIsSet = true;
+      }
+
+    return GetNetworkHashPS(params.size() > 0 ? params[0].get_int() : 120, params.size() > 1 ? params[1].get_int() : -1, params.size() > 2 ? params[2].get_int() : miningAlgo);
 }
 
 #ifdef ENABLE_WALLET
