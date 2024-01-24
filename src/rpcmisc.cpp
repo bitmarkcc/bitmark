@@ -596,16 +596,10 @@ Value chaindynamics(const Array& params, bool fHelp)
       confAlgoIsSet = true;
     }
 
-    proxyType proxy;
-    GetProxy(NET_IPV4, proxy);
-
     CBlockIndex * pindex = 0;
     if (params.size()>0) {
       int height = params[0].get_int();
-      pindex = chainActive.Tip();
-      while (pindex && pindex->nHeight > height) {
-	pindex = pindex->pprev;
-      }
+      pindex = chainActive[height];
     }    
     
     Object obj;
