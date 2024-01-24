@@ -549,7 +549,7 @@ Value getdifficulty (const Array& params, bool fHelp) {
 			"getdifficulty ( algo height )\n"
 			"Returns an object containing difficulty info.\n"
 				    "\nArguments:\n"
-	    "1. \"algo\"     (numeric, optional) The algo, 2 (scrypt) by default\n"
+	    "1. \"algo\"     (numeric, optional) The algo, (miningalgo) by default\n"
 	    "2. \"height\"     (numeric, optional) The height to look at, tip by default\n"	    
 	    "\nResult:\n"
 	    "{\n"
@@ -557,7 +557,11 @@ Value getdifficulty (const Array& params, bool fHelp) {
 	    "}\n"
 			);
 
-  int algo = ALGO_SCRYPT;
+  if (!confAlgoIsSet) {
+    miningAlgo = GetArg("-miningalgo", miningAlgo);
+    confAlgoIsSet = true;
+  }
+  int algo = miningAlgo;
   CBlockIndex * blockindex = NULL;
 
   if (params.size()>0) {
