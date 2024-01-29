@@ -455,7 +455,7 @@ Value getblockspacing(const Array& params, bool fHelp)
 			    );
 
     int algo = -1;
-    int interval = 24;
+    int interval = 25;
     CBlockIndex * blockindex = NULL;
     
     if (params.size()>0) {
