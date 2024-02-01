@@ -581,7 +581,7 @@ Value chaindynamics(const Array& params, bool fHelp)
 {
     if (fHelp || params.size() > 1)
         throw runtime_error(
-            "chain dynamics (height)\n"
+            "chaindynamics (height)\n"
             "Returns an object containing various state info.\n"
             "}\n"
 	    "\nResult:\n"
