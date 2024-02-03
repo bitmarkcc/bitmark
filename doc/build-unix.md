@@ -13,7 +13,10 @@ This will build bitmark-qt as well if the dependencies are met. The binaries (bi
 are placed in src/. For ./configure options, run:
 ./configure --help
 --prefix is a useful option if you want to install the binaries (make install) to a non default location
-that doesn't require root access.
+that doesn't require root access. If you want to change --prefix after previously using it, you may need
+to do:
+cd src/secp256k1; make clean
+before using it.
 
 Note: gcc version greater than or equal to 9 is recommended (such as the default on Ubuntu 20).
 For lower versions of gcc, configure may fail and you can try:
