@@ -280,9 +280,40 @@ std::string HexStr(const T itbegin, const T itend, bool fSpaces=false)
 }
 
 template<typename T>
+std::string HRStr(const T itbegin, const T itend, bool fSpaces=false)
+{
+    std::string rv;
+
+    rv.reserve((itend-itbegin)*2);
+    for(T it = itbegin; it < itend; ++it)
+    {
+        unsigned char val = (unsigned char)(*it);
+        if(fSpaces && it != itbegin)
+            rv.push_back(' ');
+	if (val >= 32 && val <= 126) {
+	  rv.push_back((char)val);
+	}
+	else {
+	  rv.push_back('.');
+	}
+    }
+    if (rv.size() > 0 && rv.back() == ' ') {
+      rv.erase(rv.size()-1);
+    }
+
+    return rv;
+}
+
+template<typename T>
 inline std::string HexStr(const T& vch, bool fSpaces=false)
 {
     return HexStr(vch.begin(), vch.end(), fSpaces);
+}
+
+template<typename T>
+inline std::string HRStr(const T& vch, bool fSpaces=false)
+{
+    return HRStr(vch.begin(), vch.end(), fSpaces);
 }
 
 template<typename T>

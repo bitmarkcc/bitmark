@@ -142,6 +142,7 @@ libbitmark_common_a_SOURCES = \
   scrypt.cpp \
   sync.cpp \
   util.cpp \
+  txdb.cpp \
   version.cpp \
   groestl.c \
   blake.c \

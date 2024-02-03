@@ -36,37 +36,59 @@ static const int64_t MAX_MONEY = 28000000 * COIN;
 inline bool MoneyRange(int64_t nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
 static const int64_t nForkHeightForce = 452000; // not used
 
-/** An outpoint - a combination of a transaction hash and an index n into its vout */
-class COutPoint
+template<unsigned int BITS>
+class CGOutPoint // generalized outpoint
 {
 public:
-    uint256 hash;
-    unsigned int n;
 
-    COutPoint() { SetNull(); }
-    COutPoint(uint256 hashIn, unsigned int nIn) { hash = hashIn; n = nIn; }
-    IMPLEMENT_SERIALIZE( READWRITE(FLATDATA(*this)); )
+  base_uint<BITS> hash;
+  unsigned int n;
+
+  CGOutPoint() { SetNull(); }
+  CGOutPoint(base_uint<BITS> hashIn, unsigned int nIn) { hash = hashIn; n = nIn; }
+
+  IMPLEMENT_SERIALIZE( READWRITE(FLATDATA(*this)); )
+
     void SetNull() { hash = 0; n = (unsigned int) -1; }
-    bool IsNull() const { return (hash == 0 && n == (unsigned int) -1); }
+  bool IsNull() const { return (hash == 0 && n == (unsigned int) -1); }
 
-    friend bool operator<(const COutPoint& a, const COutPoint& b)
-    {
-        return (a.hash < b.hash || (a.hash == b.hash && a.n < b.n));
-    }
+  friend bool operator<(const CGOutPoint& a, const CGOutPoint& b)
+  {
+    return (a.hash < b.hash || (a.hash == b.hash && a.n < b.n));
+  }
+  
+  friend bool operator==(const CGOutPoint& a, const CGOutPoint& b)
+  {
+    return (a.hash == b.hash && a.n == b.n);
+  }
+  
+  friend bool operator!=(const CGOutPoint& a, const CGOutPoint& b)
+  {
+    return !(a == b);
+  }
+}
 
-    friend bool operator==(const COutPoint& a, const COutPoint& b)
-    {
-        return (a.hash == b.hash && a.n == b.n);
-    }
+/** An outpoint - a combination of a transaction hash and an index n into its vout */
+typedef CGOutpoint<256> COutpoint;
 
-    friend bool operator!=(const COutPoint& a, const COutPoint& b)
-    {
-        return !(a == b);
-    }
+class COutPointPair // pair of outpoints
+{
+public:
 
-    std::string ToString() const;
-    void print() const;
-};
+  CGOutpoint opoint1;
+  CGOutpoint opoint2;
+
+  COutPointPair() { SetNull(); }
+  COutPointPair(CGOutpoint opoint1In, CGOutpoint opoint2In) { opoint1 = opoint1In; opoint2 = opoint2In; }
+  IMPLEMENT_SERIALIZE( READWRITE(FLATDATA(*this)); )
+
+    void SetNull() { opoint1.SetNull(); opoint2.SetNull(); }
+  bool IsNull() const { return (opoint1.IsNull() && opoint2.IsNull()); }
+
+  void Set1 (CGOutpoint p) { opoint1 = p; }
+  void Set2 (CGOutpoint p) { opoint2 = p; }
+  void Set (CGOutpoint p1, CGOutpoint p2) { opoint1 = p1; opoint2 = p2;}
+}
 
 /** An inpoint - a combination of a transaction and an index n into its vin */
 class CInPoint
@@ -156,7 +178,7 @@ public:
     unsigned int nSequence;
 
     CTxIn()
-    {
+/    {
         nSequence = std::numeric_limits<unsigned int>::max();
     }
 
@@ -924,12 +946,12 @@ public:
       return false;
     }
 
-    bool onFork2() const {
+  bool onFork2() const { // minor/technical changes
       //if (this->nHeight >= nForkHeight && IsSuperMajorityVariant12(4,true,this->pprev,950,1000)) return true;
       return false;
     }
 
-    bool onFork3() const {
+  bool onFork3() const { // voting system
       //if (this->nHeight >= nForkHeight && IsSuperMajorityVariant2(4,true,this->pprev,950,1000)) return true;
       return false;
     }
@@ -1228,7 +1250,7 @@ public:
         const bool fRead = true;                \
         unsigned int nSerSize = 0;              \
         assert(fGetSize||fWrite||fRead); /* suppress warning */ \
-		if (!(nType & SER_GETHASH))
+	if (!(nType & SER_GETHASH))
 	  READWRITE(VARINT(nVersion));
         
 	READWRITE(VARINT(nHeight));
@@ -1425,5 +1447,27 @@ bool GetBlockVariant2 (const int nVersion);
 
 /** Global variable that points to the active CCoinsView (protected by cs_main) */
 //extern CCoinsViewCache *pcoinsTip;
+
+struct CDiskTxPos : public CDiskBlockPos
+{
+    unsigned int nTxOffset; // after header
+
+    IMPLEMENT_SERIALIZE(
+        READWRITE(*(CDiskBlockPos*)this);
+        READWRITE(VARINT(nTxOffset));
+    )
+
+    CDiskTxPos(const CDiskBlockPos &blockIn, unsigned int nTxOffsetIn) : CDiskBlockPos(blockIn.nFile, blockIn.nPos), nTxOffset(nTxOffsetIn) {
+    }
+
+    CDiskTxPos() {
+        SetNull();
+    }
+
+    void SetNull() {
+        CDiskBlockPos::SetNull();
+        nTxOffset = 0;
+    }
+};
 
 #endif

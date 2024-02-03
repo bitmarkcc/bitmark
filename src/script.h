@@ -23,7 +23,7 @@ class CKeyStore;
 class CTransaction;
 
 static const unsigned int MAX_SCRIPT_ELEMENT_SIZE = 520; // bytes
-static const unsigned int MAX_OP_RETURN_RELAY = 40;      // bytes
+static const unsigned int MAX_OP_RETURN_RELAY = 64;      // bytes
 /** Threshold for nLockTime: below this value it is interpreted as block number, otherwise as UNIX timestamp. */
 static const unsigned int LOCKTIME_THRESHOLD = 500000000; // Tue Nov  5 00:53:20 1985 UTC
 
@@ -204,6 +204,8 @@ enum
     SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY = (1U << 5), // support CHECKLOCKTIMEVERIFY opcode
     SCRIPT_VERIFY_DERSIG = (1U << 6), // Require DER format for signatures
     SCRIPT_VERIFY_LOW_S = (1U << 7), // further requirement on DER signatures
+    SCRIPT_VERIFY_COMMENT = (1U << 8),
+    SCRIPT_VERIFY_PUSHCODE = (1U << 9),
 };
 
 enum isminetype
@@ -225,6 +227,7 @@ enum txnouttype
     TX_SCRIPTHASH,
     TX_MULTISIG,
     TX_NULL_DATA,
+    TX_COMMENT,
 };
 
 class CNoDestination {
@@ -368,10 +371,12 @@ enum opcodetype
 
     // expansion
     OP_NOP1 = 0xb0,
-    OP_NOP2 = 0xb1,
+    OP_NOP2 = 0xb1, //CHECKLOCKTIME
     OP_NOP3 = 0xb2,
-    OP_NOP4 = 0xb3,
+    OP_COMMENT = 0xb3,
+    OP_NOP4 = OP_COMMENT,
     OP_NOP5 = 0xb4,
+    OP_PUSHCODE = OP_NOP4,
     OP_NOP6 = 0xb5,
     OP_NOP7 = 0xb6,
     OP_NOP8 = 0xb7,
@@ -390,9 +395,15 @@ enum opcodetype
     OP_INVALIDOPCODE = 0xff,
 };
 
+enum {
+  PUSHTYPE_INSERT = 0, // push to end, or insert before a part
+  PUSHTYPE_REPLACE = 1, // replace a part or range of parts, null code to delete
+  PUSHTYPE_TX = (1 << 1), // txid of branch specified
+  PUSHTYPE_TXPART1 = (1 << 2), // txid of part specified
+  PUSHTYPE_TXPART2 = (1 << 3) // txid of 2nd part specified, for range between part 1 and part 2
+};
+
 const char* GetOpName(opcodetype opcode);
-
-
 
 inline std::string ValueString(const std::vector<unsigned char>& vch)
 {
@@ -400,6 +411,14 @@ inline std::string ValueString(const std::vector<unsigned char>& vch)
         return strprintf("%d", CScriptNum(vch).getint());
     else
         return HexStr(vch);
+}
+
+inline std::string HRValueString(const std::vector<unsigned char>& vch)
+{
+    if (vch.size() <= 4)
+        return strprintf("%d", CScriptNum(vch).getint());
+    else
+        return HRStr(vch);
 }
 
 inline std::string StackString(const std::vector<std::vector<unsigned char> >& vStack)
@@ -574,12 +593,16 @@ public:
         opcodeRet = OP_INVALIDOPCODE;
         if (pvchRet)
             pvchRet->clear();
-        if (pc >= end())
-            return false;
+        if (pc >= end()) {
+	  //LogPrintf("pc>=end\n");
+	  return false;
+	}
 
         // Read instruction
-        if (end() - pc < 1)
-            return false;
+        if (end() - pc < 1) {
+	  //LogPrintf("end-pc<1\n");
+	  return false;
+	}
         unsigned int opcode = *pc++;
 
         // Immediate operand
@@ -588,13 +611,15 @@ public:
             unsigned int nSize = 0;
             if (opcode < OP_PUSHDATA1)
             {
-                nSize = opcode;
+	      //LogPrintf("opcode < OP_PUSHDATA1\n");
+	      nSize = opcode;
             }
             else if (opcode == OP_PUSHDATA1)
             {
-                if (end() - pc < 1)
-                    return false;
-                nSize = *pc++;
+	      //LogPrintf("opcode == OP_PUSHDATA1\n");
+	      if (end() - pc < 1)
+		return false;
+	      nSize = *pc++;
             }
             else if (opcode == OP_PUSHDATA2)
             {
@@ -611,8 +636,10 @@ public:
                 memcpy(&nSize, &pc[0], 4);
                 pc += 4;
             }
-            if (end() - pc < 0 || (unsigned int)(end() - pc) < nSize)
-                return false;
+            if (end() - pc < 0 || (unsigned int)(end() - pc) < nSize) {
+	      //LogPrintf("end-pc = %d < nSize\n");
+	      return false;
+	    }
             if (pvchRet)
                 pvchRet->assign(pc, pc + nSize);
             pc += nSize;
@@ -724,6 +751,48 @@ public:
         }
         return str;
     }
+
+  std::string ToValueString() const
+    {
+        std::string str;
+        opcodetype opcode;
+        std::vector<unsigned char> vch;
+        const_iterator pc = begin();
+        while (pc < end())
+        {
+            if (!GetOp(pc, opcode, vch))
+            {
+                str += "[error]";
+                return str;
+            }
+            if (0 <= opcode && opcode <= OP_PUSHDATA4)
+                str += ValueString(vch);
+	    if (!str.empty())
+	      str += " ";
+        }
+        return str;
+    }
+
+  std::string ToHRValueString() const
+  {
+    std::string str;
+    opcodetype opcode;
+    std::vector<unsigned char> vch;
+    const_iterator pc = begin();
+    while (pc < end())
+      {
+	if (!GetOp(pc, opcode, vch))
+	  {
+	    str += "[error]";
+	    return str;
+	  }
+	if (0 <= opcode && opcode <= OP_PUSHDATA4)
+	  str += HRValueString(vch);
+	if (!str.empty())
+	  str += " ";
+      }
+    return str;
+  }
 
     void print() const
     {

@@ -963,7 +963,7 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransa
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
-        if (!CheckInputs(tx, state, view, true, SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY))
+        if (!CheckInputs(tx, state, view, true, SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY | SCRIPT_VERIFY_PUSHCODE))
         {
             return error("AcceptToMemoryPool: : ConnectInputs failed %s", hash.ToString());
         }
@@ -1084,6 +1084,30 @@ bool GetTransaction(const uint256 &hash, CTransaction &txOut, uint256 &hashBlock
         }
     }
 
+    return false;
+}
+
+bool GetTransactionPast(const uint256 &hash, CTransaction &txOut, uint256 &hashBlock)
+{
+    CBlockIndex *pindexSlow = NULL;
+    {
+      CDiskTxPos postx;
+      if (pblocktree->ReadTxIndex(hash, postx)) {
+        CAutoFile file(OpenBlockFile(postx, true), SER_DISK, CLIENT_VERSION);
+        CBlockHeader header;
+        try {
+          file >> header;
+          fseek(file, postx.nTxOffset, SEEK_CUR);
+          file >> txOut;
+        } catch (std::exception &e) {
+          return error("%s : Deserialize or I/O error - %s", __func__, e.what());
+        }
+        hashBlock = header.GetHash();
+        if (txOut.GetHash() != hash)
+          return error("%s : txid mismatch", __func__);
+        return true;
+      }
+    }
     return false;
 }
 
@@ -1744,9 +1768,15 @@ void CheckForkWarningConditions()
     {
         if (!fLargeWorkForkFound)
         {
-        	std::string warning = std::string("'Warning: Large-work fork detected, forking after block ") +
-        			pindexBestForkBase->phashBlock->ToString() + std::string("'");
-        	CAlert::Notify(warning, true);
+	  std::string warning;
+	  if (!pindexBestForkBase || !pindexBestForkBase->phashBlock) {
+	    warning = std::string("Warning: Large-work fork detected, unknown block");
+	      }
+	  else {
+	    warning = std::string("'Warning: Large-work fork detected, forking after block ") +
+	      pindexBestForkBase->phashBlock->ToString() + std::string("'");
+	  }
+	  CAlert::Notify(warning, true);
         }
         if (pindexBestForkTip)
         {
@@ -2221,6 +2251,10 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
       flags |= SCRIPT_VERIFY_DERSIG;
     }
 
+    if (TestNet()) { // enable op_pushcode on testnet. disable op_comments for now
+      flags |=  SCRIPT_VERIFY_PUSHCODE;
+    }
+    
     CBlockUndo blockundo;
 
     CCheckQueueControl<CScriptCheck> control(fScriptChecks && nScriptCheckThreads ? &scriptcheckqueue : NULL);
@@ -2230,8 +2264,15 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
     int nInputs = 0;
     unsigned int nSigOps = 0;
     CDiskTxPos pos(pindex->GetBlockPos(), GetSizeOfCompactSize(block.vtx.size()));
+    CDiskTxPos posCN(pindex->GetBlockPos(), GetSizeOfCompactSize(block.vtx.size()));
+    CDiskTxPos posCP(pindex->GetBlockPos(), GetSizeOfCompactSize(block.vtx.size()));
     std::vector<std::pair<uint256, CDiskTxPos> > vPos;
+    std::vector<std::pair<uint256, CDiskTxPos>> vPosCN; // position of next code
+    std::vector<std::pair<uint256, CDiskTxPos>> vPosCP; // position of prev code
     vPos.reserve(block.vtx.size());
+    vPosC.reserve(block.vtx.size());
+    vCN.reserve(block.vtx.size());
+    vCP.reserve(block.vtx.size());
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
         const CTransaction &tx = block.vtx[i];
@@ -2244,24 +2285,338 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 
         if (!tx.IsCoinBase())
         {
-            if (!view.HaveInputs(tx))
-                return state.DoS(100, error("ConnectBlock() : inputs missing/spent"),
-                                 REJECT_INVALID, "bad-txns-inputs-missingorspent");
+	  if (!view.HaveInputs(tx))
+	    return state.DoS(100, error("ConnectBlock() : inputs missing/spent"),
+			     REJECT_INVALID, "bad-txns-inputs-missingorspent");
+	  
+	  // Add in sigops done by pay-to-script-hash inputs;
+	  // this is to prevent a "rogue miner" from creating
+	  // an incredibly-expensive-to-validate block.
+	  nSigOps += GetP2SHSigOpCount(tx, view);
+	  if (nSigOps > MAX_BLOCK_SIGOPS)
+	    return state.DoS(100, error("ConnectBlock() : too many sigops"),
+			     REJECT_INVALID, "bad-blk-sigops");
+	  
+	  nFees += view.GetValueIn(tx)-tx.GetValueOut();
+	  
+	  std::vector<CScriptCheck> vChecks;
+	  LogPrintf("check inputs\n");
+	  if (!CheckInputs(tx, state, view, fScriptChecks, flags, nScriptCheckThreads ? &vChecks : NULL))
+	    return false;
+	  LogPrintf("checked inputs\n");
+	  control.Add(vChecks);
 
-			// Add in sigops done by pay-to-script-hash inputs;
-			// this is to prevent a "rogue miner" from creating
-			// an incredibly-expensive-to-validate block.
-			nSigOps += GetP2SHSigOpCount(tx, view);
-			if (nSigOps > MAX_BLOCK_SIGOPS)
-				return state.DoS(100, error("ConnectBlock() : too many sigops"),
-								 REJECT_INVALID, "bad-blk-sigops");
+	  // check that OP_COMMENT references a real txid / output
 
-            nFees += view.GetValueIn(tx)-tx.GetValueOut();
-
-            std::vector<CScriptCheck> vChecks;
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, nScriptCheckThreads ? &vChecks : NULL))
-                return false;
-            control.Add(vChecks);
+	  if (flags & SCRIPT_VERIFY_COMMENT) {
+	    vector<vector<unsigned char> > vSolutions;
+	    txnouttype whichType;
+	    for (int j=0; j<tx.vout.size(); j++) {
+	      const CScript& scriptPubKey = tx.vout[j].scriptPubKey;
+	      LogPrintf("check solver\n");
+	      if (!Solver(scriptPubKey,whichType, vSolutions))
+		LogPrintf("non standard tx\n");
+	      LogPrintf("checked solver\n");
+	      if (whichType == TX_COMMENT) {
+		LogPrintf("have a TX_COMMENT\n");
+		//std::vector<unsigned char> & txid;
+		bool haveTxid = false;
+		int nOutput = -1;
+		if (vSolutions[0].size()==32) {
+		  haveTxid = true;
+		  if (vSolutions.size()>2) {
+		    nOutput = CScriptNum(vSolutions[1]).getint();
+		  }
+		}
+		else {
+		  nOutput = CScriptNum(vSolutions[0]).getint();
+		}
+		std::vector<unsigned char> comment = vSolutions[vSolutions.size()-1];
+		if (comment.size()<1 || comment.size()>255) {
+		  return state.DoS(100,error("ConnectBlock(): comment size outside of range [1,255]\n"),REJECT_INVALID,"bad-comment-size");
+		}
+		if (haveTxid) {
+		  LogPrintf("txid %s nOutput %d comment %s\n",HexStr(vSolutions[0]).c_str(),nOutput,HexStr(comment.begin(),comment.end()).c_str());
+		}
+		else {
+		  LogPrintf("nOutput %d comment %s\n",nOutput,HexStr(comment.begin(),comment.end()).c_str());
+		}
+		CTransaction txMatch;
+		uint256 hashBlock;
+		if (haveTxid && !GetTransactionPast(uint256(HexStr(vSolutions[0])),txMatch,hashBlock)) {
+		  return state.DoS(100,error("ConnectBlock(): comment is not referencing a past txid\n"),REJECT_INVALID,"bad-comment-txid-ref");
+		}
+		else {
+		  if (haveTxid && nOutput > txMatch.vout.size()-1) {
+		    return state.DoS(100,error("ConnectBlock(): comment is not referencing an existing output of the past txid\n"),REJECT_INVALID,"bad-comment-output-dne-past");
+		  }
+		  else if (!haveTxid && nOutput > tx.vout.size() - 1) {
+		      return state.DoS(100,error("ConnectBlock(): comment is not referencing an existing output\n"),REJECT_INVALID,"bad-comment-output-dne");
+		  }
+		}
+	      }
+	    }
+	  }
+	  if (flags & SCRIPT_VERIFY_PUSHCODE) {
+	    vector<vector<unsigned char> > vSolutions;
+	    txnouttype whichType;
+	    CDiskTxPos posC = CDiskTxPos(pos,pos.nTxOffset);
+	    posC.nTxOffset += ::GetSerializeSize(tx.nVersion,SER_DISK,CLIENT_VERSION);
+	    posC.nTxOffset += ::GetSerializeSize(tx.vin,SER_DISK,CLIENT_VERSION);
+	    posC.nTxOffset += GetSizeOfCompactSize(tx.vout.size());
+	    for (int j=0; j<tx.vout.size(); j++) {
+	      const CScript& scriptPubKey = tx.vout[j].scriptPubKey;
+	      if (!Solver(scriptPubKey,whichType, vSolutions))
+		LogPrintf("non standard tx\n");
+	      if (whichType == TX_PUSHCODE) {
+		LogPrintf("have a TX_PUSHCODE\n");
+		int pushtype = -1;
+		valtype& txid;
+		unsigned int nOutput;
+		bool havenOutput = false;
+		valtype& txidPart;
+		unsigned int nOutputPart;
+		bool havenOutputPart = false;
+		unsigned int nOutputPart2;
+		bool havenOutputPart2 = false;
+		bool haveTxid = false;
+		bool haveTxidPart = false;
+		bool haveTxidPart2 = false;
+		bool newCode = false;
+		if (vSolutions.size() == 1) {
+		  newCode = true;
+		}
+		else if (vSolutions.size() == 2) { // assume inserting to end of branch
+		  nOutput = CScriptNum(vSolutions[0]).getint();
+		  havenOutput = true;
+		}
+		else if (vSolutions.size() == 3) { // assume inserting to end of branch
+		  txid = vSolutions[0];
+		  haveTxid = true;
+		  nOutput = CScriptNum(vSolutions[1]).getint();
+		  havenOutput = true;
+		}
+		else if (vSolutions.size() == 4) {
+		  pushtype = CScriptNum(vSolutions[0]).getint();
+		  int soli = 1;
+		  if (pushtype & PUSHTYPE_TX) {
+		    txid = vSolutions[soli];
+		    soli++;
+		    haveTxid = true;
+		  }
+		  nOutput = CScriptNum(vSolutions[soli]).getint();
+		  havenOutput = true;
+		  if (soli<2) {
+		    nOutputPart = CScriptNum(vSolutions[2]).getint();
+		    havenOutputPart = true;
+		  }
+		}
+		else if (vSolutions.size() == 5) {
+		  pushtype = CScriptNum(vSolutions[0]).getint();
+		  int soli = 1;
+		  if (pushtype & PUSHTYPE_TX) {
+		    txid = vSolutions[soli];
+		    soli++;
+		    haveTxid = true;
+		  }
+		  nOutput = CScriptNum(vSolutions[soli]).getint();
+		  havenOutput = true;
+		  soli++;
+		  if (pushtype & PUSHTYPE_TXPART) {
+		    txid = vSolutions[soli];
+		    soli++;
+		    haveTxidPart = true;
+		  }
+		  if (soli > 3) {
+		    return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid format\n"),REJECT_INVALID,"bad-pushcode");
+		  }
+		  else if (soli < 3) {
+		    if (!(pushtype & PUSHTYPE_TXPART2))
+		      return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid format\n"),REJECT_INVALID,"bad-pushcode");
+		    nOutputPart = CScriptNum(vSolutions[2]).getint();
+		    havenOutput = true;
+		    nOutputPart2 = CScriptNum(vSolutions[3]).getint();
+		    havenOutputPart2 = true;
+		  }
+		  else {
+		    nOutputPart = CScriptNum(vSolutions[3]).getint();
+		    havenOutputPart = true;
+		  }
+		}
+		else if (vSolutions.size() == 6) {
+		   pushtype = CScriptNum(vSolutions[0]).getint();
+		   int soli = 1
+		   if (pushtype & PUSHTYPE_TX) {
+		     txid = vSolutions[soli];
+		     haveTxid = true;
+		     soli++;
+		   }
+		   nOutput = CScriptNum(vSolutions[soli]).getint();
+		   havenOutput = true;
+		   soli++;
+		   if (pushtype & PUSHTYPE_TXPART) {
+		     txidPart = vSolutions[soli];
+		     soli++;
+		     haveTxidPart = true;
+		   }
+		   nOutputPart = CScriptNum(vSolutions[soli]).getint();
+		   soli++;
+		   havenOutputPart = true;
+		   if (soli < 5) {
+		     if (soli < 4) {
+		       txidPart2 = vSolutions[soli];
+		       soli++;
+		       haveTxidPart2;
+		     }
+		     nOutputPart2 = CScriptNum(vSolutions[soli]).getint();
+		     havenOutputPart2 = true;
+		   }
+		}
+		else if (vSolutions.size() == 7) {
+		  pushtype = CScriptNum(vSolutions[0]).getint();
+		  int soli = 1;
+		  if (pushtype & PUSHTYPE_TX) {
+		    txid = vSolutions[soli];
+		    haveTxid = true;
+		    soli++;
+		  }
+		  nOutput = CScriptNum(vSolutions[soli]).getint();
+		  havenOutput = true;
+		  soli++;
+		  if (pushtype & PUSHTYPE_TXPART) {
+		     txidPart = vSolutions[soli];
+		     soli++;
+		     haveTxidPart = true;
+		   }
+		   nOutputPart = CScriptNum(vSolutions[soli]).getint();
+		   soli++;
+		   havenOutputPart = true;
+		   if (pushtype & PUSHTYPE_TXPART2) {
+		     txidPart2 = vSolutions[soli];
+		     soli++;
+		     haveTxidPart2 = true;
+		   }
+ 		   if (soli < 6) {
+		     nOutputPart2 = CScriptNum(vSolutions[soli]).getint();
+		     soli++;
+		     havenOutputPart2 = true;
+		   }
+		   if (soli < 6)
+		     return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid format\n"),REJECT_INVALID,"bad-pushcode");
+		}
+		else if (vSolutions.size() == 8) {
+		  pushtype = CScriptNum(vSolutions[0]).getint();
+		  txid = vSolutions[1];
+		  haveTxid = true;
+		  nOutput = CScriptNum(vSolutions[2]).getint();
+		  havenOutput = true;
+		  txidPart = vSolutions[3];
+		  haveTxidPart = true;		 
+		  nOutputPart = CScriptNum(vSolutions[4]).getint();
+		  havenOutputPart = true;
+		  txidPart2 = vSolutions[5];
+		  haveTxidPart2 = true;
+		  nOutputPart2 = CScriptNum(vSolutions[6]).getint();
+		  havenOutputPart2 = true;		   
+		}
+		if (haveTxid && txid.size() < 1 )
+		  return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid txid\n"),REJECT_INVALID,"bad-pushcode");
+		if (haveTxidPart && txidPart.size() < 1 )
+		  return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid txid for part\n"),REJECT_INVALID,"bad-pushcode");
+		if (haveTxidPart2 && txidPart2.size() < 1 )
+		  return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid txid for part 2\n"),REJECT_INVALID,"bad-pushcode");
+		if (havenOutput && nOutput < 0)
+		  return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid nOutput\n"),REJECT_INVALID,"bad-pushcode");
+		if (havenOutputPart && nOutputPart < 0)
+		  return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid nOutput for part\n"),REJECT_INVALID,"bad-pushcode");
+		if (havenOutputPart2 && nOutputPart2 < 0)
+		  return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid nOutput for part 2\n"),REJECT_INVALID,"bad-pushcode");
+		valtype bytecode = vSolutions[vSolutions.size()-1];
+		if (bytecode.size()<1)
+		  if (pushtype & PUSHTYPE_INSERT)
+		    return state.DoS(100,error("ConnectBlock(): Empty PUSHCODE of type insert\n"),REJECT_INVALID,"bad-pushcode");
+		CTransaction txMatch;
+		uint256 hashBlock;
+		if (haveTxid && !GetTransactionPast(uint256(HexStr(txid)),txMatch,hashBlock)) {
+		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a past txid\n"),REJECT_INVALID,"bad-pushcode-txid-ref");
+		}
+		CTransaction txMatchPart;
+		uint256 hashBlockPart;
+		if (haveTxidPart && !GetTransactionPast(uint256(HexStr(txidPart)),txMatchPart,hashBlockPart)) {
+		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a past txid for part\n"),REJECT_INVALID,"bad-pushcode-txid-ref");
+		}
+		CTransaction txMatchPart2;
+		uint256 hashBlockPart2;
+		if (haveTxidPart2 && !GetTransactionPast(uint256(HexStr(txidPart2)),txMatchPart2,hashBlockPart2)) {
+		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a past txid for part 2\n"),REJECT_INVALID,"bad-pushcode-txid-ref");
+		}
+		if (havenOutput && !haveTxid)
+		  txMatch = tx;
+		if (havenOutputPart && !haveTxidPart)
+		  txMatchPart = tx;
+		if (havenOutputPart2 && !haveTxidPart2)
+		  txMatchPart2 = tx;
+		if (havenOutput && nOutput >= txMatch.vout.size())
+		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing an existing output\n"),REJECT_INVALID,"bad-pushcode-output-dne");
+		if (havenOutputPart && nOutputPart >= txMatchPart.vout.size())
+		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing an existing output\n"),REJECT_INVALID,"bad-pushcode-output-dne");
+		if (havenOutputPart2 && nOutputPart2 >= txMatchPart2.vout.size())
+		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing an existing output\n"),REJECT_INVALID,"bad-pushcode-output-dne");
+	       
+		posC.nTxOffset += ::GetSerializeSize(tx.vout[j].nValue,SER_DISK,CLIENT_VERSION);
+		posC.nTxOffset += ::GetSerializeSize(tx.vout[j].scriptPubkey,SER_DISK,CLIENT_VERSION);
+		posC.nTxOffset -= (1+bytecode.size()+GetSizeOfCompactSize(bytecode.size()));
+		uint256 txHash = block.GetTxHash(i);
+		COutpointPair opointp; // opoint1 for part, opoint2 for branch
+		if (newCode) {
+		  opointp.Set1(CGOutpoint(txHash,j)); // keep opoint2 null for tip of branch
+		  // in this case, branch defined by the part at tip
+		  vPosC.push_back(std::make_pair(opointp,posC));
+		}
+		else if (!havenOutputPart) {
+		  opointp.Set1(CGOutpoint(txHash,j));
+		  vCP.push_back(std::make_pair(opointp,GOutpoint(txMatch.hash,nOutput)));
+		}
+		else if (pushtype & PUSHTYPE_INSERT) {
+		  COutpointPair opointpMatch; // the branch
+		  opointpMatch.Set1(CGOutpoint(txMatch.hash,nOutput));
+		  COutpointPair opointpMatchPart; // the part
+		  opointpMatchPart.Set1(CGOutpoint(txMatchPart.hash,nOutputPart));
+		  opointpMatchPart.Set2(CGOutpoint(txMatch.hash,nOutput));
+		  int opointpMatchHeight = -1;
+		  int opointpMatchPartHeight = -1;
+		  if (!pblocktree->ReadCodeHeightIndex(opointpMatch,opointpMatchHeight))
+		    return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a valid output\n"),REJECT_INVALID,"bad-pushcode-output-invalid");
+		  if (!pblocktree->ReadCodeHeightIndex(opointpMatchPart,opointpMatchPartHeight))
+		    return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a valid output\n"),REJECT_INVALID,"bad-pushcode-output-invalid");
+		  if (opointpMatchHeight < 0 || opointpMatchPartHeight < 0 || opointpMatchPartHeight > opointMatchHeight)
+		    return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a valid output\n"),REJECT_INVALID,"bad-pushcode-output-dne");
+		  if (opointpMatchHeight - opointpMatchPartHeight > MAX_PUSHCODE_DEPTH)
+		    return state.DoS(100,error("ConnectBlock(): pushcode depth exceeded\n"),REJECT_INVALID,"bad-pushcode-depth");
+		  // now iterate from tip of branch to insertion point
+		  CGOutpoint opointpMatchCur = opointpMatch;
+		  while (true) {
+		    CGOutpoint opointpMatchPrev;
+		    if !(pblocktree->ReadCodePrevIndex(opointpMatchCur,opointpMatchPrev))
+		      return state.DoS(100,error("ConnectBlock(): pushcode part not found\n"),REJECT_INVALID,"bad-pushcode-part-unfound");
+		    opointpMatchCur = opointpMatchPrev;
+		  }
+		  //vCN.push_back(std::make_pair(opoint,opointMatchPart));
+		  CGOutpoint opointMatchPrev;
+		  if (pblocktree->ReadCodePrevIndex(opointMatch,opointMatchPrev)) {
+		    vCP.push_back(std::make_pair(opoint,opointMatchPrev));
+		  }
+		}
+		else if (havenOutputPart2) {
+		  
+		}
+		else {
+		  CGOutpoint opointMatch = CGOutpoint(txMatchPart.hash,nOutputPart);
+		  vCN.push_back(std::make_pair(opoint,opointMatch));
+		}
+	      }
+	    }
+	  }
         }
 
         CTxUndo txundo;
@@ -3457,7 +3812,7 @@ bool InitBlockIndex() {
         return true;
 
     // Use the provided setting for -txindex in the new database
-    fTxIndex = GetBoolArg("-txindex", false);
+    fTxIndex = GetBoolArg("-txindex", true);
     pblocktree->WriteFlag("txindex", fTxIndex);
     LogPrintf("Initializing databases...\n");
 

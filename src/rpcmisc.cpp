@@ -666,3 +666,56 @@ Value chaindynamics(const Array& params, bool fHelp)
 
     return obj;
 }
+
+Value mark(const Array& params, bool fHelp)
+{
+  if (fHelp || params.size() < 1 || params.size() > 6 || params.size() == 5)
+    throw runtime_error(
+			            "mark (data comment address amount)\n"
+				    "\nArguments:\n"
+				    "1. \"data\"     (string, optional) The data to imbed into the blockchain (max 64 characters).\n"
+				    "2. \"comment\"     (string, optional) A comment describing the data or providing a link where it is available (max 255 characters)\n"
+				    "3. \"txid\" (string, optional) The txid that the comment references. Otherwise assume it's the txid of this transaction.\n"
+				    "4. nOutput (int, optional) The specific output referenced in the txid. A value of -1 disables this, but sets it for auto calculation in the current tx if txid is not given. Use -2 to completely disable\n"
+				    "5. \"address\"     (string, optional) A payment address, which can be used for tipping the author of the data\n"
+				    "6. amount     (float, optional) The amount to pay. Required if address is given.\n"
+				    "Returns the transaction id.\n"
+				    "\"txid\" (string),\n"
+			);
+  int64_t nAmount = 0;
+  CBitmarkAddress address;
+  CWalletTx wtx;
+  const char * data = params[0].get_str().c_str();
+  if (strlen(data)==0) data = 0;
+  const char * comment = 0;
+  const char * txid = 0;
+  int nOutput = -1;
+  if (params.size()>1) {
+    comment = params[1].get_str().c_str();
+    if (strlen(comment)==0) comment = 0;
+    if (params.size()>2) {
+      txid = params[2].get_str().c_str();
+      if (strlen(txid)==0) txid = 0;
+    }
+  }
+  if (!data && !comment) throw runtime_error("Some data or a comment is needed\n");
+  if (params.size()>3) {
+    nOutput = params[3].get_int();
+  }
+  if (params.size()==6) {
+    address = CBitmarkAddress(params[2].get_str());
+    if (!address.IsValid())
+      throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Bitmark address");
+    nAmount = AmountFromValue(params[3]);
+    EnsureWalletIsUnlocked();
+    string strError = pwalletMain->SendMoneyToDestination(address.Get(), nAmount, wtx, data, comment, txid, nOutput);
+  }
+  else {
+    EnsureWalletIsUnlocked();
+    LogPrintf("sendmoneytonodestination with nOutput=%d\n",nOutput);
+    string strError = pwalletMain->SendMoneyToNoDestination(wtx,data,comment,txid,nOutput);
+  }
+
+  return wtx.GetHash().GetHex();
+
+}

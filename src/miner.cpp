@@ -403,7 +403,8 @@ CBlockTemplate* CreateNewBlock(const CScript& scriptPubKeyIn)
         CValidationState state;	
 	
         if (!ConnectBlock(*pblock, state, &indexDummy, viewNew, true))
-            throw std::runtime_error("CreateNewBlock() : ConnectBlock failed");
+	  throw std::runtime_error("CreateNewBlock() : ConnectBlock failed");
+	//LogPrintf("CreateNewBlock() : ConnectBlock failed\n");
     }
 
     return pblocktemplate.release();
