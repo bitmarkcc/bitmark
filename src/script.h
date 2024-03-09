@@ -228,6 +228,7 @@ enum txnouttype
     TX_MULTISIG,
     TX_NULL_DATA,
     TX_COMMENT,
+    TX_PUSHCODE
 };
 
 class CNoDestination {

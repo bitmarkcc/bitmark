@@ -606,9 +606,9 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 		    return false;
 		  popstack(stack);
 		}
-	      }/
+	      }
 	      break;
-	    case OP_NOP5: // OP_PUSHCODE todo sync with code in main.cpp
+	    case OP_NOP5: // OP_PUSHCODE todo sync with code in main.cpp (not sure if validation needed here)
 	      {
 		return false; // return false for now
 
@@ -622,7 +622,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 		  valtype& code = stacktop(-1); // the bytecode
 		  if (code.size() < 1)
 		    return false;
-		  /popstack(stack);
+		  popstack(stack);
 		}
 		else if (stack.size() == 2) {
 		  int nOutput = CScriptNum(stacktop(-2)).getint(); //nOutput of current tx
@@ -696,7 +696,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 		    return false;
 		  int nOutput = CScriptNum(stacktop(-4)).getint(); //nOutput of txid
 		  valtype& txidPart = stacktop(-3); // where to insert/replace
-		  if (txidPart < 32)
+		  if (txidPart.size() < 32)
 		    return false;
 		  int nOutputPart = CScriptNum(stacktop(-2)).getint(); //nOutput of txidPart
 		  valtype& code = stacktop(-1); // the bytecode
@@ -1178,7 +1178,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
                     scriptCode.FindAndDelete(CScript(vchSig));
 
 		    bool fSuccess = CheckSignatureEncoding(vchSig, flags) && CheckPubKeyEncoding(vchPubKey, flags) &&
-*		      CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nHashType, flags);
+		      CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nHashType, flags);
 		    /*
 		    else {
 		      bool fSuccess = IsCanonicalSignature(vchSig, flags) && IsCanonicalPubKey(vchPubKey, flags) &&
@@ -1194,8 +1194,8 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
                     {
                         if (fSuccess)
                             popstack(stack);
-*                       else
-                            return false;
+			else
+			    return false;
                     }
                 }
                 break;
@@ -1212,7 +1212,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
                     int nKeysCount = CScriptNum(stacktop(-i)).getint();
                     if (nKeysCount < 0 || nKeysCount > 20)
                         return false;
-*                   nOpCount += nKeysCount;
+		    nOpCount += nKeysCount;
                     if (nOpCount > 201)
                         return false;
                     int ikey = ++i;
@@ -1230,7 +1230,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 
                     // Subset of script starting at the most recent codeseparator
                     CScript scriptCode(pbegincodehash, pend);
-*
+
                     // Drop the signatures, since there's no way for a signature to sign itself
                     for (int k = 0; k < nSigsCount; k++)
                     {
@@ -1246,7 +1246,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 
                         // Check signature
 			bool fOk = CheckSignatureEncoding(vchSig, flags) && CheckPubKeyEncoding(vchPubKey, flags) &&
-			  CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nH*shType, flags);
+			  CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nHashType, flags);
 
 			
                         /*bool fOk = IsCanonicalSignature(vchSig, flags) && IsCanonicalPubKey(vchPubKey, flags) &&

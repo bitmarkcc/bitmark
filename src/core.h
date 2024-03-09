@@ -39,17 +39,24 @@ static const int64_t nForkHeightForce = 452000; // not used
 template<unsigned int BITS>
 class CGOutPoint // generalized outpoint
 {
+protected:
+  enum { nBITS = BITS };
 public:
 
   base_uint<BITS> hash;
   unsigned int n;
 
   CGOutPoint() { SetNull(); }
+  CGOutPoint(const CGOutPoint<BITS> &p) {
+    hash = p.hash;
+    n = p.n;
+  }
+  CGOutPoint<BITS>& operator=(const CGOutPoint<BITS>&) = default;
   CGOutPoint(base_uint<BITS> hashIn, unsigned int nIn) { hash = hashIn; n = nIn; }
 
   IMPLEMENT_SERIALIZE( READWRITE(FLATDATA(*this)); )
 
-    void SetNull() { hash = 0; n = (unsigned int) -1; }
+  void SetNull() { hash = 0; n = (unsigned int) -1; }
   bool IsNull() const { return (hash == 0 && n == (unsigned int) -1); }
 
   friend bool operator<(const CGOutPoint& a, const CGOutPoint& b)
@@ -66,29 +73,73 @@ public:
   {
     return !(a == b);
   }
-}
+
+  std::string ToString() const;
+  void print() const;
+
+  friend class COutPoint;
+};
 
 /** An outpoint - a combination of a transaction hash and an index n into its vout */
-typedef CGOutpoint<256> COutpoint;
+typedef CGOutPoint<256> COutPoint256;
+typedef COutPoint256 COutPointD; // default (D) outpoint is 256 bit
 
-class COutPointPair // pair of outpoints
-{
+class COutPoint : public COutPointD {
 public:
+  COutPoint() : COutPointD() {}
+  COutPoint(const COutPoint &p) : COutPointD(p) {}
+  COutPoint& operator=(const COutPoint &p) {
+    COutPointD::operator=(p);
+    return *this;
+  }
+  COutPoint(base_uint<nBITS> hashIn, unsigned int nIn) : COutPointD(hashIn,nIn) {}
+  COutPoint(uint256 hashIn, unsigned int nIn): COutPointD(hashIn,nIn) {}
+};
 
-  CGOutpoint opoint1;
-  CGOutpoint opoint2;
+template <unsigned int BITS>
+class CGOutPointPair // pair of outpoints
+{
+private:
 
-  COutPointPair() { SetNull(); }
-  COutPointPair(CGOutpoint opoint1In, CGOutpoint opoint2In) { opoint1 = opoint1In; opoint2 = opoint2In; }
+  CGOutPoint<BITS> opoint1;
+  CGOutPoint<BITS> opoint2;
+
+public:  
+  CGOutPointPair() { SetNull(); }
+  CGOutPointPair(CGOutPoint<BITS> opoint1In, CGOutPoint<BITS> opoint2In) { opoint1 = opoint1In; opoint2 = opoint2In; }
   IMPLEMENT_SERIALIZE( READWRITE(FLATDATA(*this)); )
 
-    void SetNull() { opoint1.SetNull(); opoint2.SetNull(); }
+  void SetNull() { opoint1.SetNull(); opoint2.SetNull(); }
   bool IsNull() const { return (opoint1.IsNull() && opoint2.IsNull()); }
 
-  void Set1 (CGOutpoint p) { opoint1 = p; }
-  void Set2 (CGOutpoint p) { opoint2 = p; }
-  void Set (CGOutpoint p1, CGOutpoint p2) { opoint1 = p1; opoint2 = p2;}
-}
+  void Set1 (CGOutPoint<BITS> p) { opoint1 = p; }
+  void Set2 (CGOutPoint<BITS> p) { opoint2 = p; }
+  void Set (CGOutPoint<BITS> p1, CGOutPoint<BITS> p2) { opoint1 = p1; opoint2 = p2;}
+  CGOutPoint<BITS> Get1() { return opoint1; }
+  CGOutPoint<BITS> Get2() { return opoint2; }
+
+  friend class COutPointPair;
+};
+
+typedef CGOutPointPair<256> COutPointPair256;
+typedef COutPointPair256 COutPointPairD;
+
+class COutPointPair : public COutPointPairD {
+public:
+  COutPointPair() : COutPointPairD() {}
+  COutPointPair(const COutPointPair &p) : COutPointPairD(p) {}
+  COutPointPair& operator=(const COutPointPair &p) {
+    COutPointPairD::operator=(p);
+    return *this;
+  }
+  COutPointPair(COutPoint p1, COutPoint p2) : COutPointPairD(p1,p2) {}
+
+  void Set1 (COutPoint p) {COutPointPairD::Set1(p);}
+  void Set2 (COutPoint p) {COutPointPairD::Set2(p);}
+  void Set (COutPoint p1, COutPoint p2) {COutPointPairD::Set(p1,p2);}
+  COutPoint Get1() { return COutPoint(opoint1.hash,opoint1.n); }
+  COutPoint Get2() { return COutPoint(opoint2.hash,opoint2.n); }
+};
 
 /** An inpoint - a combination of a transaction and an index n into its vin */
 class CInPoint
@@ -178,7 +229,7 @@ public:
     unsigned int nSequence;
 
     CTxIn()
-/    {
+  {
         nSequence = std::numeric_limits<unsigned int>::max();
     }
 

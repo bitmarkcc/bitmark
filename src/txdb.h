@@ -62,6 +62,14 @@ public:
     bool ReadReindexing(bool &fReindex);
     bool ReadTxIndex(const uint256 &txid, CDiskTxPos &pos);
     bool WriteTxIndex(const std::vector<std::pair<uint256, CDiskTxPos> > &list);
+  bool ReadCodeIndex(const COutPoint &outpoint, CDiskTxPos &pos);
+  bool WriteCodeIndex(const std::vector<std::pair<COutPoint, CDiskTxPos> > &list);
+  bool ReadCodeHeightIndex(const COutPoint &outpoint, int &height);
+  bool WriteCodeHeightIndex(const std::vector<std::pair<COutPoint, int> > &list);
+  bool ReadCodeNextIndex(const COutPointPair &outpointp, COutPointPair &opointpN);
+  bool WriteCodeNextIndex(const std::vector<std::pair<COutPointPair, COutPointPair> > &list);
+  bool ReadCodePrevIndex(const COutPointPair &outpointp, COutPointPair &opointpP);
+  bool WriteCodePrevIndex(const std::vector<std::pair<COutPointPair, COutPointPair> > &list);
     bool WriteFlag(const std::string &name, bool fValue);
     bool ReadFlag(const std::string &name, bool &fValue);
     bool LoadBlockIndexGuts();

@@ -13,12 +13,14 @@
 CCriticalSection cs_main;
 CChain chainActive;
 
-std::string COutPoint::ToString() const
+template <unsigned int BITS>
+std::string CGOutPoint<BITS>::ToString() const
 {
     return strprintf("COutPoint(%s, %u)", hash.ToString().substr(0,10), n);
 }
 
-void COutPoint::print() const
+template <unsigned int BITS>
+void CGOutPoint<BITS>::print() const
 {
     LogPrintf("%s\n", ToString());
 }

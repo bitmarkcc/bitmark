@@ -64,6 +64,10 @@ static const int DEFAULT_SCRIPTCHECK_THREADS = 0;
 static const int MAX_BLOCKS_IN_TRANSIT_PER_PEER = 128;
 /** Timeout in seconds before considering a block download peer unresponsive. */
 static const unsigned int BLOCK_DOWNLOAD_TIMEOUT = 60;
+/** Max depth of pushcode branch referenced (1 year) (I think lower it) */
+static const unsigned int MAX_PUSHCODE_DEPTH = 262800;
+/** Max depth, relative to branch, of pushcode part referenced (1 year) (I think lower it) */
+static const unsigned int MAX_PUSHCODE_PART_DEPTH = 262800;
 
 #ifdef USE_UPNP
 static const int fHaveUPnP = true;
