@@ -112,7 +112,7 @@ Cross-compiling on Ubuntu with mxe:
 
 	git clone https://github.com/akrmn2021/bitmark
 	cd bitmark
-	git checkout v0.9.7.5-rc1 (or latest version)
+	git checkout v0.9.7.5 (or latest version)
 	./autogen.sh
 	./configure --prefix=/usr/local --host=x86_64-w64-mingw32.static --with-gui=qt5 --with-boost-system=boost_system-mt --with-boost-filesystem=boost_filesystem-mt --with-boost-program-options=boost_program_options-mt --with-boost-thread=boost_thread_win32-mt --with-boost-chrono=boost_chrono-mt --with-boost-unit-test-framework=boost_unit_test_framework-mt --with-qt-incdir=$PREFIX/qt5/include --with-qt-libdir=$PREFIX/qt5/lib --with-qt-plugindir=$PREFIX/qt5/plugins --with-qt-bindir=$PREFIX/qt5/bin
 	make
