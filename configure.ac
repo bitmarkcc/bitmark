@@ -3,7 +3,7 @@ AC_PREREQ([2.60])
 define(_CLIENT_VERSION_MAJOR, 0)
 define(_CLIENT_VERSION_MINOR, 9)
 define(_CLIENT_VERSION_REVISION, 7)
-define(_CLIENT_VERSION_BUILD, 4)
+define(_CLIENT_VERSION_BUILD, 5)
 define(_CLIENT_VERSION_IS_RELEASE, false)
 
 define(_COPYRIGHT_YEAR, 2021)
@@ -196,11 +196,12 @@ esac
 AM_CONDITIONAL([BUILD_ARGON2_OPTIMIZED], [ @<:@@<:@ x$host_cpu == x*"86"* @:>@@:>@ ])
 
 use_pkgconfig=yes
+use_pkg_config_qt=yes
 case $host in
   *mingw*)
 
      #pkgconfig does more harm than good with MinGW
-     use_pkgconfig=yes
+     use_pkgconfig_qt=no
 
      TARGET_OS=windows
      AC_CHECK_LIB([mingwthrd],      [main],, AC_MSG_ERROR(lib missing))
@@ -461,7 +462,6 @@ if test x$use_tests = xyes; then
     AC_MSG_ERROR(hexdump is required for tests)
   fi
 
-
   AX_BOOST_UNIT_TEST_FRAMEWORK
 
   dnl Determine if -DBOOST_TEST_DYN_LINK is needed
@@ -602,7 +602,7 @@ AM_CONDITIONAL([BUILD_BITMARK_CLI], [test x$build_bitmark_cli = xyes])
 AC_MSG_RESULT($build_bitmark_cli)
 
 dnl sets $bitmark_enable_qt, $bitmark_enable_qt_test, $bitmark_enable_qt_dbus
-BITMARK_QT_CONFIGURE([$use_pkgconfig], [qt5])
+BITMARK_QT_CONFIGURE([$use_pkgconfig_qt], [qt5])
 
 AC_LANG_POP
 
@@ -658,6 +658,8 @@ else
     AC_MSG_RESULT(no)
   fi
 fi
+
+CPPFLAGS="$CPPFLAGS -DNO_DLL_EXPORT -DSECP256K1_STATIC"
 
 dnl these are only used when qt is enabled
 if test x$bitmark_enable_qt != xno; then
