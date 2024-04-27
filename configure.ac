@@ -124,8 +124,6 @@ AC_ARG_WITH([homebrew],
   [use_homebrew=$withval],
   [use_homebrew=auto])
 
-LT_INIT
-
 AC_CONFIG_SRCDIR([src])
 AC_CONFIG_HEADERS([src/bitmark-config.h])
 

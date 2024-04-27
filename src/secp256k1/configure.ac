@@ -37,13 +37,14 @@ fi
 AC_PROG_CC
 AM_PROG_AS
 AM_PROG_AR
+AC_PROG_RANLIB
 
 # Clear some cache variables as a workaround for a bug that appears due to a bad
 # interaction between AM_PROG_AR and LT_INIT when combining MSVC's archiver lib.exe.
 # https://debbugs.gnu.org/cgi/bugreport.cgi?bug=54421
 AS_UNSET(ac_cv_prog_AR)
 AS_UNSET(ac_cv_prog_ac_ct_AR)
-LT_INIT([win32-dll])
+dnl LT_INIT([win32-dll])
 
 build_windows=no
 

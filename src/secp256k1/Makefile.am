@@ -4,10 +4,9 @@ ACLOCAL_AMFLAGS = -I build-aux/m4
 # which does not have an explicit foo_CFLAGS variable set.
 AM_CFLAGS = $(SECP_CFLAGS)
 
-lib_LTLIBRARIES = libsecp256k1.la
-include_HEADERS = include/secp256k1.h
-include_HEADERS += include/secp256k1_preallocated.h
-noinst_HEADERS =
+noinst_LIBRARIES = libsecp256k1.a
+noinst_HEADERS = include/secp256k1.h
+noinst_HEADERS += include/secp256k1_preallocated.h
 noinst_HEADERS += src/scalar.h
 noinst_HEADERS += src/scalar_4x64.h
 noinst_HEADERS += src/scalar_8x32.h
@@ -70,39 +69,39 @@ noinst_HEADERS += contrib/lax_der_privatekey_parsing.h
 noinst_HEADERS += contrib/lax_der_privatekey_parsing.c
 noinst_HEADERS += examples/examples_util.h
 
-PRECOMPUTED_LIB = libsecp256k1_precomputed.la
-noinst_LTLIBRARIES = $(PRECOMPUTED_LIB)
-libsecp256k1_precomputed_la_SOURCES =  src/precomputed_ecmult.c src/precomputed_ecmult_gen.c
-# We need `-I$(top_srcdir)/src` in VPATH builds if libsecp256k1_precomputed_la_SOURCES have been recreated in the build tree.
+PRECOMPUTED_LIB = libsecp256k1_precomputed.a
+noinst_LIBRARIES += $(PRECOMPUTED_LIB)
+libsecp256k1_precomputed_a_SOURCES =  src/precomputed_ecmult.c src/precomputed_ecmult_gen.c
+# We need `-I$(top_srcdir)/src` in VPATH builds if libsecp256k1_precomputed_a_SOURCES have been recreated in the build tree.
 # This helps users and packagers who insist on recreating the precomputed files (e.g., Gentoo).
-libsecp256k1_precomputed_la_CPPFLAGS = -I$(top_srcdir)/src $(SECP_CONFIG_DEFINES)
+libsecp256k1_precomputed_a_CPPFLAGS = -I$(top_srcdir)/src $(SECP_CONFIG_DEFINES)
 
 if USE_EXTERNAL_ASM
-COMMON_LIB = libsecp256k1_common.la
+COMMON_LIB = libsecp256k1_common.a
 else
 COMMON_LIB =
 endif
-noinst_LTLIBRARIES += $(COMMON_LIB)
+noinst_LIBRARIES += $(COMMON_LIB)
 
-pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = libsecp256k1.pc
+# pkgconfigdir = $(libdir)/pkgconfig
+# pkgconfig_DATA = libsecp256k1.pc
 
 if USE_EXTERNAL_ASM
 if USE_ASM_ARM
-libsecp256k1_common_la_SOURCES = src/asm/field_10x26_arm.s
+libsecp256k1_common_a_SOURCES = src/asm/field_10x26_arm.s
 endif
 endif
 
-libsecp256k1_la_SOURCES = src/secp256k1.c
-libsecp256k1_la_CPPFLAGS = $(SECP_CONFIG_DEFINES)
-libsecp256k1_la_LIBADD = $(COMMON_LIB) $(PRECOMPUTED_LIB)
-libsecp256k1_la_LDFLAGS = -no-undefined -version-info $(LIB_VERSION_CURRENT):$(LIB_VERSION_REVISION):$(LIB_VERSION_AGE)
+libsecp256k1_a_SOURCES = src/secp256k1.c
+libsecp256k1_a_CPPFLAGS = $(SECP_CONFIG_DEFINES)
+libsecp256k1_a_LIBADD = $(COMMON_LIB) $(PRECOMPUTED_LIB)
+# libsecp256k1_a_LDFLAGS = -no-undefined -version-info $(LIB_VERSION_CURRENT):$(LIB_VERSION_REVISION):$(LIB_VERSION_AGE)
 
 noinst_PROGRAMS =
 if USE_BENCHMARK
 noinst_PROGRAMS += bench bench_internal bench_ecmult
 bench_SOURCES = src/bench.c
-bench_LDADD = libsecp256k1.la
+bench_LDADD = libsecp256k1.a libsecp256k1_precomputed.a
 bench_CPPFLAGS = $(SECP_CONFIG_DEFINES)
 bench_internal_SOURCES = src/bench_internal.c
 bench_internal_LDADD = $(COMMON_LIB) $(PRECOMPUTED_LIB)
@@ -133,7 +132,7 @@ endif
 if USE_CTIME_TESTS
 noinst_PROGRAMS += ctime_tests
 ctime_tests_SOURCES = src/ctime_tests.c
-ctime_tests_LDADD = libsecp256k1.la
+ctime_tests_LDADD = libsecp256k1.a libsecp256k1_precomputed.a
 ctime_tests_CPPFLAGS = $(SECP_CONFIG_DEFINES)
 endif
 
@@ -154,7 +153,7 @@ if USE_EXAMPLES
 noinst_PROGRAMS += ecdsa_example
 ecdsa_example_SOURCES = examples/ecdsa.c
 ecdsa_example_CPPFLAGS = -I$(top_srcdir)/include -DSECP256K1_STATIC
-ecdsa_example_LDADD = libsecp256k1.la
+ecdsa_example_LDADD = libsecp256k1.a libsecp256k1_precomputed.a
 ecdsa_example_LDFLAGS = -static
 if BUILD_WINDOWS
 ecdsa_example_LDFLAGS += -lbcrypt
@@ -164,7 +163,7 @@ if ENABLE_MODULE_ECDH
 noinst_PROGRAMS += ecdh_example
 ecdh_example_SOURCES = examples/ecdh.c
 ecdh_example_CPPFLAGS = -I$(top_srcdir)/include -DSECP256K1_STATIC
-ecdh_example_LDADD = libsecp256k1.la
+ecdh_example_LDADD = libsecp256k1.a libsecp256k1_precomputed.a
 ecdh_example_LDFLAGS = -static
 if BUILD_WINDOWS
 ecdh_example_LDFLAGS += -lbcrypt
@@ -175,7 +174,7 @@ if ENABLE_MODULE_SCHNORRSIG
 noinst_PROGRAMS += schnorr_example
 schnorr_example_SOURCES = examples/schnorr.c
 schnorr_example_CPPFLAGS = -I$(top_srcdir)/include -DSECP256K1_STATIC
-schnorr_example_LDADD = libsecp256k1.la
+schnorr_example_LDADD = libsecp256k1.a libsecp256k1_precomputed.a
 schnorr_example_LDFLAGS = -static
 if BUILD_WINDOWS
 schnorr_example_LDFLAGS += -lbcrypt
