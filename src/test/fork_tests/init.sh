@@ -15,9 +15,9 @@ set +e
 bitmark-cli -datadir="$datadirD" stop
 echo "Stopped bitmarkd for datadir $datadirD. If this script fails, make sure this bitmarkd process has fully terminated."
 set -e
-rm -rf "$datadirD"
-mkdir -p "$datadirD"
-cp bitmark.conf "$datadirD"
+rm -rf "$datadir"
+mkdir -p "$datadir"
+cp bitmark.conf "$datadir"
 
 set +e
 if [[ "$unameS" == "CYGWIN"* ]]
