@@ -1469,7 +1469,8 @@ std::string hexify(std::vector<unsigned char> const & v)
   std::stringstream ss;
   for(auto c : v)
     {
-      ss << std::hex << (int)c;
+      int ci = (int)c;
+      ss << setfill('0') << setw(2) << std::right << std::hex << ci;
     }
   return ss.str();
 }

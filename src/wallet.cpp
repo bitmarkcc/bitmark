@@ -1576,7 +1576,7 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		    pubkeyD.push_back(0x10);
 		    pubkeyD.push_back(lenDescLang);
 		  }
-		  else {
+		  else if (lenDescLang > 0) {
 		    pubkeyD.push_back(0x10+lenDescLang);
 		  }
 		  for (int i=0; i<lenDescLang; i++) {
