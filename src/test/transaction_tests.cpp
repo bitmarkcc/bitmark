@@ -323,12 +323,12 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     t.vout[0].scriptPubKey = CScript() << OP_1;
     BOOST_CHECK(!IsStandardTx(t, reason));
 
-    // 40-byte TX_NULL_DATA (standard)
-    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38");
+    // 80-byte TX_NULL_DATA (standard, previously 40)
+    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38503b093fa324e9f4df91bf503bb71c77fad8aac3b62dd0c3fecb01e42626899ca69ec6b9225dccc2");
     BOOST_CHECK(IsStandardTx(t, reason));
 
-    // 41-byte TX_NULL_DATA (non-standard)
-    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef3800");
+    // 81-byte TX_NULL_DATA (non-standard)
+    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38503b093fa324e9f4df91bf503bb71c77fad8aac3b62dd0c3fecb01e42626899ca69ec6b9225dccc200");
     BOOST_CHECK(!IsStandardTx(t, reason));
 
     // TX_NULL_DATA w/o PUSHDATA

@@ -71,7 +71,7 @@ const char* GetTxnOutputType(txnouttype t)
     case TX_SCRIPTHASH: return "scripthash";
     case TX_MULTISIG: return "multisig";
     case TX_NULL_DATA: return "nulldata";
-    case TX_COMMENT: return "comment";
+      //case TX_COMMENT: return "comment";
     case TX_PUSHCODE: return "pushcode";
     }
     return NULL;
@@ -199,10 +199,10 @@ const char* GetOpName(opcodetype opcode)
 
     // expanson
     case OP_NOP1                   : return "OP_NOP1";
-    case OP_NOP2                   : return "OP_NOP2";
-    case OP_NOP3                   : return "OP_NOP3";
-    case OP_NOP4                   : return "OP_COMMENT";
-    case OP_NOP5                   : return "OP_PUSHCODE";
+    case OP_CHECKLOCKTIMEVERIFY    : return "OP_NOP2";
+    case OP_PUSHCODE               : return "OP_NOP3";
+    case OP_NOP4                   : return "OP_NOP4";
+    case OP_NOP5                   : return "OP_NOP5";
     case OP_NOP6                   : return "OP_NOP6";
     case OP_NOP7                   : return "OP_NOP7";
     case OP_NOP8                   : return "OP_NOP8";
@@ -564,9 +564,9 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
                     break;
 	        }
 
-	    case OP_NOP3:
-	      break;
-	    case OP_NOP4: // OP_COMMENT - for commenting on marking transactions
+		//case OP_NOP2:
+		//break;
+	      /*	    case OP_NOP4: // OP_COMMENT - for commenting on marking transactions
 	      {
 		return false; // I don't think we need the code below because it is only for checking spendable INPUTS
 		
@@ -608,7 +608,8 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 		}
 	      }
 	      break;
-	    case OP_NOP5: // OP_PUSHCODE todo sync with code in main.cpp (not sure if validation needed here)
+	      */
+	    case OP_NOP3: // OP_PUSHCODE todo sync with code in main.cpp (not sure if validation needed here)
 	      {
 		return false; // return false for now
 
@@ -711,7 +712,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 		}
 
 	      }
-	    case OP_NOP6: case OP_NOP7: case OP_NOP8: case OP_NOP9: case OP_NOP10:
+	    case OP_NOP4: case OP_NOP5: case OP_NOP6: case OP_NOP7: case OP_NOP8: case OP_NOP9: case OP_NOP10:
 	      break;
 
                 case OP_IF:
@@ -1544,7 +1545,7 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
         mTemplates.insert(make_pair(TX_NULL_DATA, CScript() << OP_RETURN << OP_SMALLDATA));
         mTemplates.insert(make_pair(TX_NULL_DATA, CScript() << OP_RETURN));
 
-	mTemplates.insert(make_pair(TX_COMMENT, CScript() << OP_COMMENT));
+	//mTemplates.insert(make_pair(TX_COMMENT, CScript() << OP_COMMENT));
 
 	mTemplates.insert(make_pair(TX_PUSHCODE, CScript() << OP_PUSHCODE));
     }
@@ -1591,14 +1592,14 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
 		  if (m < 1 || n < 1 || m > n || vSolutionsRet.size()-2 != n)
 		    return false;
                 }
-	      if (typeRet == TX_COMMENT) {
+	      /*if (typeRet == TX_COMMENT) {
 		if (!haveOpComment) {
 		  vSolutionsRet.clear();
 		  typeRet = TX_NONSTANDARD;
 		  return false;
 		}
-	      }
-	      else if (typeRet == TX_PUSHCODE) {
+		}*/
+	     if (typeRet == TX_PUSHCODE) {
 		if (!haveOpPushcode) {
 		  vSolutionsRet.clear();
 		  typeRet = TX_NONSTANDARD;
@@ -1658,7 +1659,7 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
 	      if (vch1.size() > MAX_OP_RETURN_RELAY)
 		break;
             }
-	  else if (opcode2 == OP_COMMENT) {
+	  /* else if (opcode2 == OP_COMMENT) {
 	    //LogPrintf("opcode2 == OP_COMMENT\n");
 	    do {
 	      if (opcode1 == OP_COMMENT) {
@@ -1677,7 +1678,7 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
 		//LogPrintf("pushed vch1: %s\n",HexStr(vch1).c_str());
 	      }
 	    } while (script1.GetOp(pc1, opcode1, vch1));
-	  }
+	    }*/
 	  else if (opcode1 != opcode2 || vch1 != vch2)
             {
 	      // Others must match exactly

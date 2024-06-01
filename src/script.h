@@ -23,7 +23,8 @@ class CKeyStore;
 class CTransaction;
 
 static const unsigned int MAX_SCRIPT_ELEMENT_SIZE = 520; // bytes
-static const unsigned int MAX_OP_RETURN_RELAY = 64;      // bytes
+static const unsigned int MAX_OP_RETURN_RELAY = 80;      // bytes
+static const unsigned int MAX_OP_PUSHCODE_RELAY = 200; // bytes
 /** Threshold for nLockTime: below this value it is interpreted as block number, otherwise as UNIX timestamp. */
 static const unsigned int LOCKTIME_THRESHOLD = 500000000; // Tue Nov  5 00:53:20 1985 UTC
 
@@ -372,12 +373,14 @@ enum opcodetype
 
     // expansion
     OP_NOP1 = 0xb0,
-    OP_NOP2 = 0xb1, //CHECKLOCKTIME
-    OP_NOP3 = 0xb2,
-    OP_COMMENT = 0xb3,
-    OP_NOP4 = OP_COMMENT,
+    OP_CHECKLOCKTIMEVERIFY = 0xb1,
+    OP_NOP2 = OP_CHECKLOCKTIMEVERIFY,
+    OP_PUSHCODE = 0xb2,
+    OP_NOP3 = OP_PUSHCODE,
+    //OP_COMMENT = 0xb3,
+    //OP_NOP4 = OP_COMMENT,
+    OP_NOP4 = 0xb3,
     OP_NOP5 = 0xb4,
-    OP_PUSHCODE = OP_NOP4,
     OP_NOP6 = 0xb5,
     OP_NOP7 = 0xb6,
     OP_NOP8 = 0xb7,

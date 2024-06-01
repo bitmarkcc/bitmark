@@ -1465,7 +1465,7 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		  wtxNew.vout.insert(position, newTxOut);
 		}
 
-		if (comment) {
+		/*if (comment) {
 		  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
 		  int commentPosition = position-wtxNew.vout.begin();
 		  LogPrintf("comment position = %d\n",commentPosition);
@@ -1503,7 +1503,7 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		  LogPrintf("scriptComment = %s nOutput = %d\n",HexStr(scriptComment),nOutput);
 		  CTxOut newTxOut(0,scriptComment);
 		  wtxNew.vout.insert(position, newTxOut);
-		}
+		  }*/
 
                 // Fill vin
                 BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)

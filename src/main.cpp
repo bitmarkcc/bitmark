@@ -2374,7 +2374,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 	    posC.nTxOffset += GetSizeOfCompactSize(tx.vout.size());
 	    for (int j=0; j<tx.vout.size(); j++) {
 	      const CScript& scriptPubKey = tx.vout[j].scriptPubKey;
-	      if (!Solver(scriptPubKey,whichType, vSolutions))
+	      if (!Solver(scriptPubKey,whichType,vSolutions))
 		LogPrintf("non standard tx\n");
 	      if (whichType == TX_PUSHCODE) {
 		LogPrintf("have a TX_PUSHCODE\n");

@@ -302,6 +302,7 @@ static const CRPCCommand vRPCCommands[] =
     { "signrawtransaction",     &signrawtransaction,     false,     false,      false }, /* uses wallet if enabled */
     { "sgnrta",                 &signrawtransaction,     false,     false,      false }, /* uses wallet if enabled */
     { "mark", &mark, false, false, false },
+    { "pushcode", &pushcode, false, false, false },
 
     /* Utility functions */
     { "createmultisig",         &createmultisig,         true,      true ,      false },

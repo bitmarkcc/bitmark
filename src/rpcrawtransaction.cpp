@@ -749,7 +749,7 @@ Value sendrawtransaction(const Array& params, bool fHelp)
             "\nSubmits raw transaction (serialized, hex-encoded) to local node and network.\n"
             "\nAlso see createrawtransaction and signrawtransaction calls.\n"
             "\nArguments:\n"
-            "1. \"hexstring\"    (string, required) The hex string of the raw transaction)\n"
+            "1. \"hexstring\"    (string, required) The hex string of the raw transaction\n"
             "2. allowhighfees    (boolean, optional, default=false) Allow high fees\n"
             "\nResult:\n"
             "\"hex\"             (string) The transaction hash in hex\n"
@@ -804,4 +804,25 @@ Value sendrawtransaction(const Array& params, bool fHelp)
     RelayTransaction(tx, hashTx);
 
     return hashTx.GetHex();
+}
+
+Value pushcode(const Array& params, bool fHelp) {
+  if (fHelp || params.size() < 1 || params.size() > 8)
+    throw runtime_error(
+			"pushcode \"param_1\" \"param_2\" ... \"param_n\" for 1<=n<=8\n"
+			"\nSubmits PUSHCODE transaction to local node and network.\n"
+			"\nArguments:\n"
+			"1. \"param_1\"    (string) First parameter\n"
+			"2. \"param_2\"    (string) Second parameter\n"
+			".\n"
+			".\n"
+			".\n"
+			"n. \"code\"       (string) The code to insert\n"
+			"\nResult:\n"
+			"\"hex\"             (string) The transaction hash in hex\n"
+			"\nExamples:\n"
+			"\nPush code to the end of previously added code, with given tx hash and output number\n"
+			+ HelpExampleCli("pushcode","\"3f044f417239b90e58f22982b3d2ed774e33cc7106cc4ad8776ec6436b27927d\" \"2\" \"some_code\"")
+			);
+  return uint256().GetHex();
 }
