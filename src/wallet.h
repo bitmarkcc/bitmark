@@ -51,6 +51,17 @@ enum WalletFeature
     FEATURE_LATEST = 60000
 };
 
+struct CodePush {
+  int nParams;
+  int64_t pushtype;
+  valtype txid;
+  int64_t nOutput;
+  valtype txidPart;
+  int64_t nOutputPart;
+  valtype txidPart2;
+  int64_t nOutputPart2;
+  valtype code;
+};
 
 /** A key pool entry */
 class CKeyPool
@@ -266,14 +277,14 @@ public:
     int64_t GetUnconfirmedWatchOnlyBalance() const;
     int64_t GetImmatureWatchOnlyBalance() const;
     bool CreateTransaction(const std::vector<std::pair<CScript, int64_t> >& vecSend,
-                           CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl *coinControl = NULL, const char * data = 0, const char * comment = 0, const char * txid = 0, int nOutput = -1);
+                           CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl *coinControl = NULL, const char * data = 0, const CodePush* pPush = 0);
     bool CreateTransaction(CScript scriptPubKey, int64_t nValue,
-                           CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl *coinControl = NULL, const char * data = 0, const char * comment = 0, const char * txid = 0, int nOutput = -1);
+                           CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, std::string& strFailReason, const CCoinControl *coinControl = NULL, const char * data = 0, const CodePush* pPush = 0);
     bool CommitTransaction(CWalletTx& wtxNew, CReserveKey& reservekey);
-  std::string SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNew, const char * data = 0, const char * comment = 0, const char * txid = 0, int nOutput = -1);
-  std::string SendMoneyNoDestination(CWalletTx& wtxNew, const char * data = 0, const char * comment = 0, const char * txid = 0, int nOutput = -1);
-  std::string SendMoneyToDestination(const CTxDestination &address, int64_t nValue, CWalletTx& wtxNew, const char * data = 0, const char * comment = 0, const char * txid = 0, int nOutput = -1);
-  std::string SendMoneyToNoDestination(CWalletTx& wtxNew, const char * data = 0, const char * comment = 0, const char * txid = 0, int nOutput = -1);
+  std::string SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNew, const char * data = 0, const CodePush* pPush = 0);
+  std::string SendMoneyNoDestination(CWalletTx& wtxNew, const char * data = 0, const CodePush* pPush = 0);
+  std::string SendMoneyToDestination(const CTxDestination &address, int64_t nValue, CWalletTx& wtxNew, const char * data = 0, const CodePush* pPush = 0);
+  std::string SendMoneyToNoDestination(CWalletTx& wtxNew, const char * data = 0, const CodePush* pPush = 0);
 
     bool NewKeyPool();
     bool TopUpKeyPool(unsigned int kpSize = 0);

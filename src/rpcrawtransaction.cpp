@@ -824,5 +824,56 @@ Value pushcode(const Array& params, bool fHelp) {
 			"\nPush code to the end of previously added code, with given tx hash and output number\n"
 			+ HelpExampleCli("pushcode","\"3f044f417239b90e58f22982b3d2ed774e33cc7106cc4ad8776ec6436b27927d\" \"2\" \"some_code\"")
 			);
-  return uint256().GetHex();
+
+  const int64_t pushtype = -1;
+  const char* txid = 0;
+  int64_t nOutput = -1;
+  const char* txidPart = 0;
+  int64_t nOutputPart = -1;
+  const char* txidPart2 = 0;
+  int64_t nOutputPart2 = -1;
+  const char* code = 0;
+
+  int nParams = params.size();
+  
+  if (params.size() == 2) {
+    nOutput = atoi(params[0].get_str());
+  }
+  else if (params.size() == 3) {
+    txid = params[0].get_str().c_str();
+    nOutput = atoi(params[1].get_str());
+  }
+  code = params[nParams-1].get_str().c_str();
+
+  valtype vTxid;
+  if (txid)
+    vTxid = ParseHex(txid);
+  
+  valtype vTxidPart;
+  if (txidPart)
+    vTxidPart = ParseHex(txidPart);
+
+  valtype vTxidPart2;
+  if (txidPart2)
+    vTxidPart2 = ParseHex(txidPart2);
+  
+  valtype vCode;
+  if (code)
+    vCode = ParseHex(code);
+
+  CodePush push;
+  push.nParams = nParams;
+  push.pushtype = pushtype;
+  push.txid = vTxid;
+  push.nOutput = nOutput;
+  push.txidPart = vTxidPart;
+  push.nOutputPart = nOutputPart;
+  push.txidPart2 = vTxidPart2;
+  push.nOutputPart2 = nOutputPart2;
+  push.code = vCode;
+
+  CWalletTx wtx;
+  EnsureWalletIsUnlocked();
+  string strError = pwalletMain->SendMoneyToNoDestination(wtx,0,&push);
+  return wtx.GetHash().GetHex();
 }

@@ -29,8 +29,6 @@
 using namespace std;
 using namespace boost;
 
-typedef vector<unsigned char> valtype;
-
 #if defined(NDEBUG)
 # error "Bitmark cannot be compiled without assertions."
 #endif
@@ -2546,6 +2544,8 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		if (bytecode.size()<1)
 		  if (pushtype & PUSHTYPE_INSERT)
 		    return state.DoS(100,error("ConnectBlock(): Empty PUSHCODE of type insert\n"),REJECT_INVALID,"bad-pushcode");
+		if (bytecode.size()>MAX_CODE_RELAY)
+		  return state.DoS(100,error("ConnectBlock(): PUSHCODE code parameter too large\n"),REJECT_INVALID,"bad-pushcode-code-size");
 		CTransaction txMatch;
 		uint256 hashBlock;
 		if (haveTxid && !GetTransactionPast(uint256(HexStr(txid)),txMatch,hashBlock)) {

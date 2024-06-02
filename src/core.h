@@ -36,6 +36,9 @@ static const int64_t MAX_MONEY = 28000000 * COIN;
 inline bool MoneyRange(int64_t nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
 static const int64_t nForkHeightForce = 452000; // not used
 
+typedef unsigned char uchar;
+typedef std::vector<uchar> valtype;
+
 template<unsigned int BITS>
 class CGOutPoint // generalized outpoint
 {

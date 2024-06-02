@@ -1568,7 +1568,7 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
       const CScript& script2 = tplate.second;
       vSolutionsRet.clear();
 
-      bool haveOpComment = false;
+      //bool haveOpComment = false;
       bool haveOpPushcode = false;
        
       opcodetype opcode1, opcode2;
@@ -1659,31 +1659,18 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
 	      if (vch1.size() > MAX_OP_RETURN_RELAY)
 		break;
             }
-	  /* else if (opcode2 == OP_COMMENT) {
-	    //LogPrintf("opcode2 == OP_COMMENT\n");
-	    do {
-	      if (opcode1 == OP_COMMENT) {
-		haveOpComment = true;
-	      }
-	      else if (opcode1 == OP_PUSHCODE) {
-		haveOpPushcode = true;
-	      }
-	      else if (opcode1 == OP_0 || (opcode1 >= OP_1 && opcode1 <= OP_16)) {
-		char n = (char)CScript::DecodeOP_N(opcode1);
-		vSolutionsRet.push_back(valtype(1, n));
-		//LogPrintf("pushed valtype 1,%d\n",n);
-	      }
-	      else if (vch1.size()>0) {
-		vSolutionsRet.push_back(vch1); // push txid, output, comment into vSolutionsRet
-		//LogPrintf("pushed vch1: %s\n",HexStr(vch1).c_str());
-	      }
-	    } while (script1.GetOp(pc1, opcode1, vch1));
-	    }*/
-	  else if (opcode1 != opcode2 || vch1 != vch2)
-            {
-	      // Others must match exactly
-	      break;
-            }
+	   else if (opcode2 == OP_PUSHCODE) {
+	     do {
+	       if (opcode1 == OP_PUSHCODE) {
+		 haveOpPushcode = true;
+	       }
+	     } while (script1.GetOp(pc1, opcode1, vch1));
+	   }
+	   else if (opcode1 != opcode2 || vch1 != vch2)
+	     {
+	       // Others must match exactly
+	       break;
+	     }
         }
     }
 
