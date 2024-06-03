@@ -1631,6 +1631,16 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
 	      // to other if/else statements
             }
 
+	  if (opcode2 == OP_PC_PARAMS) {
+	    while (vch1.size()>0) {
+	      vSolutionsRet.push_back(vch1);
+	      if (!script1.GetOp(pc1, opcode1, vch1))
+		break;
+	    }
+	    if (!script2.GetOp(pc2, opcode2, vch2))
+		break;
+	  }
+
 	  if (opcode2 == OP_PUBKEY)
             {
 	      if (vch1.size() < 33 || vch1.size() > 65)
@@ -1660,13 +1670,6 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
 	      if (vch1.size() > MAX_OP_RETURN_RELAY)
 		break;
             }
-	  else if (opcode2 == OP_PC_PARAMS) {
-	    while (vch1.size()>0) {
-	      vSolutionsRet.push_back(vch1);
-	      if (!script1.GetOp(pc1, opcode1, vch1))
-		break;
-	    }
-	  }
 	  else if (opcode1 != opcode2 || vch1 != vch2)
 	    {
 	      // Others must match exactly
