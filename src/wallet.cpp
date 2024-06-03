@@ -1469,13 +1469,13 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		if (pPush) {
 		  CScript scriptPush;
 		  if (pPush->nParams == 1) {
-		    scriptPush = CScript() << OP_PUSHCODE << pPush->code;
+		    scriptPush = CScript() << pPush->code << OP_PUSHCODE;
 		  }
 		  else if (pPush->nParams == 2) {
-		    scriptPush = CScript() << OP_PUSHCODE << pPush->nOutput << pPush->code;
+		    scriptPush = CScript() << pPush->nOutput << pPush->code << OP_PUSHCODE;
 		  }
 		  else if (pPush->nParams == 3) {
-		    scriptPush = CScript() << OP_PUSHCODE << pPush->txid << pPush->nOutput << pPush->code;
+		    scriptPush = CScript() << pPush->txid << pPush->nOutput << pPush->code << OP_PUSHCODE;
 		  }
 		  CTxOut newTxOut(0,scriptPush);
 		  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
