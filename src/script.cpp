@@ -1632,8 +1632,15 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
             }
 
 	  if (opcode2 == OP_PC_PARAMS) {
-	    while (vch1.size()>0 || opcode1==OP_0 || opcode1>=OP_1 && opcode1<=OP_16) {
-	      vSolutionsRet.push_back(vch1);
+	    while (vch1.size()>0 || opcode1>=OP_1 && opcode1<=OP_16) {
+	      if (vch1.size()>0) {
+		vSolutionsRet.push_back(vch1);
+	      }
+	      else {
+		vector<unsigned char> vch1b;
+		vch1b.push_back(opcode1-OP_RESERVED);
+		vSolutionsRet.push_back(vch1b);
+	      }
 	      if (!script1.GetOp(pc1, opcode1, vch1))
 		break;
 	    }
