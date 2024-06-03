@@ -1632,7 +1632,7 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
             }
 
 	  if (opcode2 == OP_PC_PARAMS) {
-	    while (vch1.size()>0) {
+	    while (vch1.size()>0 || opcode1==OP_0 || opcode1>=OP_1 && opcode<=OP_16) {
 	      vSolutionsRet.push_back(vch1);
 	      if (!script1.GetOp(pc1, opcode1, vch1))
 		break;
