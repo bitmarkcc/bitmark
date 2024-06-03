@@ -2541,6 +2541,11 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		if (havenOutputPart2 && nOutputPart2 < 0)
 		  return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid nOutput for part 2\n"),REJECT_INVALID,"bad-pushcode");
 		valtype bytecode = vSolutions[vSolutions.size()-1];
+		LogPrintf("bytecode = %s\n",HexStr(bytecode).c_str());
+		if (haveTxid)
+		  LogPrintf("txid = %s\n",HexStr(txid).c_str());
+		if (havenOutput)
+		  LogPrintf("nOutput = %d\n",nOutput);
 		if (bytecode.size()<1)
 		  if (pushtype & PUSHTYPE_INSERT)
 		    return state.DoS(100,error("ConnectBlock(): Empty PUSHCODE of type insert\n"),REJECT_INVALID,"bad-pushcode");
