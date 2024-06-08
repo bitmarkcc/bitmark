@@ -462,15 +462,6 @@ Value getwork(const Array& params, bool fHelp)
 	  pblock->SetAlgo(miningAlgo);
 	}
 
-	// Q? <<<<<   Comment on SuperMajorityVariant12 , SuperMajorityVariant2
-	if ((pindexPrev->nHeight >= nForkHeight - 1 && CBlockIndex::IsSuperMajorityVariant12(4,true,pindexPrev,75,100))) {
-	  pblock->SetVariant(true);
-	}
-
-	if ((pindexPrev->nHeight >= nForkHeight - 1 && CBlockIndex::IsSuperMajorityVariant2(4,true,pindexPrev,75,100))) {
-	  pblock->SetVariant2(true);
-	}
-
         // Update nTime
         UpdateTime(*pblock, pindexPrev);
         pblock->nNonce = 0;
@@ -773,6 +764,7 @@ Value submitblock(const Array& params, bool fHelp)
     return Value::null;
 }
 
+#ifdef ENABLE_WALLET
 Value getauxblock(const Array& params, bool fHelp)
 {
   if (fHelp || (params.size() > 2))
@@ -935,3 +927,4 @@ Value getauxblock(const Array& params, bool fHelp)
     return "rejected";
   return Value::null;
 }
+#endif

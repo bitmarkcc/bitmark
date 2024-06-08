@@ -101,9 +101,11 @@ public:
         vSeeds.push_back(CDNSSeedData("zmark.org",              "ra.zmark.org"));    // CA sam 
         vSeeds.push_back(CDNSSeedData("chainetics.com", "marks.chainetics.com"));    // SG ben 
  
-        vSeeds.push_back(CDNSSeedData("bitmark.one",        "biji.bitmark.one"));    // CA marks  
+        vSeeds.push_back(CDNSSeedData("bitmark.one",        "biji.bitmark.one"));    // CA marks
+        vSeeds.push_back(CDNSSeedData("avalax.com",         "marks.avalax.com"));    // JP jin
+	vSeeds.push_back(CDNSSeedData("zmark.org",           "shiba.zmark.org"));    // NJ j2
+	vSeeds.push_back(CDNSSeedData("zmark.org",            "btmk.zmark.org"));    // CA zappa
         vSeeds.push_back(CDNSSeedData("bitmark.cc",       "dnsseed.bitmark.cc"));    // NJ joe 
-        vSeeds.push_back(CDNSSeedData("zmark.org",            "btmk.zmark.org"));    // CA zappa 
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,85); // b
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,5);
