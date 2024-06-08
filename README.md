@@ -39,6 +39,8 @@ All Bitmark software releases are published through the github release process, 
 This release uses the latest TLS/SSL libraries.
 v0.9.7.4, is compatible with all previous 0.9.7.x series versions.
 
+## v0.9.7.5 Works with Ubuntu 22, has enhanced building/testing for Windows, as well as other improvements.
+
 ## Eight Algortihm mPoW Hard Fork (v0.9.7)
 
 The hard fork for multiple proof-of-work algorithms (SCRYPT, SHA256D, YESCRYPT, ARGON2D, X17, LYRA2REv2, EQUIHASH, CRYPTONIGHT) under DGWv3 was adopted by the Bitmark community by supermajority consensus after block 450946. The first block where v0.9.7 rules are in effect is 450947. 

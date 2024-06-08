@@ -472,7 +472,7 @@ void ParseParameters(int argc, const char* const argv[])
             strValue = str.substr(is_index+1);
             str = str.substr(0, is_index);
         }
-	if (fDebug) LogPrintf("str = %s\n",str.c_str());
+	//if (fDebug) LogPrintf("str = %s\n",str.c_str());
 #ifdef WIN32
         boost::to_lower(str);
         if (boost::algorithm::starts_with(str, "/"))
@@ -482,7 +482,7 @@ void ParseParameters(int argc, const char* const argv[])
             break;
 	
 	if (!str.compare(std::string("-algo"))) {
-	  if (fDebug) LogPrintf("set algo to miningalgo");
+	  //if (fDebug) LogPrintf("set algo to miningalgo");
 	  str = std::string("-miningalgo");
 	}
 	
@@ -1040,7 +1040,7 @@ void ReadConfigFile(map<string, string>& mapSettingsRet,
         if (mapSettingsRet.count(strKey) == 0)
         {
 	  if (!strKey.compare(string("-algo"))) {
-	    if (fDebug) LogPrintf("set algo to miningalgo");
+	    //if (fDebug) LogPrintf("set algo to miningalgo");
 	    strKey = string("-miningalgo");
 	  }
 	  mapSettingsRet[strKey] = it->value[0];
@@ -1135,31 +1135,16 @@ int RaiseFileDescriptorLimit(int nMinFD) {
 #else
     struct rlimit limitFD;
     if (getrlimit(RLIMIT_NOFILE, &limitFD) != -1) {
-        // first request at least the amount passed in
         if (limitFD.rlim_cur < (rlim_t)nMinFD) {
             limitFD.rlim_cur = nMinFD;
             if (limitFD.rlim_cur > limitFD.rlim_max)
                 limitFD.rlim_cur = limitFD.rlim_max;
             setrlimit(RLIMIT_NOFILE, &limitFD);
+            getrlimit(RLIMIT_NOFILE, &limitFD);
         }
-        // then try to raise to the max we can
-        if (limitFD.rlim_cur < limitFD.rlim_max) {
-            limitFD.rlim_cur = limitFD.rlim_max;
-            setrlimit(RLIMIT_NOFILE, &limitFD);
-        }
-
-        if (getrlimit(RLIMIT_NOFILE, &limitFD) != -1) {
-            if (limitFD.rlim_cur < (rlim_t)nMinFD) {
-                LogPrintf("RaiseFileDescriptorLimit: could not raise limit to %lu fds, only %lu\n",
-                          (unsigned long)nMinFD,
-                          (unsigned long)limitFD.rlim_cur);
-            }
-            return limitFD.rlim_cur;
-        }
+        return limitFD.rlim_cur;
     }
-    LogPrintf("RaiseFileDescriptorLimit error: getrlimit(RLIMIT_NOFILE) returned %s\n", strerror(errno));
-
-    return nMinFD; // getrlimit failed, try to proceed
+    return nMinFD; // getrlimit failed, assume it's fine
 #endif
 }
 

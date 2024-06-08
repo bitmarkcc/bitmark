@@ -9,7 +9,18 @@ To Build
 	./configure
 	make
 
-This will build bitmark-qt as well if the dependencies are met.
+This will build bitmark-qt as well if the dependencies are met. The binaries (bitmarkd and bitmark-cli)
+are placed in src/. For ./configure options, run:
+./configure --help
+--prefix is a useful option if you want to install the binaries (make install) to a non default location
+that doesn't require root access.
+
+Note: gcc version greater than or equal to 9 is recommended (such as the default on Ubuntu 20).
+For lower versions of gcc, configure may fail and you can try:
+CFLAGS="-g -O2 -fPIC" ./configure
+Boost greater than or equal to 1.71 is recommended (such as the default on Ubuntu 20).
+Lower versions of boost may not compile Bitmark, and thus you may need to obtain boost from
+https://www.boost.org
 
 Dependencies
 ---------------------
@@ -99,7 +110,7 @@ Dependencies for the GUI: Ubuntu & Debian
 
 If you want to build Bitmark-Qt, make sure that the required packages for Qt development
 are installed. Either Qt 4 or Qt 5 are necessary to build the GUI.
-If both Qt 4 and Qt 5 are installed, Qt 4 will be used. Pass `--with-gui=qt5` to configure to choose Qt5.
+If both Qt 4 and Qt 5 are installed, Qt 5 will be used. Pass `--with-gui=qt4` to configure to choose Qt4.
 To build without GUI pass `--without-gui`.
 
 To build with Qt 4 you need the following:

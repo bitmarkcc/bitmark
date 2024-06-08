@@ -24,31 +24,32 @@ double GetDifficulty(const CBlockIndex* blockindex, int algo, bool weighted, boo
     // minimum difficulty = 1.0.
     if (blockindex == NULL)
     {
-        if (chainActive.Tip() == NULL)
+      blockindex = chainActive.Tip();
+        if (blockindex == NULL)
             return 1.0;
-        else
-            blockindex = chainActive.Tip();
     }
     if (algo<0) {
       algo = GetAlgo(blockindex->nVersion);
     }
-    bool blockOnFork = false;
-    if (onFork(blockindex)) blockOnFork = true;
-    if (blockOnFork) {
-      int algo_tip = GetAlgo(blockindex->nVersion);
-      if (algo_tip != algo) {
-	blockindex = get_pprev_algo(blockindex,algo);
-      }
-    }
     unsigned int nBits = 0;
     unsigned int algoWeight = 1;
-    // Q? <<<  Please comment on working of this code
-    // 3 Cases 
+
+    bool blockOnFork = false;
+    if (blockindex && blockindex->nHeight>0) {
+      if (onFork(blockindex)) blockOnFork = true;
+    }
+
     if (weighted) algoWeight = GetAlgoWeight(algo);
     if (next) {
-      nBits = GetNextWorkRequired(chainActive.Tip(),algo);
+      nBits = GetNextWorkRequired(blockindex,algo);
     }
     else if (blockindex && blockindex->nHeight>0) {
+      if (blockOnFork) {
+	int algo_tip = GetAlgo(blockindex->nVersion);
+	if (algo_tip != algo) {
+	  blockindex = get_pprev_algo(blockindex,algo);
+	}
+      }
       nBits = blockindex->nBits;
     }
     else {
@@ -134,7 +135,7 @@ double GetPeakHashrate (const CBlockIndex* blockindex, int algo) {
 	  return std::numeric_limits<double>::max();
 	}
 	//LogPrintf("hashes = %f, time = %f\n",(double)hashes_bn.getulong(),(double)time_f);
-	double hashes = (((hashes_bn/time_f)/1000000)/1000).getulong();
+	double hashes = (((hashes_bn/time_f)/1000000)/1000).getuint256().getdouble();
 	//LogPrintf("hashes per sec = %f\n",hashes);
 	if (hashes>hashes_peak) hashes_peak = hashes;
       }
@@ -198,7 +199,7 @@ double GetCurrentHashrate (const CBlockIndex* blockindex, int algo) { //as used 
 	return std::numeric_limits<double>::max();
       }
       //LogPrintf("return %lu / %f\n",(double)hashes_bn.getulong(),(double)time_f);
-      return (((hashes_bn/time_f)/1000000)/1000).getulong();
+      return (((hashes_bn/time_f)/1000000)/1000).getuint256().getdouble();
     }
     blockindex = get_pprev_algo(blockindex,-1);
   } while (blockindex);
@@ -321,10 +322,11 @@ double GetAverageBlockSpacing (const CBlockIndex * blockindex, const int algo, c
     }
     CountBlocks++;
     if(LastBlockTime > 0){
-      int64_t Diff = (LastBlockTime - BlockReading->GetBlockTime());
-      nActualTimespan += Diff;
+      nActualTimespan = LastBlockTime - BlockReading->GetMedianTimePast();
     }
-    LastBlockTime = BlockReading->GetBlockTime();
+    else {
+      LastBlockTime = BlockReading->GetMedianTimePast();
+    }
 
     BlockReading = BlockReading->pprev;
     
@@ -339,19 +341,11 @@ Object blockToJSON(const CBlock& block, const CBlockIndex* blockindex)
     result.push_back(Pair("powhash",block.GetPoWHash().GetHex()));
     CMerkleTx txGen(block.vtx[0]);
     txGen.SetMerkleBranch(&block);
-    // Q? <<< Explanation of Block Variants
-    // A: Needed if we want miners to signal for multiple forks that use the same base nVersion.
-    int blockVariant = 0;
-    if (GetBlockVariant(block.nVersion)) blockVariant = 1;
-    if (GetBlockVariant2(block.nVersion) && !GetBlockVariant(block.nVersion)) blockVariant = 2;
-    if (GetBlockVariant2(block.nVersion) && GetBlockVariant(block.nVersion)) blockVariant = 3;
     result.push_back(Pair("confirmations", (int)txGen.GetDepthInMainChain()));
     result.push_back(Pair("size", (int)::GetSerializeSize(block, SER_NETWORK, PROTOCOL_VERSION)));
     result.push_back(Pair("height", blockindex->nHeight));
     result.push_back(Pair("version", block.nVersion));
     result.push_back(Pair("coreversion",GetBlockVersion(block.nVersion)));
-    // Add blockVariant to result.push_back
-    result.push_back(Pair("variant",blockVariant));
     int algo = GetAlgo(block.nVersion);
     result.push_back(Pair("algo",GetAlgoName(algo)));
     bool auxpow = block.IsAuxpow();
@@ -381,6 +375,7 @@ Object blockToJSON(const CBlock& block, const CBlockIndex* blockindex)
         txs.push_back(tx.GetHash().GetHex());
     result.push_back(Pair("tx", txs));
     result.push_back(Pair("time", block.GetBlockTime()));
+    result.push_back(Pair("mediantime", blockindex->GetMedianTimePast()));
     result.push_back(Pair("nonce", (uint64_t)block.nNonce));
     result.push_back(Pair("bits", HexBits(block.nBits)));
     result.push_back(Pair("difficulty", GetDifficulty(blockindex,algo,true,false)));

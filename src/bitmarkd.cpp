@@ -182,7 +182,6 @@ bool AppInit(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
-
     SetupEnvironment();
 
     bool fRet = false;

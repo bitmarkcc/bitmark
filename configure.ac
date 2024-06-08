@@ -5,8 +5,8 @@ AC_PREREQ([2.60])
 define(_CLIENT_VERSION_MAJOR, 0)
 define(_CLIENT_VERSION_MINOR, 9)
 define(_CLIENT_VERSION_REVISION, 7)
-define(_CLIENT_VERSION_BUILD, 4)
-define(_CLIENT_VERSION_IS_RELEASE, true)
+define(_CLIENT_VERSION_BUILD, 5)
+define(_CLIENT_VERSION_IS_RELEASE, false)
 
 define(_COPYRIGHT_YEAR, 2021)
 AC_INIT([Bitmark Core],[_CLIENT_VERSION_MAJOR._CLIENT_VERSION_MINOR._CLIENT_VERSION_REVISION],[info@bitmark.org],[bitmark])
@@ -126,7 +126,6 @@ AC_ARG_WITH([homebrew],
   [use_homebrew=$withval],
   [use_homebrew=auto])
 
-
 AC_CONFIG_SRCDIR([src])
 AC_CONFIG_HEADERS([src/bitmark-config.h])
 
@@ -188,7 +187,7 @@ CFLAGS="$CFLAGS -fPIC"
 ## CPU-specific flags
 case $host in
        i?86-*)
-	  CFLAGS="$CFLAGS -msse -msse2"
+	  CFLAGS="$CFLAGS -msse -msse2 -DFORCE_USE_HEAP"
 	  CXXFLAGS="$CXXFLAGS -msse -msse2"
        ;;
        x86_64-*)
@@ -199,11 +198,12 @@ esac
 AM_CONDITIONAL([BUILD_ARGON2_OPTIMIZED], [ @<:@@<:@ x$host_cpu == x*"86"* @:>@@:>@ ])
 
 use_pkgconfig=yes
+use_pkg_config_qt=yes
 case $host in
   *mingw*)
 
      #pkgconfig does more harm than good with MinGW
-     use_pkgconfig=no
+     use_pkgconfig_qt=no
 
      TARGET_OS=windows
      AC_CHECK_LIB([mingwthrd],      [main],, AC_MSG_ERROR(lib missing))
@@ -236,18 +236,11 @@ case $host in
        AC_MSG_WARN("makensis not found. Cannot create installer.")
      fi
 
-     AC_CHECK_PROG([CYGPATH], [cygpath], yes, no)
-     if test x$CYGPATH = xno; then
-       AC_MSG_WARN("cygpath not found.")
-     else
-       WINPATH_TOPSRCDIR=$(cygpath --windows $(realpath $srcdir))
-       WINPATH_INSTALLPREFIX=$(cygpath --windows $prefix)
-       WINPATH_MINGWHOSTPREFIX=$(cygpath --windows "/usr/$host/")
+     WINPATH_TOPSRCDIR=$(realpath $srcdir)
+     WINPATH_INSTALLPREFIX=$prefix
 
-       AC_SUBST(WINPATH_TOPSRCDIR)
-       AC_SUBST(WINPATH_INSTALLPREFIX)
-       AC_SUBST(WINPATH_MINGWHOSTPREFIX)
-     fi
+     AC_SUBST(WINPATH_TOPSRCDIR)
+     AC_SUBST(WINPATH_INSTALLPREFIX)
 
      AC_PATH_TOOL(WINDRES, windres, none)
      if test x$WINDRES = xnone; then
@@ -471,7 +464,6 @@ if test x$use_tests = xyes; then
     AC_MSG_ERROR(hexdump is required for tests)
   fi
 
-
   AX_BOOST_UNIT_TEST_FRAMEWORK
 
   dnl Determine if -DBOOST_TEST_DYN_LINK is needed
@@ -612,7 +604,7 @@ AM_CONDITIONAL([BUILD_BITMARK_CLI], [test x$build_bitmark_cli = xyes])
 AC_MSG_RESULT($build_bitmark_cli)
 
 dnl sets $bitmark_enable_qt, $bitmark_enable_qt_test, $bitmark_enable_qt_dbus
-BITMARK_QT_CONFIGURE([$use_pkgconfig], [qt4])
+BITMARK_QT_CONFIGURE([$use_pkgconfig_qt], [qt5])
 
 AC_LANG_POP
 
@@ -669,6 +661,8 @@ else
   fi
 fi
 
+CPPFLAGS="$CPPFLAGS -DNO_DLL_EXPORT -DSECP256K1_STATIC"
+
 dnl these are only used when qt is enabled
 if test x$bitmark_enable_qt != xno; then
   BUILD_QT=qt
@@ -717,6 +711,8 @@ else
   AC_MSG_RESULT([no])
 fi
 
+BUILD_SECP="secp256k1"
+
 if test "x$use_tests$build_bitmarkd$use_qt" = "xnonono"; then
   AC_MSG_ERROR([No targets! Please specify at least one of: --enable-cli --enable-daemon --enable-gui or --enable-tests])
 fi
@@ -754,7 +750,11 @@ AC_SUBST(LEVELDB_TARGET_FLAGS)
 AC_SUBST(BUILD_TEST)
 AC_SUBST(BUILD_QT)
 AC_SUBST(BUILD_TEST_QT)
+AC_SUBST(BUILD_SECP)
 AC_CONFIG_FILES([Makefile src/Makefile src/test/Makefile src/qt/Makefile src/qt/test/Makefile share/setup.nsi share/qt/Info.plist])
 AC_CONFIG_FILES([qa/pull-tester/run-bitmarkd-for-test.sh],[chmod +x qa/pull-tester/run-bitmarkd-for-test.sh])
 AC_CONFIG_FILES([qa/pull-tester/build-tests.sh],[chmod +x qa/pull-tester/build-tests.sh])
+
+AC_CONFIG_SUBDIRS([src/secp256k1])
+
 AC_OUTPUT
