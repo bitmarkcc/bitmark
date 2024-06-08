@@ -1087,6 +1087,18 @@ bool GetTransaction(const uint256 &hash, CTransaction &txOut, uint256 &hashBlock
     return false;
 }
 
+bool ReadCodeIndex(COutPoint opoint, CDiskTxPos &pos) {
+  return pblocktree->ReadCodeIndex(opoint,pos);
+}
+
+bool ReadCodePrevIndex(COutPointPair opointp, COutPointPair &opointpPrev) {
+  return pblocktree->ReadCodePrevIndex(opointp,opointpPrev);
+}
+
+bool ReadCodeNextIndex(COutPointPair opointp, COutPointPair &opointpNext) {
+  return pblocktree->ReadCodeNextIndex(opointp,opointpNext);
+}
+
 bool GetTransactionPast(const uint256 &hash, CTransaction &txOut, uint256 &hashBlock)
 {
     CBlockIndex *pindexSlow = NULL;
@@ -2263,7 +2275,10 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
     int64_t nFees = 0;
     int nInputs = 0;
     unsigned int nSigOps = 0;
-    CDiskTxPos pos(pindex->GetBlockPos(), GetSizeOfCompactSize(block.vtx.size()));
+    unsigned int sizeCSvtx = GetSizeOfCompactSize(block.vtx.size());
+    LogPrintf("sizeCSvtx = %u\n",sizeCSvtx);
+    CDiskTxPos pos(pindex->GetBlockPos(), sizeCSvtx);
+    LogPrintf("Initial pos.nTxOffset = %u\n",pos.nTxOffset);
     //CDiskTxPos posCN(pindex->GetBlockPos(), GetSizeOfCompactSize(block.vtx.size()));
     //CDiskTxPos posCP(pindex->GetBlockPos(), GetSizeOfCompactSize(block.vtx.size()));
     std::vector<std::pair<COutPointPair, COutPointPair>> vCN; // code next
@@ -2367,9 +2382,13 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 	    vector<vector<unsigned char> > vSolutions;
 	    txnouttype whichType;
 	    CDiskTxPos posC = CDiskTxPos(pos,pos.nTxOffset);
+	    LogPrintf("posC.nTxOffset = %u\n",posC.nTxOffset);
 	    posC.nTxOffset += ::GetSerializeSize(tx.nVersion,SER_DISK,CLIENT_VERSION);
+	    LogPrintf("+ nVersion posC.nTxOffset = %u\n",posC.nTxOffset);
 	    posC.nTxOffset += ::GetSerializeSize(tx.vin,SER_DISK,CLIENT_VERSION);
+	    LogPrintf("+ vin posC.nTxOffset = %u\n",posC.nTxOffset);
 	    posC.nTxOffset += GetSizeOfCompactSize(tx.vout.size());
+	    LogPrintf("+ vout size posC.nTxOffset = %u\n",posC.nTxOffset);
 	    for (int j=0; j<tx.vout.size(); j++) {
 	      const CScript& scriptPubKey = tx.vout[j].scriptPubKey;
 	      if (!Solver(scriptPubKey,whichType,vSolutions))
@@ -2580,8 +2599,11 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  return state.DoS(100,error("ConnectBlock(): pushcode is not referencing an existing output\n"),REJECT_INVALID,"bad-pushcode-output-dne");
 	       
 		posC.nTxOffset += ::GetSerializeSize(tx.vout[j].nValue,SER_DISK,CLIENT_VERSION);
-		posC.nTxOffset += ::GetSerializeSize(tx.vout[j].scriptPubKey,SER_DISK,CLIENT_VERSION);
+		LogPrintf("+ vout nValue posC.nTxOffset = %u\n",posC.nTxOffset);
+	        posC.nTxOffset += ::GetSerializeSize(tx.vout[j].scriptPubKey,SER_DISK,CLIENT_VERSION);
+		LogPrintf("+ vout scriptPubKey posC.nTxOffset = %u\n",posC.nTxOffset);
 		posC.nTxOffset -= (1+bytecode.size()+GetSizeOfCompactSize(bytecode.size()));
+		LogPrintf("- bytecode part posC.nTxOffset = %u\n",posC.nTxOffset);
 		uint256 txHash = block.GetTxHash(i);
 		COutPointPair opointp; // opoint1 for part, opoint2 for branch
 		if (newCode) {
@@ -2716,6 +2738,10 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		else { // not sure if needed
 		  return state.DoS(100,error("ProcessPushCode(): invalid pushcode\n"),REJECT_INVALID,"bad-pushcode");
 		}
+		posC.nTxOffset += (1+bytecode.size()+GetSizeOfCompactSize(bytecode.size()));
+	      }
+	      else {
+		posC.nTxOffset += ::GetSerializeSize(tx.vout[j],SER_DISK,CLIENT_VERSION);
 	      }
 	    }
 	  }
@@ -2818,6 +2844,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
         if (!pblocktree->WriteTxIndex(vPos))
              return state.Abort(_("Failed to write transaction index"));
     if (flags & SCRIPT_VERIFY_PUSHCODE) {
+      LogPrintf("write pushcode hashes to tx index\n");
       if (!pblocktree->WriteCodeIndex(vPosC))
 	return state.Abort(_("Failed to write (pushcode) code index"));
       if (!pblocktree->WriteCodeHeightIndex(vCH))

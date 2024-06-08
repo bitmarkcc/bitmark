@@ -189,8 +189,10 @@ bool CBlockTreeDB::WriteTxIndex(const std::vector<std::pair<uint256, CDiskTxPos>
 
 bool CBlockTreeDB::WriteCodeIndex(const std::vector<std::pair<COutPoint, CDiskTxPos> >&vect) {
     CLevelDBBatch batch;
-    for (std::vector<std::pair<COutPoint,CDiskTxPos> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
+    for (std::vector<std::pair<COutPoint,CDiskTxPos> >::const_iterator it=vect.begin(); it!=vect.end(); it++) {
+      LogPrintf("txdb: write COutPoint %s for pos %s\n",(it->first).ToString().c_str(),(it->second).ToString().c_str());
       batch.Write(make_pair(std::string("ci"), it->first), it->second);
+    }
     return WriteBatch(batch);
 }
 

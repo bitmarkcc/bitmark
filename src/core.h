@@ -1522,6 +1522,14 @@ struct CDiskTxPos : public CDiskBlockPos
         CDiskBlockPos::SetNull();
         nTxOffset = 0;
     }
+
+  std::string ToString() const {
+    std::string out = "nPos=";
+    out.append(std::to_string(nPos));
+    out.append(",nTxOffset=");
+    out.append(std::to_string(nTxOffset));
+    return out;
+  }
 };
 
 #endif

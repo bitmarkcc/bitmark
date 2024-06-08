@@ -817,7 +817,7 @@ Value pushcode(const Array& params, bool fHelp) {
 			".\n"
 			".\n"
 			".\n"
-			"n. \"code\"       (string) The code to insert\n"
+			"n. \"code\"       (string) The code to insert, in hex\n"
 			"\nResult:\n"
 			"\"hex\"             (string) The transaction hash in hex\n"
 			"\nExamples:\n"
@@ -877,3 +877,68 @@ Value pushcode(const Array& params, bool fHelp) {
   string strError = pwalletMain->SendMoneyToNoDestination(wtx,0,&push);
   return wtx.GetHash().GetHex();
 }
+
+Value getcode(const Array& params, bool fHelp) {
+  if (fHelp || params.size() != 2)
+    throw runtime_error(
+			"getcode \"txid\" nOutput"
+			"\nGets code associated with a PUSHCODE output.\n"
+			"\nArguments:\n"
+			"1. \"txid\"    (string) The txid containing the code push\n"
+			"2. nOutput    (numeric) The index for the output with the code push\n"
+			"\nResult:\n"
+			"\"hex\"             (string) The full code referenced by the output\n"
+			"\nExamples:\n"
+			"\nPush code to the end of previously added code, with given tx hash and output number\n"
+			);
+
+  uint256 nTxid = ParseHashV(params[0], "parameter 1");
+  const int nOutput = params[1].get_int();
+
+  printf("getcode: txid = %s nOutput = %d\n",nTxid.GetHex().c_str(),nOutput);
+
+  COutPointPair opointp;
+  opointp.Set1(COutPoint(nTxid,nOutput));
+
+  COutPointPair opointpPrev;
+  while (ReadCodePrevIndex(opointp,opointpPrev)) {
+    printf("did readcodeprevindex\n");
+    opointp = opointpPrev;
+  }
+
+  CDiskTxPos posC;
+  std::string codeHex;
+  COutPointPair opointpNext;
+  char buffer[1024];
+  char bufferHex[2049];
+  while (ReadCodeIndex(opointp.Get1(),posC)) {
+    printf("getcode: got readcodeindex\n");
+    valtype code;
+    CAutoFile file(OpenBlockFile(posC,true),SER_DISK,CLIENT_VERSION);
+    CBlockHeader header;
+    try {
+      file >> header;
+      printf("seek to posC.nTxOffset = %u\n",posC.nTxOffset);
+      fseek(file,posC.nTxOffset,SEEK_CUR);
+      //file.read(buffer,256);
+      //if (!file.good()) printf("bad read\n");
+      file >> code;
+    } catch (std::exception &e) {
+      throw runtime_error("getcode: Deserialize or I/O error");
+    }
+    /*for (int i=0; i<256; i++) {
+      unsigned char c = *((unsigned char*)(buffer+i));
+      sprintf(bufferHex+2*i,"%02x",c);
+      }*/
+    //codeHex.append(bufferHex);
+    codeHex.append(HexStr(code));
+    if (!ReadCodeNextIndex(opointp,opointpNext)) {
+      break;
+    }
+  }
+
+  printf("getcode: return codeHex\n");
+
+  return codeHex;
+}
+
