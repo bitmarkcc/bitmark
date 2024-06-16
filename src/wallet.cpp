@@ -1477,6 +1477,48 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		  else if (pPush->nParams == 3) {
 		    scriptPush = CScript() << pPush->txid << pPush->nOutput << pPush->code << OP_PUSHCODE;
 		  }
+		  else if (pPush->nParams == 4) {
+		    if (pPush->pushtype & PUSHTYPE_TX) {
+		      scriptPush = CScript() << pPush->pushtype << pPush->txid << pPush->nOutput << pPush->code << OP_PUSHCODE;
+		    }
+		    else {
+		      scriptPush = CScript() << pPush->pushtype << pPush->nOutput << pPush->nOutputPart << pPush->code << OP_PUSHCODE;
+		    }
+		  }
+		  else if (pPush->nParams == 5) {
+		    scriptPush = CScript() << pPush->pushtype;
+		    if (pPush->pushtype & PUSHTYPE_TX) {
+		      scriptPush <<= pPush->txid;
+		    }
+		    scriptPush <<= pPush->nOutput;
+		    if (pPush->pushtype & PUSHTYPE_TXPART1) {
+		      scriptPush <<= pPush->txidPart;
+		    }
+		    scriptPush <<= pPush->nOutputPart;
+		    if (pPush->nOutputPart2 >= 0)
+		      scriptPush <<= pPush->nOutputPart2;
+		    scriptPush <<= pPush->code;
+		    scriptPush <<= OP_PUSHCODE;
+		  }
+		  else if (pPush->nParams >= 6) {
+		    scriptPush = CScript() << pPush->pushtype;
+		    if (pPush->txid.size()>0) {
+		      scriptPush <<= pPush->txid;
+		    }
+		    scriptPush <<= pPush->nOutput;
+		    if (pPush->txidPart.size()>0) {
+		      scriptPush <<= pPush->txidPart;
+		    }
+		    scriptPush <<= pPush->nOutputPart;
+		    if (pPush->txidPart2.size()>0) {
+		      scriptPush <<= pPush->txidPart2;
+		    }
+		    if (pPush->nOutputPart2 >= 0) {
+		      scriptPush <<= pPush->nOutputPart2;
+		    }
+		    scriptPush <<= pPush->code;
+		    scriptPush <<= OP_PUSHCODE;
+		  }
 		  CTxOut newTxOut(0,scriptPush);
 		  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
 		  pushPos = position - wtxNew.vout.begin();

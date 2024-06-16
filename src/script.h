@@ -557,6 +557,21 @@ public:
         return *this;
     }
 
+  CScript& operator<<=(const std::vector<unsigned char>& b) {
+    CScript ret = *this << b;
+    return ret;
+  }
+
+  CScript& operator<<=(int64_t b) {
+    CScript ret = *this << b;
+    return ret;
+  }
+
+  CScript& operator<<=(opcodetype opcode) {
+    CScript ret = *this << opcode;
+    return ret;
+  }
+
     CScript& operator<<(const CScript& b)
     {
         // I'm not sure if this should push the script or concatenate scripts.

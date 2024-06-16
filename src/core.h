@@ -121,6 +121,10 @@ public:
   CGOutPoint<BITS> Get1() { return opoint1; }
   CGOutPoint<BITS> Get2() { return opoint2; }
 
+  std::string ToString() {
+    return "("+Get1().ToString()+","+Get2().ToString()+")";
+  }
+
   friend class COutPointPair;
 };
 

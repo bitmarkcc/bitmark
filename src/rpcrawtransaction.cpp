@@ -825,23 +825,148 @@ Value pushcode(const Array& params, bool fHelp) {
 			+ HelpExampleCli("pushcode","\"3f044f417239b90e58f22982b3d2ed774e33cc7106cc4ad8776ec6436b27927d\" \"2\" \"some_code\"")
 			);
 
-  const int64_t pushtype = -1;
+  int64_t pushtype = -1;
   const char* txid = 0;
   int64_t nOutput = -1;
+  bool havenOutput = false;
   const char* txidPart = 0;
   int64_t nOutputPart = -1;
+  bool havenOutputPart = false;
   const char* txidPart2 = 0;
   int64_t nOutputPart2 = -1;
+  bool havenOutputPart2 = false;
   const char* code = 0;
 
   int nParams = params.size();
-  
-  if (params.size() == 2) {
-    nOutput = atoi(params[0].get_str());
+
+  for (int i=0; i<nParams-1; i++) {
+    std::string sParam = params[i].get_str();
+    if (sParam.length() < 64) {
+      int64_t iParam = atoi(sParam);
+      if (iParam < 0)
+	throw runtime_error("numberic parameters must be >= 0");
+    }
   }
-  else if (params.size() == 3) {
+  
+  if (nParams == 2) {
+    nOutput = atoi(params[0].get_str());
+    havenOutput = true;
+  }
+  else if (nParams == 3) {
     txid = params[0].get_str().c_str();
     nOutput = atoi(params[1].get_str());
+    havenOutput = true;
+  }
+  else if (nParams == 4) {
+    pushtype = atoi(params[0].get_str());
+    int i = 1;
+    if (pushtype & PUSHTYPE_TX) {
+      txid = params[i].get_str().c_str();
+      i++;      
+    }
+    nOutput = atoi(params[i].get_str());
+    havenOutput = true;
+    if (i<2) {
+      nOutputPart = atoi(params[2].get_str());
+      havenOutputPart = true;
+    }
+  }
+  else if (nParams == 5) {
+    pushtype = atoi(params[0].get_str());
+    if (pushtype & PUSHTYPE_TXPART2)
+      throw runtime_error("invalid pushcode format");
+    int i = 1;
+    if (pushtype & PUSHTYPE_TX) {
+      txid = params[i].get_str().c_str();
+      i++;
+    }
+    nOutput = atoi(params[i].get_str());
+    havenOutput = true;
+    i++;
+    if (pushtype & PUSHTYPE_TXPART1) {
+      txidPart = params[i].get_str().c_str();
+      i++;
+    }
+    if (i>3) {
+      throw runtime_error("invalid pushcode format");
+    }
+    else if (i<3) {
+      nOutputPart = atoi(params[2].get_str());
+      havenOutputPart = true;
+      nOutputPart2 = atoi(params[3].get_str());
+      havenOutputPart2 = true;
+    }
+    else {
+      nOutputPart = atoi(params[3].get_str());
+      havenOutputPart = true;
+    }
+  }
+  else if (nParams == 6) {
+    pushtype = atoi(params[0].get_str());
+    int i = 1;
+    if (pushtype & PUSHTYPE_TX) {
+      txid = params[i].get_str().c_str();
+      i++;
+    }
+    nOutput = atoi(params[i].get_str());
+    havenOutput = true;
+    i++;
+    if (pushtype & PUSHTYPE_TXPART1) {
+      txidPart = params[i].get_str().c_str();
+      i++;
+    }
+    nOutputPart = atoi(params[i].get_str());
+    havenOutputPart = true;
+    i++;
+    if (i<5) {
+      if (i<4) {
+	txidPart2 = params[i].get_str().c_str();
+	i++;
+      }
+      nOutputPart2 = atoi(params[i].get_str());
+      havenOutputPart2 = true;
+    }
+  }
+  else if (nParams == 7) {
+    pushtype = atoi(params[0].get_str());
+    int i = 1;
+    if (pushtype & PUSHTYPE_TX) {
+      txid = params[i].get_str().c_str();
+      i++;
+    }
+    nOutput = atoi(params[i].get_str());
+    havenOutput = true;
+    i++;
+    if (pushtype & PUSHTYPE_TXPART1) {
+      txidPart = params[i].get_str().c_str();
+      i++;
+    }
+    nOutputPart = atoi(params[i].get_str());
+    havenOutputPart = true;
+    i++;
+    if (pushtype & PUSHTYPE_TXPART2) {
+      txidPart2 = params[i].get_str().c_str();
+      i++;
+    }
+    if (i>=6)
+      throw runtime_error("invalid pushcode format");
+    nOutputPart2 = atoi(params[i].get_str());
+    havenOutputPart2 = true;
+    i++;
+    if (i<6)
+      throw runtime_error("invalid pushcode format");
+  }
+  else if (nParams == 8) {
+    pushtype = atoi(params[0].get_str());
+    txid = params[1].get_str().c_str();
+    nOutput = atoi(params[2].get_str());
+    havenOutput = true;
+    txidPart = params[3].get_str().c_str();
+    nOutputPart = atoi(params[4].get_str());
+    havenOutputPart = true;
+    txidPart2 = params[5].get_str().c_str();
+    nOutputPart2 = atoi(params[6].get_str());
+    havenOutputPart2 = true;
   }
   code = params[nParams-1].get_str().c_str();
 
@@ -860,6 +985,9 @@ Value pushcode(const Array& params, bool fHelp) {
   valtype vCode;
   if (code)
     vCode = ParseHex(code);
+
+  if (havenOutput && nOutput<0 || havenOutputPart && nOutputPart<0 || havenOutputPart2 && nOutputPart2<0)
+    throw runtime_error("numeric parameters must be >= 0");
 
   CodePush push;
   push.nParams = nParams;
@@ -897,22 +1025,26 @@ Value getcode(const Array& params, bool fHelp) {
 
   printf("getcode: txid = %s nOutput = %d\n",nTxid.GetHex().c_str(),nOutput);
 
+  std::vector<COutPoint> vOpoint;
+  
   COutPointPair opointp;
   opointp.Set1(COutPoint(nTxid,nOutput));
+  opointp.Set2(opointp.Get1());
+  vOpoint.push_back(opointp.Get1());
 
+  COutPointPair opointpCur = opointp;
   COutPointPair opointpPrev;
-  while (ReadCodePrevIndex(opointp,opointpPrev)) {
+  while (ReadCodePrevIndex(opointpCur,opointpPrev)) {
     printf("did readcodeprevindex\n");
-    opointp = opointpPrev;
+    opointpCur = opointpPrev;
+    vOpoint.push_back(opointpCur.Get1());
   }
 
   CDiskTxPos posC;
   std::string codeHex;
-  COutPointPair opointpNext;
-  char buffer[1024];
-  char bufferHex[2049];
-  while (ReadCodeIndex(opointp.Get1(),posC)) {
-    printf("getcode: got readcodeindex\n");
+  for (int i=vOpoint.size()-1; i>=0; i--) {
+    if (!ReadCodeIndex(vOpoint[i],posC))
+      throw runtime_error("getcode: can't find position of code for opoint");
     valtype code;
     CAutoFile file(OpenBlockFile(posC,true),SER_DISK,CLIENT_VERSION);
     CBlockHeader header;
@@ -920,21 +1052,33 @@ Value getcode(const Array& params, bool fHelp) {
       file >> header;
       printf("seek to posC.nTxOffset = %u\n",posC.nTxOffset);
       fseek(file,posC.nTxOffset,SEEK_CUR);
-      //file.read(buffer,256);
-      //if (!file.good()) printf("bad read\n");
       file >> code;
     } catch (std::exception &e) {
       throw runtime_error("getcode: Deserialize or I/O error");
     }
-    /*for (int i=0; i<256; i++) {
-      unsigned char c = *((unsigned char*)(buffer+i));
-      sprintf(bufferHex+2*i,"%02x",c);
-      }*/
-    //codeHex.append(bufferHex);
-    codeHex.append(HexStr(code));
-    if (!ReadCodeNextIndex(opointp,opointpNext)) {
-      break;
+    codeHex.append(HexStr(code)+"\n");
+  }
+
+  COutPointPair opointpNext;
+  opointpCur = opointp;
+  while (ReadCodeNextIndex(opointpCur,opointpNext)) {
+    printf("did readcodenextindex\n");
+    opointpCur = opointpNext;
+
+    if (!ReadCodeIndex(opointpCur.Get1(),posC))
+      throw runtime_error("getcode: can't find position of code for opoint");
+    valtype code;
+    CAutoFile file(OpenBlockFile(posC,true),SER_DISK,CLIENT_VERSION);
+    CBlockHeader header;
+    try {
+      file >> header;
+      printf("seek to posC.nTxOffset = %u\n",posC.nTxOffset);
+      fseek(file,posC.nTxOffset,SEEK_CUR);
+      file >> code;
+    } catch (std::exception &e) {
+      throw runtime_error("getcode: Deserialize or I/O error");
     }
+    codeHex.append(HexStr(code)+"\n");
   }
 
   printf("getcode: return codeHex\n");
