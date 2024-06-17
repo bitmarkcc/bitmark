@@ -167,14 +167,6 @@ libbitmark_common_a_SOURCES = \
   Lyra2RE.c \
   Sponge.c \
   sph_sha2big.c \
-  ar2/argon2.c \
-  ar2/core.c \
-  ar2/encoding.c \
-  ar2/genkat.c \
-  ar2/run.c \
-  ar2/test.c \
-  ar2/thread.c \
-  ar2/blake2/blake2b.c \
   equihash.cpp \
   equihash.tcc \
   cryptonight/crypto/slow-hash.c \
@@ -194,10 +186,19 @@ libbitmark_common_a_SOURCES = \
   yescrypt/yescrypt-best.c \
   yescrypt/yescrypt-platform.c \
   yescrypt/sha256_Y.c \
+  ar2/argon2.c \
+  ar2/core.c \
+  ar2/encoding.c \
+  ar2/thread.c \
+  ar2/blake2/blake2b.c \
   $(BITMARK_CORE_H)
 
 if BUILD_ARGON2_OPTIMIZED
+if TARGET_WINDOWS
+libbitmark_common_a_SOURCES += ar2/ref.c
+else
 libbitmark_common_a_SOURCES += ar2/opt.c
+endif
 else
 libbitmark_common_a_SOURCES += ar2/ref.c
 endif
@@ -219,9 +220,9 @@ bitmarkd_LDADD = \
   libbitmark_server.a \
   libbitmark_cli.a \
   libbitmark_common.a \
+  $(LIBSECP256K1) \
   $(LIBLEVELDB) \
-  $(LIBMEMENV) \
-  $(LIBSECP256K1)
+  $(LIBMEMENV)
 
 if ENABLE_WALLET
 bitmarkd_LDADD += libbitmark_wallet.a
@@ -240,8 +241,8 @@ bitmarkd_LDADD += $(BOOST_LIBS) $(BDB_LIBS)
 bitmark_cli_LDADD = \
   libbitmark_cli.a \
   libbitmark_common.a \
-  $(BOOST_LIBS) \
-  $(LIBSECP256K1)
+  $(LIBSECP256K1) \
+  $(BOOST_LIBS)
 bitmark_cli_SOURCES = bitmark-cli.cpp
 #
 

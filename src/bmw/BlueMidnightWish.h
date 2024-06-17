@@ -1,7 +1,7 @@
 // We use this type definition to ensure that 
 // "unsigned long" on 32-bit and 64-bit little-endian 
 // operating systems are 4 bytes long.
-#if defined( _MSC_VER )
+#if defined( _MSC_VER ) || defined(__MINGW32__)
 typedef unsigned long u_int32_t;
 typedef unsigned long long u_int64_t;
 #else

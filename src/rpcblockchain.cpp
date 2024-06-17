@@ -33,10 +33,12 @@ double GetDifficulty(const CBlockIndex* blockindex, int algo, bool weighted, boo
     }
     unsigned int nBits = 0;
     unsigned int algoWeight = 1;
+
     bool blockOnFork = false;
     if (blockindex && blockindex->nHeight>0) {
       if (onFork(blockindex)) blockOnFork = true;
     }
+
     if (weighted) algoWeight = GetAlgoWeight(algo);
     if (next) {
       nBits = GetNextWorkRequired(blockindex,algo);
@@ -373,6 +375,7 @@ Object blockToJSON(const CBlock& block, const CBlockIndex* blockindex)
         txs.push_back(tx.GetHash().GetHex());
     result.push_back(Pair("tx", txs));
     result.push_back(Pair("time", block.GetBlockTime()));
+    result.push_back(Pair("mediantime", blockindex->GetMedianTimePast()));
     result.push_back(Pair("nonce", (uint64_t)block.nNonce));
     result.push_back(Pair("bits", HexBits(block.nBits)));
     result.push_back(Pair("difficulty", GetDifficulty(blockindex,algo,true,false)));

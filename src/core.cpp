@@ -1,6 +1,6 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Original Code: Copyright (c) 2009-2014 The Bitcoin Core Developers
-// Modified Code: Copyright (c) 2014-2018 Project Bitmark
+// Modified Code: Copyright (c) 2014-2021 Project Bitmark
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -337,6 +337,7 @@ int GetBlockVersion (const int nVersion) {
   return nVersion & 255;
 }
 
+// Q? <<< Comments, Logic ?
 bool GetBlockVariant (const int nVersion) {
   return nVersion & BLOCK_VERSION_VARIANT;
 }
@@ -348,6 +349,9 @@ bool GetBlockVariant2 (const int nVersion) {
 
 bool CBlockIndex::IsSuperMajority(int minVersion, const CBlockIndex* pstart, unsigned int nRequired, unsigned int nToCheck)
 {
+  /* force the fork after a certain height */
+  //if (minVersion==4 && pstart->nHeight>=nForkHeightForce-1) return true;
+  
   unsigned int nFound = 0;
   for (unsigned int i = 0; i < nToCheck && nFound < nRequired && pstart != NULL; i++)
     {
