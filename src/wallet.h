@@ -53,13 +53,11 @@ enum WalletFeature
 
 struct CodePush {
   int nParams;
-  int64_t pushtype;
+  int pushtype;
   valtype txid;
-  int64_t nOutput;
-  valtype txidPart;
-  int64_t nOutputPart;
-  valtype txidPart2;
-  int64_t nOutputPart2;
+  int nOutput;
+  int nPart;
+  int nPart2;
   valtype code;
 };
 

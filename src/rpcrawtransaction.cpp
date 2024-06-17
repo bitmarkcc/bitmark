@@ -807,9 +807,9 @@ Value sendrawtransaction(const Array& params, bool fHelp)
 }
 
 Value pushcode(const Array& params, bool fHelp) {
-  if (fHelp || params.size() < 1 || params.size() > 8)
+  if (fHelp || params.size() < 1 || params.size() > 6)
     throw runtime_error(
-			"pushcode \"param_1\" \"param_2\" ... \"param_n\" for 1<=n<=8\n"
+			"pushcode \"param_1\" \"param_2\" ... \"param_n\" for 1<=n<=6\n"
 			"\nSubmits PUSHCODE transaction to local node and network.\n"
 			"\nArguments:\n"
 			"1. \"param_1\"    (string) First parameter\n"
@@ -825,16 +825,14 @@ Value pushcode(const Array& params, bool fHelp) {
 			+ HelpExampleCli("pushcode","\"3f044f417239b90e58f22982b3d2ed774e33cc7106cc4ad8776ec6436b27927d\" \"2\" \"some_code\"")
 			);
 
-  int64_t pushtype = -1;
+  int pushtype = -1;
   const char* txid = 0;
-  int64_t nOutput = -1;
+  int nOutput = -1;
   bool havenOutput = false;
-  const char* txidPart = 0;
-  int64_t nOutputPart = -1;
-  bool havenOutputPart = false;
-  const char* txidPart2 = 0;
-  int64_t nOutputPart2 = -1;
-  bool havenOutputPart2 = false;
+  int nPart = -1;
+  bool havenPart = false;
+  int nPart2 = -1;
+  bool havenPart2 = false;
   const char* code = 0;
 
   int nParams = params.size();
@@ -867,14 +865,12 @@ Value pushcode(const Array& params, bool fHelp) {
     nOutput = atoi(params[i].get_str());
     havenOutput = true;
     if (i<2) {
-      nOutputPart = atoi(params[2].get_str());
-      havenOutputPart = true;
+      nPart = atoi(params[2].get_str());
+      havenPart = true;
     }
   }
   else if (nParams == 5) {
     pushtype = atoi(params[0].get_str());
-    if (pushtype & PUSHTYPE_TXPART2)
-      throw runtime_error("invalid pushcode format");
     int i = 1;
     if (pushtype & PUSHTYPE_TX) {
       txid = params[i].get_str().c_str();
@@ -883,90 +879,29 @@ Value pushcode(const Array& params, bool fHelp) {
     nOutput = atoi(params[i].get_str());
     havenOutput = true;
     i++;
-    if (pushtype & PUSHTYPE_TXPART1) {
-      txidPart = params[i].get_str().c_str();
+    if (pushtype & PUSHTYPE_PART1) {
+      nPart = atoi(params[i].get_str());
+      havenPart = true;
       i++;
     }
-    if (i>3) {
+    if (i<3) {
       throw runtime_error("invalid pushcode format");
     }
-    else if (i<3) {
-      nOutputPart = atoi(params[2].get_str());
-      havenOutputPart = true;
-      nOutputPart2 = atoi(params[3].get_str());
-      havenOutputPart2 = true;
-    }
-    else {
-      nOutputPart = atoi(params[3].get_str());
-      havenOutputPart = true;
+    else if (i==3) {
+      nPart2 = atoi(params[3].get_str());
+      havenPart2 = true;
     }
   }
   else if (nParams == 6) {
     pushtype = atoi(params[0].get_str());
     int i = 1;
-    if (pushtype & PUSHTYPE_TX) {
-      txid = params[i].get_str().c_str();
-      i++;
-    }
+    txid = params[i].get_str().c_str();
     nOutput = atoi(params[i].get_str());
     havenOutput = true;
-    i++;
-    if (pushtype & PUSHTYPE_TXPART1) {
-      txidPart = params[i].get_str().c_str();
-      i++;
-    }
-    nOutputPart = atoi(params[i].get_str());
-    havenOutputPart = true;
-    i++;
-    if (i<5) {
-      if (i<4) {
-	txidPart2 = params[i].get_str().c_str();
-	i++;
-      }
-      nOutputPart2 = atoi(params[i].get_str());
-      havenOutputPart2 = true;
-    }
-  }
-  else if (nParams == 7) {
-    pushtype = atoi(params[0].get_str());
-    int i = 1;
-    if (pushtype & PUSHTYPE_TX) {
-      txid = params[i].get_str().c_str();
-      i++;
-    }
-    nOutput = atoi(params[i].get_str());
-    havenOutput = true;
-    i++;
-    if (pushtype & PUSHTYPE_TXPART1) {
-      txidPart = params[i].get_str().c_str();
-      i++;
-    }
-    nOutputPart = atoi(params[i].get_str());
-    havenOutputPart = true;
-    i++;
-    if (pushtype & PUSHTYPE_TXPART2) {
-      txidPart2 = params[i].get_str().c_str();
-      i++;
-    }
-    if (i>=6)
-      throw runtime_error("invalid pushcode format");
-    nOutputPart2 = atoi(params[i].get_str());
-    havenOutputPart2 = true;
-    i++;
-    if (i<6)
-      throw runtime_error("invalid pushcode format");
-  }
-  else if (nParams == 8) {
-    pushtype = atoi(params[0].get_str());
-    txid = params[1].get_str().c_str();
-    nOutput = atoi(params[2].get_str());
-    havenOutput = true;
-    txidPart = params[3].get_str().c_str();
-    nOutputPart = atoi(params[4].get_str());
-    havenOutputPart = true;
-    txidPart2 = params[5].get_str().c_str();
-    nOutputPart2 = atoi(params[6].get_str());
-    havenOutputPart2 = true;
+    nPart = atoi(params[i].get_str());
+    havenPart = true;
+    nPart2 = atoi(params[i].get_str());
+    havenPart2 = true;
   }
   code = params[nParams-1].get_str().c_str();
 
@@ -974,19 +909,11 @@ Value pushcode(const Array& params, bool fHelp) {
   if (txid)
     vTxid = ParseHex(txid);
   
-  valtype vTxidPart;
-  if (txidPart)
-    vTxidPart = ParseHex(txidPart);
-
-  valtype vTxidPart2;
-  if (txidPart2)
-    vTxidPart2 = ParseHex(txidPart2);
-  
   valtype vCode;
   if (code)
     vCode = ParseHex(code);
 
-  if (havenOutput && nOutput<0 || havenOutputPart && nOutputPart<0 || havenOutputPart2 && nOutputPart2<0)
+  if (havenOutput && nOutput<0 || havenPart && nPart<0 || havenPart2 && nPart2<0)
     throw runtime_error("numeric parameters must be >= 0");
 
   CodePush push;
@@ -994,10 +921,8 @@ Value pushcode(const Array& params, bool fHelp) {
   push.pushtype = pushtype;
   push.txid = vTxid;
   push.nOutput = nOutput;
-  push.txidPart = vTxidPart;
-  push.nOutputPart = nOutputPart;
-  push.txidPart2 = vTxidPart2;
-  push.nOutputPart2 = nOutputPart2;
+  push.nPart = nPart;
+  push.nPart2 = nPart2;
   push.code = vCode;
 
   CWalletTx wtx;
