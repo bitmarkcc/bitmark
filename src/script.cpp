@@ -611,7 +611,8 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 	      */
 	    case OP_NOP3: // OP_PUSHCODE todo sync with code in main.cpp (not sure if validation needed here)
 	      {
-		return false; // return false for now
+		//return false; // return false for now
+		break;
 
 		if (!(flags & SCRIPT_VERIFY_PUSHCODE))
 		  break;

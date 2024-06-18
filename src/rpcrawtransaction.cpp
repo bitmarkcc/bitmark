@@ -948,8 +948,6 @@ Value getcode(const Array& params, bool fHelp) {
   uint256 nTxid = ParseHashV(params[0], "parameter 1");
   const int nOutput = params[1].get_int();
 
-  printf("getcode: txid = %s nOutput = %d\n",nTxid.GetHex().c_str(),nOutput);
-
   std::vector<COutPoint> vOpoint;
   
   COutPointPair opointp;
@@ -960,7 +958,6 @@ Value getcode(const Array& params, bool fHelp) {
   COutPointPair opointpCur = opointp;
   COutPointPair opointpPrev;
   while (ReadCodePrevIndex(opointpCur,opointpPrev)) {
-    printf("did readcodeprevindex\n");
     opointpCur = opointpPrev;
     vOpoint.push_back(opointpCur.Get1());
   }
@@ -975,7 +972,7 @@ Value getcode(const Array& params, bool fHelp) {
     CBlockHeader header;
     try {
       file >> header;
-      printf("seek to posC.nTxOffset = %u\n",posC.nTxOffset);
+      //printf("seek to posC.nTxOffset = %u\n",posC.nTxOffset);
       fseek(file,posC.nTxOffset,SEEK_CUR);
       file >> code;
     } catch (std::exception &e) {
@@ -987,7 +984,6 @@ Value getcode(const Array& params, bool fHelp) {
   COutPointPair opointpNext;
   opointpCur = opointp;
   while (ReadCodeNextIndex(opointpCur,opointpNext)) {
-    printf("did readcodenextindex\n");
     opointpCur = opointpNext;
 
     if (!ReadCodeIndex(opointpCur.Get1(),posC))
@@ -997,7 +993,7 @@ Value getcode(const Array& params, bool fHelp) {
     CBlockHeader header;
     try {
       file >> header;
-      printf("seek to posC.nTxOffset = %u\n",posC.nTxOffset);
+      //printf("seek to posC.nTxOffset = %u\n",posC.nTxOffset);
       fseek(file,posC.nTxOffset,SEEK_CUR);
       file >> code;
     } catch (std::exception &e) {
@@ -1005,8 +1001,6 @@ Value getcode(const Array& params, bool fHelp) {
     }
     codeHex.append(HexStr(code)+"\n");
   }
-
-  printf("getcode: return codeHex\n");
 
   return codeHex;
 }

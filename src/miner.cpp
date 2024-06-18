@@ -137,9 +137,9 @@ CBlockTemplate* CreateNewBlock(const CScript& scriptPubKeyIn, int algo)
     }
 
 	// Q? <<< How does this affect functioning of TestNet
-    if (TestNet() && pindexPrev->nHeight < 1725) {
+    /*if (TestNet() && pindexPrev->nHeight < 1725) {
       pblock->SetVariant(false);
-    }
+      }*/
 
     // Create coinbase tx
     CTransaction txNew;

@@ -2273,7 +2273,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
       flags |= SCRIPT_VERIFY_DERSIG;
     }
 
-    if (RegTest()) { // enable op_pushcode on regtest
+    if (block.nVersion >= 5 && CBlockIndex::IsSuperMajority(5,pindex->pprev,900,1000)) { // enable op_pushcode
       flags |=  SCRIPT_VERIFY_PUSHCODE;
     }
     
