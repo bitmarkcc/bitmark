@@ -842,7 +842,7 @@ Value pushcode(const Array& params, bool fHelp) {
     if (sParam.length() < 64) {
       int64_t iParam = atoi(sParam);
       if (iParam < 0)
-	throw runtime_error("numberic parameters must be >= 0");
+	throw runtime_error("numeric parameters must be >= 0");
     }
   }
   
@@ -894,13 +894,12 @@ Value pushcode(const Array& params, bool fHelp) {
   }
   else if (nParams == 6) {
     pushtype = atoi(params[0].get_str());
-    int i = 1;
-    txid = params[i].get_str().c_str();
-    nOutput = atoi(params[i].get_str());
+    txid = params[1].get_str().c_str();
+    nOutput = atoi(params[2].get_str());
     havenOutput = true;
-    nPart = atoi(params[i].get_str());
+    nPart = atoi(params[3].get_str());
     havenPart = true;
-    nPart2 = atoi(params[i].get_str());
+    nPart2 = atoi(params[4].get_str());
     havenPart2 = true;
   }
   code = params[nParams-1].get_str().c_str();

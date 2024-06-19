@@ -2294,6 +2294,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
     std::vector<std::pair<COutPointPair, COutPointPair>> vCN; // code next
     std::vector<std::pair<COutPointPair, COutPointPair>> vCP; // code prev
     std::vector<std::pair<COutPoint, int>> vCH; // code height
+    std::vector<std::pair<COutPoint, int>> vCS; // code size in bytes
     std::vector<std::pair<uint256, CDiskTxPos> > vPos;
     std::vector<std::pair<COutPoint, CDiskTxPos>> vPosC; // position of code
     //std::vector<std::pair<COutPointPair, CDiskTxPos>> vPosCN; // position of next code
@@ -2475,6 +2476,9 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  }
 		}
 		else if (vSolutions.size() == 6) {
+		  for (int iSol=0; iSol<6; iSol++) {
+		    LogPrintf("sol %d = %s\n",iSol,HexStr(vSolutions[iSol]).c_str());
+		  }
 		  pushtype = CScriptNum(vSolutions[0]).getint();
 		  if (!(pushtype&PUSHTYPE_TX) || !(pushtype&PUSHTYPE_PART1) || !(pushtype&PUSHTYPE_PART2))
 		    return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid format\n"),REJECT_INVALID,"bad-pushcode");
@@ -2499,7 +2503,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  return state.DoS(100,error("ConnectBlock(): PUSHCODE with invalid nOutput\n"),REJECT_INVALID,"bad-pushcode");
 
 		valtype bytecode = vSolutions[vSolutions.size()-1];
-		LogPrintf("bytecode = %s\n",HexStr(bytecode).c_str());
+		LogPrintf("bytecode (%u) = %s\n",bytecode.size(),HexStr(bytecode).c_str());
 		LogPrintf("pushtype = %d\n",pushtype);
 		if (pushtype<0)
 		  return state.DoS(100,error("ConnectBlock(): Push-type cannot be negative\n"),REJECT_INVALID,"bad-pushtype-negative");
@@ -2538,6 +2542,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  opointp.Set1(COutPoint(txHash,j)); // keep opoint2 null for tip of branch
 		  // in this case, branch defined by the part at tip
 		  vCH.push_back(std::make_pair(opointp.Get1(),pindex->nHeight));
+		  vCS.push_back(std::make_pair(opointp.Get1(),bytecode.size()));
 		  vPosC.push_back(std::make_pair(opointp.Get1(),posC));
 		}
 		else if (!havenPart) {
@@ -2561,28 +2566,36 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  COutPointPair opointpPrev;
 		  while (pblocktree->ReadCodePrevIndex(opointpCur,opointpPrev)) { // go to the start
 		    LogPrintf("(go bwd) opointpCur %s opointpPrev %s\n",opointpCur.ToString(),opointpPrev.ToString());
-		    opointpCur = opointpPrev;
 		    int curHeight = -1;
 		    if (!pblocktree->ReadCodeHeightIndex(opointpCur.Get1(),curHeight)||curHeight<0)
 		      return state.DoS(100,error("ConnectBlock(): pushcode invalid height\n"),REJECT_INVALID,"bad-pushcode-invalid-height");
 		    if (pindex->nHeight-curHeight > MAX_PUSHCODE_LENGTH)
 		      return state.DoS(100,error("ConnectBlock(): pushcode too long\n"),REJECT_INVALID,"bad-pushcode-length");
+		    opointpCur = opointpPrev;
 		  }
 		  COutPointPair opointpNext;
+		  int nCodeSize = 0;
 		  while (pblocktree->ReadCodeNextIndex(opointpCur,opointpNext)) { // go from start to end
 		    LogPrintf("(go fwd) opointpCur %s opointpNext %s\n",opointpCur.ToString(),opointpNext.ToString());
+		    int curHeight = -1;
+		    if (!pblocktree->ReadCodeHeightIndex(opointpCur.Get1(),curHeight)||curHeight<0)
+		      return state.DoS(100,error("ConnectBlock(): pushcode invalid height\n"),REJECT_INVALID,"bad-pushcode-invalid-height");
+		    if (pindex->nHeight-curHeight > MAX_PUSHCODE_LENGTH)
+		      return state.DoS(100,error("ConnectBlock(): pushcode too long\n"),REJECT_INVALID,"bad-pushcode-length");
+		    int curSize = -1;
+		    if (!pblocktree->ReadCodeSizeIndex(opointpCur.Get1(),curSize)||curSize<0)
+		      return state.DoS(100,error("ConnectBlock(): pushcode invalid size\n"),REJECT_INVALID,"bad-pushcode-invalid-size");
+		    nCodeSize += curSize;
+		    if (nCodeSize + bytecode.size() > MAX_PUSHCODE_SIZE)
+		      return state.DoS(100,error("ConnectBlock(): pushcode code too large\n"),REJECT_INVALID,"bad-pushcode-size");
 		    vCP.push_back(std::make_pair(COutPointPair(opointpNext.Get1(),opointp.Get1()),COutPointPair(opointpCur.Get1(),opointp.Get1())));
 		    vCN.push_back(std::make_pair(COutPointPair(opointpCur.Get1(),opointp.Get1()),COutPointPair(opointpNext.Get1(),opointp.Get1())));
 		    opointpCur = opointpNext;
-		    int curHeight = -1;
-		    if (!pblocktree->ReadCodeHeightIndex(opointpCur.Get1(),curHeight)||curHeight<0)
-		      return state.DoS(100,error("ConnectBlock(): pushcode invalid height\n"),REJECT_INVALID,"bad-pushcode-invalid-height");
-		    if (pindex->nHeight-curHeight > MAX_PUSHCODE_LENGTH)
-		      return state.DoS(100,error("ConnectBlock(): pushcode too long\n"),REJECT_INVALID,"bad-pushcode-length");
 		  }
 		  vCP.push_back(std::make_pair(opointp,COutPointPair(opointpCur.Get1(),opointp.Get1())));
 		  vCN.push_back(std::make_pair(COutPointPair(opointpCur.Get1(),opointp.Get1()),opointp));
 		  vCH.push_back(std::make_pair(opointp.Get1(),pindex->nHeight));
+		  vCS.push_back(std::make_pair(opointp.Get1(),bytecode.size()));
 		  vPosC.push_back(std::make_pair(opointp.Get1(),posC));
 		}
 		else if ((pushtype & 1) == PUSHTYPE_INSERT) {
@@ -2592,34 +2605,27 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  COutPointPair opointpMatch; // the branch
 		  opointpMatch.Set1(COutPoint(txMatch.GetCachedHash(),nOutput));
 		  opointpMatch.Set2(opointpMatch.Get1()); // for finding all parts
-		  //COutPointPair opointpMatchPart; // the part
-		  //opointpMatchPart.Set1(COutPoint(txMatchPart.GetCachedHash(),nOutputPart));
-		  //opointpMatchPart.Set2(opointp.Get1()); // use after finding insertion point
 		  int opointpMatchHeight = -1;
-		  //int opointpMatchPartHeight = -1;
+
 		  if (!pblocktree->ReadCodeHeightIndex(opointpMatch.Get1(),opointpMatchHeight))
 		    return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a valid output\n"),REJECT_INVALID,"bad-pushcode-output-invalid");
-		  //if (!pblocktree->ReadCodeHeightIndex(opointpMatchPart.Get1(),opointpMatchPartHeight))
-		  //return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a valid output\n"),REJECT_INVALID,"bad-pushcode-output-invalid");
 		  if (opointpMatchHeight < 0)
 		    return state.DoS(100,error("ConnectBlock(): pushcode is not referencing a valid output\n"),REJECT_INVALID,"bad-pushcode-output-dne");
 		  int depth1 = pindex->nHeight - opointpMatchHeight;
-		  //int depth2 = opointpMatchHeight - opointpMatchPartHeight;
 		  LogPrintf("opointpMatchHeight %d\n",opointpMatchHeight);
 		  if (depth1 > MAX_PUSHCODE_DEPTH)
 		    return state.DoS(100,error("ConnectBlock(): pushcode depth exceeded\n"),REJECT_INVALID,"bad-pushcode-depth");
 
 		  COutPointPair opointpCur = opointpMatch;
 		  COutPointPair opointpPrev;
-		  //int counter = 1;
 		  while (pblocktree->ReadCodePrevIndex(opointpCur,opointpPrev)) { // go to the start
 		    LogPrintf("(go bwd) opointpCur %s opointpPrev %s\n",opointpCur.ToString(),opointpPrev.ToString());
-		    opointpCur = opointpPrev;
  		    int curHeight = -1;
 		    if (!pblocktree->ReadCodeHeightIndex(opointpCur.Get1(),curHeight)||curHeight<0)
 		      return state.DoS(100,error("ConnectBlock(): pushcode invalid height\n"),REJECT_INVALID,"bad-pushcode-invalid-height");
 		    if (pindex->nHeight-curHeight > MAX_PUSHCODE_LENGTH)
 		      return state.DoS(100,error("ConnectBlock(): pushcode too long\n"),REJECT_INVALID,"bad-pushcode-length");
+		    opointpCur = opointpPrev;
 		  }
 
 		  COutPointPair opointpNext;
@@ -2627,8 +2633,21 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  bool foundInsertionPoint = false;
 		  int iPart = 0; // part iterator. Count parts from 0,...,nParts-1
 		  COutPointPair opointpMatchPart;
+		  int nCodeSize = 0;
 		  while (pblocktree->ReadCodeNextIndex(opointpCur,opointpNext)) { // go from start to end
 		    LogPrintf("(go fwd) opointpCur %s opointpNext %s opointpPrev %s\n",opointpCur.ToString(),opointpNext.ToString(),opointpPrev.ToString());
+		    int curHeight = -1;
+		    if (!pblocktree->ReadCodeHeightIndex(opointpCur.Get1(),curHeight)||curHeight<0)
+		      return state.DoS(100,error("ConnectBlock(): pushcode invalid height\n"),REJECT_INVALID,"bad-pushcode-invalid-height");
+		    if (pindex->nHeight-curHeight > MAX_PUSHCODE_LENGTH)
+		      return state.DoS(100,error("ConnectBlock(): pushcode too long\n"),REJECT_INVALID,"bad-pushcode-length");
+		    int curSize = -1;
+		    if (!pblocktree->ReadCodeSizeIndex(opointpCur.Get1(),curSize)||curSize<0)
+		      return state.DoS(100,error("ConnectBlock(): pushcode invalid size\n"),REJECT_INVALID,"bad-pushcode-invalid-size");
+		    nCodeSize += curSize;
+		    if (nCodeSize + bytecode.size() > MAX_PUSHCODE_SIZE)
+		      return state.DoS(100,error("ConnectBlock(): pushcode total size too large\n"),REJECT_INVALID,"bad-pushcode-size");
+
 		    if (iPart == nPart) {
 		      foundInsertionPoint = true;
 		      opointpMatchPart = opointpCur;
@@ -2640,15 +2659,10 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		    if (!foundInsertionPoint) // to catch the opointpPrev of the insertion point
 		      opointpPrev = opointpCur;
 		    opointpCur = opointpNext;
-		    int curHeight = -1;
-		    if (!pblocktree->ReadCodeHeightIndex(opointpCur.Get1(),curHeight)||curHeight<0)
-		      return state.DoS(100,error("ConnectBlock(): pushcode invalid height\n"),REJECT_INVALID,"bad-pushcode-invalid-height");
-		    if (pindex->nHeight-curHeight > MAX_PUSHCODE_LENGTH)
-		      return state.DoS(100,error("ConnectBlock(): pushcode too long\n"),REJECT_INVALID,"bad-pushcode-length");
 		    iPart++;
 		  }
 
-		  if (!foundInsertionPoint && iPart == nPart) { // if insertion point is at the end
+ 		  if (!foundInsertionPoint && iPart == nPart) { // if insertion point is at the end
 		    LogPrintf("(Out of loop) cur = matchPart\n");
 		    foundInsertionPoint = true;
 		    opointpMatchPart = opointpCur;
@@ -2668,20 +2682,17 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  }
 	
 		  vCH.push_back(std::make_pair(opointp.Get1(),pindex->nHeight));
+		  vCS.push_back(std::make_pair(opointp.Get1(),bytecode.size()));
 		  vPosC.push_back(std::make_pair(opointp.Get1(),posC));
 		}
-		else if (havenPart2) { // replace or delete (what about replace just 1 part?)
+		else { // replace/delete a part or range of parts
+		  LogPrintf("replace a part or range of parts\n");
+		  opointp.Set1(COutPoint(txHash,j));
+		  opointp.Set2(opointp.Get1());
 		  COutPointPair opointpMatch;
 		  opointpMatch.Set1(COutPoint(txMatch.GetCachedHash(),nOutput));
-		  //COutPointPair opointpMatchPart;
-		  //opointpMatchPart.Set1(COutPoint(txMatchPart.GetCachedHash(),nOutputPart));
-		  //opointpMatchPart.Set2(COutPoint(txMatch.GetCachedHash(),nOutput));
-		  //COutPointPair opointpMatchPart2;
-		  //opointpMatchPart2.Set1(COutPoint(txMatchPart2.GetCachedHash(),nOutputPart));
-		  //opointpMatchPart2.Set2(COutPoint(txMatch.GetCachedHash(),nOutput));
+		  opointpMatch.Set2(opointpMatch.Get1());
 		  int opointpMatchHeight = -1;
-		  //int opointpMatchPartHeight = -1;
-		  //int opointpMatchPart2Height = -1;
 		  if (!pblocktree->ReadCodeHeightIndex(opointpMatch.Get1(),opointpMatchHeight))
 		    return state.DoS(100,error("ProcessPushCode(): not referencing a valid output\n"),REJECT_INVALID,"bad-pushcode-output-invalid");
 		  if (opointpMatchHeight < 0)
@@ -2690,55 +2701,81 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  if (depth1 > MAX_PUSHCODE_DEPTH)
 		    return state.DoS(100,error("ProcessPushCode(): depth exceeded\n"),REJECT_INVALID,"bad-pushcode-depth");
 
-		  /*
-		  COutPointPair opointpMatchCur = opointpMatch;
-		  COutPointPair opointpMatchCur2;
-		  bool foundInsertionPoint1 = false;
-		  bool foundInsertionPoint2 = false;
-		  for (int d=0; d<depth2; d++) {
-		    COutPointPair opointpMatchPrev;
-		    if (!pblocktree->ReadCodePrevIndex(opointpMatchCur,opointpMatchPrev))
-		      return state.DoS(100,error("ProcessPushCode(): pushcode part not found\n"),REJECT_INVALID,"bad-pushcode-part-unfound");
-		    vCN.push_back(std::make_pair(COutPointPair(opointpMatchPrev.Get1(),opointpMatch.Get1()),opointpMatchCur));
-		    opointpMatchCur = opointpMatchPrev;
-		    if (opointpMatchCur.Get1() == opointpMatchPart2.Get1()) { // need IsNull?
-		      if (foundInsertionPoint2) { // not sure if this needs to be checked
-			return state.DoS(100,error("ProcessPushCode(): part2 found twice\n"),REJECT_INVALID,"bad-pushcode-part-double");
-		      }
-		      foundInsertionPoint2 = true;
-		      opointpMatchCur2 = opointpMatchCur;
-		    }
-		    if (opointpMatchCur.Get1() == opointpMatchPart.Get1()) { // need IsNull?
-		      foundInsertionPoint1 = true;
-		      break;
-		    }
+		  COutPointPair opointpCur = opointpMatch;
+		  COutPointPair opointpPrev;
+		  while (pblocktree->ReadCodePrevIndex(opointpCur,opointpPrev)) { // go to the start
+		    LogPrintf("(go bwd) opointpCur %s opointpPrev %s\n",opointpCur.ToString(),opointpPrev.ToString());
+ 		    int curHeight = -1;
+		    if (!pblocktree->ReadCodeHeightIndex(opointpCur.Get1(),curHeight)||curHeight<0)
+		      return state.DoS(100,error("ConnectBlock(): pushcode invalid height\n"),REJECT_INVALID,"bad-pushcode-invalid-height");
+		    if (pindex->nHeight-curHeight > MAX_PUSHCODE_LENGTH)
+		      return state.DoS(100,error("ConnectBlock(): pushcode too long\n"),REJECT_INVALID,"bad-pushcode-length");
+		    opointpCur = opointpPrev;
 		  }
-		  if (!(foundInsertionPoint1 && foundInsertionPoint2))
-		    return state.DoS(100,error("ProcessPushCode(): insertion point not found\n"),REJECT_INVALID,"bad-pushcode-insertion-point");
-		  COutPointPair opointpMatchCurPrev;
-		  if (!pblocktree->ReadCodePrevIndex(opointpMatchCur,opointpMatchCurPrev))
-		    return state.DoS(100,error("ProcessPushCode(): pushcode part prev not found\n"),REJECT_INVALID,"bad-pushcode-prev-unfound");	    
-		  COutPointPair opointpMatchCur2Next;
-		  if (!pblocktree->ReadCodeNextIndex(opointpMatchCur2,opointpMatchCur2Next))
-		    return state.DoS(100,error("ProcessPushCode(): pushcode part prev not found\n"),REJECT_INVALID,"bad-pushcode-prev-unfound");
-		  opointp.Set1(COutPoint(txHash,j));*/
+
+		  COutPointPair opointpNext;
+		  opointpPrev = COutPointPair();
+		  COutPointPair opointpNextIP = COutPointPair(); // next for insertion point (right after part 2)
+		  bool foundInsertionPoint = false;
+		  bool foundPart2 = false;
+		  int iPart = 0; // part iterator. Count parts from 0,...,nParts-1
+		  if (!havenPart2) nPart2 = nPart;
+		  int nCodeSize = 0;
+		  while (pblocktree->ReadCodeNextIndex(opointpCur,opointpNext)) { // go from start to end
+		    LogPrintf("(go fwd) opointpCur %s opointpNext %s opointpPrev %s\n",opointpCur.ToString(),opointpNext.ToString(),opointpPrev.ToString());
+		    int curHeight = -1;
+		    if (!pblocktree->ReadCodeHeightIndex(opointpCur.Get1(),curHeight)||curHeight<0)
+		      return state.DoS(100,error("ConnectBlock(): pushcode invalid height\n"),REJECT_INVALID,"bad-pushcode-invalid-height");
+		    if (pindex->nHeight-curHeight > MAX_PUSHCODE_LENGTH)
+		      return state.DoS(100,error("ConnectBlock(): pushcode too long\n"),REJECT_INVALID,"bad-pushcode-length");
+		    if (iPart == nPart) {
+		      foundInsertionPoint = true;
+		      if (vCP.size()>0) vCP.pop_back(); // remove opointpPrev<-opointpCur
+		      if (vCN.size()>0) vCN.pop_back(); // remove opointpPrev->opointpCur
+		    }
+		    if (!foundInsertionPoint || iPart > nPart2) {
+		      int curSize = -1;
+		      if (!pblocktree->ReadCodeSizeIndex(opointpCur.Get1(),curSize)||curSize<0)
+			return state.DoS(100,error("ConnectBlock(): pushcode invalid size\n"),REJECT_INVALID,"bad-pushcode-invalid-size");
+		      nCodeSize += curSize;
+		      if (nCodeSize + bytecode.size() > MAX_PUSHCODE_SIZE)
+			return state.DoS(100,error("ConnectBlock(): pushcode total size too large\n"),REJECT_INVALID,"bad-pushcode-size");
+		      vCP.push_back(std::make_pair(COutPointPair(opointpNext.Get1(),opointp.Get1()),COutPointPair(opointpCur.Get1(),opointp.Get1())));
+		      vCN.push_back(std::make_pair(COutPointPair(opointpCur.Get1(),opointp.Get1()),COutPointPair(opointpNext.Get1(),opointp.Get1())));
+		    }
+		    if (iPart == nPart2) {
+		      foundPart2 = true;
+		      opointpNextIP = opointpNext;
+		    }
+		    if (!foundInsertionPoint) // to catch the opointpPrev of the insertion point
+		      opointpPrev = opointpCur;
+		    opointpCur = opointpNext;		    
+		    iPart++;
+		  }
 		  
-		  /*if (bytecode.size()==0) { // delete (operation)
-		    //vCN.push_back(COutPointPair(opointpMatchPartPrev.Get1(),opointp.Get1()),opointpMatchPart2Next);
-		    //vCP.push_back(COutPointPair(opointpMatchPart2Next.Get1(),opointp.Get1()),opointpMatchPartPrev);
-		    vCH.push_back(std::make_pair(opointp.Get1(),pindex->nHeight));
+		  if (!foundInsertionPoint && iPart == nPart) { // if insertion point is at the end
+		    LogPrintf("(Out of loop) cur = matchPart\n");
+		    foundInsertionPoint = true;
+		    if (vCP.size()>0) vCP.pop_back();
+		    if (vCN.size()>0) vCN.pop_back();
 		  }
-		  else {*/
-		    //vCN.push_back(COutPointPair(opointpMatchPartPrev.Get1(),opointp.Get1()),opointp);
-		  //vCP.push_back(std::make_pair(opointp,opointpMatchCurPrev));
-		  //vCN.push_back(std::make_pair(opointp,opointpMatchCur2Next));
-		    //vCP.push_back(COutPointPair(opointpMatchPart2Next.Get1(),opointp.Get1()),opointp);
+		  
+		  if (!foundInsertionPoint)
+		    return state.DoS(100,error("ConnectBlock(): pushcode insertion point not found\n"),REJECT_INVALID,"bad-pushcode-insertion-point");
+
+		  if (!opointpPrev.IsNull()) {
+		    vCP.push_back(std::make_pair(opointp,COutPointPair(opointpPrev.Get1(),opointp.Get1())));
+		    vCN.push_back(std::make_pair(COutPointPair(opointpPrev.Get1(),opointp.Get1()),opointp));
+		  }
+
+		  if (!opointpNextIP.IsNull()) {
+		    vCP.push_back(std::make_pair(COutPointPair(opointpNextIP.Get1(),opointp.Get1()),opointp));
+		    vCN.push_back(std::make_pair(opointp,COutPointPair(opointpNextIP.Get1(),opointp.Get1())));
+		  }
+		  
 		  vCH.push_back(std::make_pair(opointp.Get1(),pindex->nHeight));
+		  vCS.push_back(std::make_pair(opointp.Get1(),bytecode.size()));
 		  vPosC.push_back(std::make_pair(opointp.Get1(),posC));
-		    //}
-		}
-		else { // not sure if needed
-		  return state.DoS(100,error("ProcessPushCode(): invalid pushcode\n"),REJECT_INVALID,"bad-pushcode");
 		}
 		posC.nTxOffset += (1+bytecode.size()+GetSizeOfCompactSize(bytecode.size()));
 	      }
@@ -2851,6 +2888,8 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 	return state.Abort(_("Failed to write (pushcode) code index"));
       if (!pblocktree->WriteCodeHeightIndex(vCH))
 	return state.Abort(_("Failed to write (pushcode) code-height index"));
+      if (!pblocktree->WriteCodeSizeIndex(vCH))
+	return state.Abort(_("Failed to write (pushcode) code-size index"));
       if (!pblocktree->WriteCodePrevIndex(vCP))
 	return state.Abort(_("Failed to write (pushcode) code-prev index"));
       if (!pblocktree->WriteCodeNextIndex(vCN))
@@ -3330,8 +3369,9 @@ bool CheckBlock(const CBlock& block, CValidationState& state, bool fCheckPOW, bo
 
     // Check timestamp
     int64_t nNow = GetTime();
-    //if (fDebug) LogPrintf("block_delta = %ld\n",block.GetBlockTime()-nNow); // for generating statistics
-    if (block.GetBlockTime() > nNow + 12 * 60) {
+    if (fDebug) LogPrintf("block_delta = %ld\n",block.GetBlockTime()-nNow); // for generating statistics
+    if (fDebug) LogPrintf("block_delta_adj = %ld\n",block.GetBlockTime()-GetAdjustedTime());
+    if (!RegTest() && block.GetBlockTime() > nNow + 12 * 60 || RegTest && block.GetBlockTime() > nNow+60*60) {
       if (block.GetBlockTime() <= GetAdjustedTime() + 2 * 60 * 60) {
 	std::string warning = std::string("'Warning: Block timestamp too far in the future. Please check your clock and be careful of network forks.");
 	CAlert::Notify(warning, true);
@@ -3339,7 +3379,7 @@ bool CheckBlock(const CBlock& block, CValidationState& state, bool fCheckPOW, bo
 	LogPrintf("Warning: Block timestamp too far in the future. Please check your clock and be careful of network forks.");
       }
       return state.Invalid(error("CheckBlock() : block timestamp too far in the future"),
-			   REJECT_INVALID, "time-too-new");
+			     REJECT_INVALID, "time-too-new");
     }
     else {
       nSinceBlockTooFarInFuture++;

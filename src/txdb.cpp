@@ -172,6 +172,10 @@ bool CBlockTreeDB::ReadCodeHeightIndex(const COutPoint &outpoint, int &height) {
   return Read(make_pair(std::string("ch"), outpoint), height);
 }
 
+bool CBlockTreeDB::ReadCodeSizeIndex(const COutPoint &outpoint, int &size) {
+  return Read(make_pair(std::string("cs"), outpoint), size);
+}
+
 bool CBlockTreeDB::ReadCodeNextIndex(const COutPointPair &opointp, COutPointPair &opointpN) {
   return Read(make_pair(std::string("cn"), opointp), opointpN);
 }
@@ -200,6 +204,13 @@ bool CBlockTreeDB::WriteCodeHeightIndex(const std::vector<std::pair<COutPoint, i
     CLevelDBBatch batch;
     for (std::vector<std::pair<COutPoint,int> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
       batch.Write(make_pair(std::string("ch"), it->first), it->second);
+    return WriteBatch(batch);
+}
+
+bool CBlockTreeDB::WriteCodeSizeIndex(const std::vector<std::pair<COutPoint, int> >&vect) {
+    CLevelDBBatch batch;
+    for (std::vector<std::pair<COutPoint,int> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
+      batch.Write(make_pair(std::string("cs"), it->first), it->second);
     return WriteBatch(batch);
 }
 

@@ -65,7 +65,9 @@ public:
   bool ReadCodeIndex(const COutPoint &outpoint, CDiskTxPos &pos);
   bool WriteCodeIndex(const std::vector<std::pair<COutPoint, CDiskTxPos> > &list);
   bool ReadCodeHeightIndex(const COutPoint &outpoint, int &height);
+  bool ReadCodeSizeIndex(const COutPoint &outpoint, int &size);
   bool WriteCodeHeightIndex(const std::vector<std::pair<COutPoint, int> > &list);
+  bool WriteCodeSizeIndex(const std::vector<std::pair<COutPoint, int> > &list);
   bool ReadCodeNextIndex(const COutPointPair &outpointp, COutPointPair &opointpN);
   bool WriteCodeNextIndex(const std::vector<std::pair<COutPointPair, COutPointPair> > &list);
   bool ReadCodePrevIndex(const COutPointPair &outpointp, COutPointPair &opointpP);
