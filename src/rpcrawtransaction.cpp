@@ -108,6 +108,7 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, Object& entry)
             CBlockIndex* pindex = (*mi).second;
             if (chainActive.Contains(pindex))
             {
+	      entry.push_back(Pair("nFee",pindex->nFee[tx.GetCachedHash()]));
                 entry.push_back(Pair("confirmations", 1 + chainActive.Height() - pindex->nHeight));
                 entry.push_back(Pair("time", (int64_t)pindex->nTime));
                 entry.push_back(Pair("blocktime", (int64_t)pindex->nTime));
@@ -907,10 +908,13 @@ Value pushcode(const Array& params, bool fHelp) {
   valtype vTxid;
   if (txid)
     vTxid = ParseHex(txid);
-  
+
+  std::vector<valtype> codes;
   valtype vCode;
-  if (code)
+  if (code) {
     vCode = ParseHex(code);
+    codes.push_back(vCode);
+  }
 
   if (havenOutput && nOutput<0 || havenPart && nPart<0 || havenPart2 && nPart2<0)
     throw runtime_error("numeric parameters must be >= 0");
@@ -922,7 +926,7 @@ Value pushcode(const Array& params, bool fHelp) {
   push.nOutput = nOutput;
   push.nPart = nPart;
   push.nPart2 = nPart2;
-  push.code = vCode;
+  push.codes = codes;
 
   CWalletTx wtx;
   EnsureWalletIsUnlocked();
@@ -930,14 +934,173 @@ Value pushcode(const Array& params, bool fHelp) {
   return wtx.GetHash().GetHex();
 }
 
+Value pushcodefile(const Array& params, bool fHelp) {
+  if (fHelp || params.size() < 1 || params.size() > 6)
+    throw runtime_error(
+			"pushcodefile \"param_1\" \"param_2\" ... \"param_n\" for 1<=n<=6\n"
+			"\nSubmits a transaction containing multiple pushcode outputs to local node"
+			"\nand network. Max file size: 25.47kB not including new line characters,"
+			"\nand less than 200 lines."
+			"\nArguments:\n"
+			"1. \"param_1\"    (string) First parameter\n"
+			"2. \"param_2\"    (string) Second parameter\n"
+			".\n"
+			".\n"
+			".\n"
+			"n. \"filename\"       (string) The file with code to insert\n"
+			"\nResult:\n"
+			"\"hex\"             (string) The transaction hash in hex\n"
+			"\nExamples:\n"
+			"\nPush code to the end of previously added code, with given tx hash and output number\n"
+			+ HelpExampleCli("pushcode","\"3f044f417239b90e58f22982b3d2ed774e33cc7106cc4ad8776ec6436b27927d\" \"2\" \"myFileName\"")
+			);
+
+  int pushtype = -1;
+  const char* txid = 0;
+  int nOutput = -1;
+  bool havenOutput = false;
+  int nPart = -1;
+  bool havenPart = false;
+  int nPart2 = -1;
+  bool havenPart2 = false;
+  const char* filename = 0;
+
+  int nParams = params.size();
+
+  for (int i=0; i<nParams-1; i++) {
+    std::string sParam = params[i].get_str();
+    if (sParam.length() < 64) {
+      int64_t iParam = atoi(sParam);
+      if (iParam < 0)
+	throw runtime_error("numeric parameters must be >= 0");
+    }
+  }
+  
+  if (nParams == 2) {
+    nOutput = atoi(params[0].get_str());
+    havenOutput = true;
+  }
+  else if (nParams == 3) {
+    txid = params[0].get_str().c_str();
+    nOutput = atoi(params[1].get_str());
+    havenOutput = true;
+  }
+  else if (nParams == 4) {
+    pushtype = atoi(params[0].get_str());
+    int i = 1;
+    if (pushtype & PUSHTYPE_TX) {
+      txid = params[i].get_str().c_str();
+      i++;      
+    }
+    nOutput = atoi(params[i].get_str());
+    havenOutput = true;
+    if (i<2) {
+      nPart = atoi(params[2].get_str());
+      havenPart = true;
+    }
+  }
+  else if (nParams == 5) {
+    pushtype = atoi(params[0].get_str());
+    int i = 1;
+    if (pushtype & PUSHTYPE_TX) {
+      txid = params[i].get_str().c_str();
+      i++;
+    }
+    nOutput = atoi(params[i].get_str());
+    havenOutput = true;
+    i++;
+    if (pushtype & PUSHTYPE_PART1) {
+      nPart = atoi(params[i].get_str());
+      havenPart = true;
+      i++;
+    }
+    if (i<3) {
+      throw runtime_error("invalid pushcode format");
+    }
+    else if (i==3) {
+      nPart2 = atoi(params[3].get_str());
+      havenPart2 = true;
+    }
+  }
+  else if (nParams == 6) {
+    pushtype = atoi(params[0].get_str());
+    txid = params[1].get_str().c_str();
+    nOutput = atoi(params[2].get_str());
+    havenOutput = true;
+    nPart = atoi(params[3].get_str());
+    havenPart = true;
+    nPart2 = atoi(params[4].get_str());
+    havenPart2 = true;
+  }  
+
+  valtype vTxid;
+  if (txid)
+    vTxid = ParseHex(txid);
+  
+  if (havenOutput && nOutput<0 || havenPart && nPart<0 || havenPart2 && nPart2<0)
+    throw runtime_error("numeric parameters must be >= 0");
+
+  std::vector<valtype> codes;
+  filename = params[nParams-1].get_str().c_str();
+  LogPrintf("Trying to open file %s\n",filename);
+  FILE* fp = fopen(filename,"r");
+  if (!fp) throw runtime_error("failed to open file for reading");
+  char buffer [129];
+  //printf("file contents:\n");
+  while (fgets(buffer,129,fp)) {
+    if (codes.size()>198) throw runtime_error("file too large");
+    int buflen = strlen(buffer);
+    if (buflen<=0) continue;
+    if (buffer[buflen-1]=='\n') {
+      if (buflen==1) continue;
+      buffer[buflen-1] = 0;
+      buflen--;
+    }
+    valtype code;
+    for (int i=0; i<buflen;i++) {
+      code.push_back((unsigned char)(buffer[i]));
+    }
+    codes.push_back(code);
+    //printf("%s\n",buffer);
+    //printf("%s\n",HexStr(code).c_str());
+  }
+  fclose(fp);
+
+  CodePush push;
+  push.nParams = nParams;
+  push.pushtype = pushtype;
+  push.txid = vTxid;
+  push.nOutput = nOutput;
+  push.nPart = nPart;
+  push.nPart2 = nPart2;
+  push.codes = codes;
+
+  CWalletTx wtx;
+  EnsureWalletIsUnlocked();
+  string strError = pwalletMain->SendMoneyToNoDestination(wtx,0,&push);
+  return wtx.GetHash().GetHex();
+
+}
+
+std::string code_decode (valtype code, std::string encoding) {
+  std::string out;
+  if (encoding=="ascii" || encoding=="ASCII") {
+    for (int i=0; i<code.size(); i++)
+      out.push_back((char)(code[i]));
+    return out;
+  }
+  return HexStr(code);
+}
+
 Value getcode(const Array& params, bool fHelp) {
-  if (fHelp || params.size() != 2)
+  if (fHelp || params.size() < 2 || params.size() > 3)
     throw runtime_error(
 			"getcode \"txid\" nOutput"
 			"\nGets code associated with a PUSHCODE output.\n"
 			"\nArguments:\n"
 			"1. \"txid\"    (string) The txid containing the code push\n"
 			"2. nOutput    (numeric) The index for the output with the code push\n"
+			"3. encoding (string,optional) Decode according to this encoding\n"
 			"\nResult:\n"
 			"\"hex\"             (string) The full code referenced by the output\n"
 			"\nExamples:\n"
@@ -946,6 +1109,10 @@ Value getcode(const Array& params, bool fHelp) {
 
   uint256 nTxid = ParseHashV(params[0], "parameter 1");
   const int nOutput = params[1].get_int();
+  const char* encoding = 0;
+  if (params.size()>2) {
+    encoding = params[2].get_str().c_str();
+  }
 
   std::vector<COutPoint> vOpoint;
   
@@ -977,7 +1144,14 @@ Value getcode(const Array& params, bool fHelp) {
     } catch (std::exception &e) {
       throw runtime_error("getcode: Deserialize or I/O error");
     }
-    codeHex.append(HexStr(code)+"\n");
+    std::string sCode;
+    if (encoding) {
+      sCode = code_decode(code,encoding);
+    }
+    else {
+      sCode = HexStr(code);
+    }
+    codeHex.append(sCode+"\n");
   }
 
   COutPointPair opointpNext;
@@ -998,7 +1172,14 @@ Value getcode(const Array& params, bool fHelp) {
     } catch (std::exception &e) {
       throw runtime_error("getcode: Deserialize or I/O error");
     }
-    codeHex.append(HexStr(code)+"\n");
+    std::string sCode;
+    if (encoding) {
+      sCode = code_decode(code,encoding);
+    }
+    else {
+      sCode = HexStr(code);
+    }
+    codeHex.append(sCode+"\n");
   }
 
   return codeHex;

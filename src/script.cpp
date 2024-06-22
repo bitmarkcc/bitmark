@@ -1635,10 +1635,12 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
 	  if (opcode2 == OP_PC_PARAMS) {
 	    int nParams = 0;
 	    bool lastSizeZero = false;
+	    int lastSize = -1;
 	    while (vch1.size()>0 || opcode1==OP_0 || opcode1>=OP_1 && opcode1<=OP_16) { //todo check if op_0 is correct
 	      nParams++;
 	      if (nParams > 6)
 		break;
+	      lastSize = vch1.size();
 	      if (vch1.size()>0) {
 		lastSizeZero = false;
 		vSolutionsRet.push_back(vch1);
@@ -1662,6 +1664,9 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
 	    if (lastSizeZero) { // bytecode is empty (delete operation)
 	      vSolutionsRet.pop_back();
 	      vSolutionsRet.push_back(vector<unsigned char>());
+	    }
+	    else if (lastSize>MAX_CODE_RELAY) {
+	      break;
 	    }
 	    if (!script2.GetOp(pc2, opcode2, vch2))
 		break;

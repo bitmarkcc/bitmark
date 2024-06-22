@@ -191,6 +191,7 @@ extern json_spirit::Value decodescript(const json_spirit::Array& params, bool fH
 extern json_spirit::Value signrawtransaction(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value sendrawtransaction(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value pushcode(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value pushcodefile(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value getcode(const json_spirit::Array& params, bool fHelp);
 
 extern json_spirit::Value getblockcount(const json_spirit::Array& params, bool fHelp); // in rpcblockchain.cpp

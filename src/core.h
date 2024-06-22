@@ -68,7 +68,7 @@ public:
     return (a.hash < b.hash || (a.hash == b.hash && a.n < b.n));
   }
   
-  friend bool operator==(const CGOutPoint& a, const CGOutPoint& b)
+  friend bool operator==(const CGOutPoint<BITS>& a, const CGOutPoint<BITS>& b)
   {
     return (a.hash == b.hash && a.n == b.n);
   }
@@ -121,6 +121,10 @@ public:
   void Set (CGOutPoint<BITS> p1, CGOutPoint<BITS> p2) { opoint1 = p1; opoint2 = p2;}
   CGOutPoint<BITS> Get1() { return opoint1; }
   CGOutPoint<BITS> Get2() { return opoint2; }
+
+  friend bool operator==(const CGOutPointPair<BITS>& a, const CGOutPointPair<BITS>& b) {
+    return (a.opoint1 == b.opoint1 && a.opoint2 == b.opoint2);
+  }
 
   std::string ToString() {
     return "("+Get1().ToString()+","+Get2().ToString()+")";
@@ -919,6 +923,8 @@ public:
     // Note: in a potential headers-first mode, this number cannot be relied upon
     unsigned int nTx;
 
+  std::map<uint256,int64_t> nFee; // to keep track of fee for each tx
+  
     // (memory only) Number of transactions in the chain up to and including this block
     unsigned int nChainTx; // change to 64-bit type when necessary; won't happen before 2030
 
@@ -951,6 +957,7 @@ public:
         nUndoPos = 0;
         nChainWork = 0;
         nTx = 0;
+	nFee.clear();
         nChainTx = 0;
         nStatus = 0;
         nSequenceId = 0;
@@ -1215,6 +1222,7 @@ public:
 	READWRITE(VARINT(nMoneySupply));
 	READWRITE(VARINT(nStatus));
 	READWRITE(VARINT(nTx));
+	READWRITE(nFee);
 	if (nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO))
 	  READWRITE(VARINT(nFile));
 	if (nStatus & BLOCK_HAVE_DATA)
@@ -1269,6 +1277,7 @@ public:
 	READWRITE(VARINT(nMoneySupply));
 	READWRITE(VARINT(nStatus));
 	READWRITE(VARINT(nTx));
+	READWRITE(nFee);
 	if (nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO))
 	  READWRITE(VARINT(nFile));
 	if (nStatus & BLOCK_HAVE_DATA)
@@ -1322,6 +1331,7 @@ public:
 	READWRITE(VARINT(nMoneySupply));
 	READWRITE(VARINT(nStatus));
 	READWRITE(VARINT(nTx));
+	READWRITE(nFee);
 	if (nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO))
 	  READWRITE(VARINT(nFile));
 	if (nStatus & BLOCK_HAVE_DATA)

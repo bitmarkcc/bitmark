@@ -167,9 +167,11 @@ bool IsInitialBlockDownload();
 std::string GetWarnings(std::string strFor);
 /** Retrieve a transaction (from memory pool, or from disk, if possible) */
 bool GetTransaction(const uint256 &hash, CTransaction &tx, uint256 &hashBlock, bool fAllowSlow = false);
-bool ReadCodeIndex(COutPoint opoint, CDiskTxPos &pos);
-bool ReadCodePrevIndex(COutPointPair opointp, COutPointPair &opointpPrev);
-bool ReadCodeNextIndex(COutPointPair opointp, COutPointPair &opointpNext);
+bool ReadCodeIndex(const COutPoint &opoint, CDiskTxPos &pos);
+bool ReadCodePrevIndex(const COutPointPair &opointp, COutPointPair &opointpPrev, std::vector<std::pair<COutPointPair, COutPointPair>>* pvCP = 0);
+bool ReadCodeNextIndex(const COutPointPair &opointp, COutPointPair &opointpNext, std::vector<std::pair<COutPointPair, COutPointPair>>* pvCN = 0);
+bool ReadCodeHeightIndex(const COutPoint &outpoint, int &height, std::vector<std::pair<COutPoint, int>>* pvCH = 0);
+bool ReadCodeSizeIndex(const COutPoint &outpoint, int &size, std::vector<std::pair<COutPoint, int>>* pvCS = 0);
 /** Find the best known block, and make it the tip of the block chain */
 bool ActivateBestChain(CValidationState &state);
 bool onFork(const CBlockIndex* pindex);

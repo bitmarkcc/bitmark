@@ -314,21 +314,21 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     string reason;
     BOOST_CHECK(IsStandardTx(t, reason));
 
-    t.vout[0].nValue = 501; // dust
+    t.vout[0].nValue = 51; // dust
     BOOST_CHECK(!IsStandardTx(t, reason));
 
-    t.vout[0].nValue = 601; // not dust
+    t.vout[0].nValue = 61; // not dust
     BOOST_CHECK(IsStandardTx(t, reason));
 
     t.vout[0].scriptPubKey = CScript() << OP_1;
     BOOST_CHECK(!IsStandardTx(t, reason));
 
-    // 80-byte TX_NULL_DATA (standard, previously 40)
-    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38503b093fa324e9f4df91bf503bb71c77fad8aac3b62dd0c3fecb01e42626899ca69ec6b9225dccc2");
+    // 128-byte TX_NULL_DATA (standard, previously 40)
+    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38503b093fa324e9f4df91bf503bb71c77fad8aac3b62dd0c3fecb01e42626899ca69ec6b9225dccc26ed46a6f7468690f2426a2f5938db3a32863dc93e0f8fb034ce5441b41b9d660c020d9c23fcc5749b83e41f59454045c");
     BOOST_CHECK(IsStandardTx(t, reason));
 
     // 81-byte TX_NULL_DATA (non-standard)
-    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38503b093fa324e9f4df91bf503bb71c77fad8aac3b62dd0c3fecb01e42626899ca69ec6b9225dccc200");
+    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38503b093fa324e9f4df91bf503bb71c77fad8aac3b62dd0c3fecb01e42626899ca69ec6b9225dccc200c020d9c23fcc5749b83e41f59454045c6ed46a6f7468690f2426a2f5938db3a32863dc93e0f8fb034ce5441b41b9d660");
     BOOST_CHECK(!IsStandardTx(t, reason));
 
     // TX_NULL_DATA w/o PUSHDATA
@@ -337,7 +337,7 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     BOOST_CHECK(IsStandardTx(t, reason));
 
     // Only one TX_NULL_DATA permitted in all cases
-    t.vout.resize(2);
+    /*t.vout.resize(2);
     t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38");
     t.vout[1].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38");
     BOOST_CHECK(!IsStandardTx(t, reason));
@@ -348,7 +348,7 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
 
     t.vout[0].scriptPubKey = CScript() << OP_RETURN;
     t.vout[1].scriptPubKey = CScript() << OP_RETURN;
-    BOOST_CHECK(!IsStandardTx(t, reason));
+    BOOST_CHECK(!IsStandardTx(t, reason));*/
 }
 
 BOOST_AUTO_TEST_SUITE_END()

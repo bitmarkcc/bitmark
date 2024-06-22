@@ -1398,6 +1398,8 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
                     nFeeRet += nMoveToFee;
                 }
 
+		int changePos = -1;
+		
                 if (nChange > 0)
                 {
                     // Fill a vout to ourself
@@ -1441,14 +1443,15 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
                     {
                         // Insert change txn at random position:
                         vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
-			LogPrintf("insert change txn at position %d\n",position-wtxNew.vout.begin());
+			changePos = position-wtxNew.vout.begin();
+			LogPrintf("insert change txn at position %d\n",changePos);
                         wtxNew.vout.insert(position, newTxOut);
                     }
                 }
                 else
                     reservekey.ReturnKey();
 
-		int dataPosition = -1;
+		int dataPos = -1;
 		if (data) {
 		  CScript scriptData;
 		  int data_len = strlen(data);
@@ -1460,95 +1463,88 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		  free(data_hex);
 		  CTxOut newTxOut(0,scriptData);
 		  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
-		  dataPosition = position - wtxNew.vout.begin();
-		  LogPrintf("dataPosition = %d\n",dataPosition);
+		  dataPos = position - wtxNew.vout.begin();
+		  LogPrintf("dataPos = %d\n",dataPos);
 		  wtxNew.vout.insert(position, newTxOut);
+		  if (dataPos == changePos) {
+		    changePos++;
+		  }
 		}
 
 		int pushPos = -1;
+		vector<CTxOut>::iterator itPushPos;
 		if (pPush) {
-		  CScript scriptPush;
-		  if (pPush->nParams == 1) {
-		    scriptPush = CScript() << pPush->code << OP_PUSHCODE;
-		  }
-		  else if (pPush->nParams == 2) {
-		    scriptPush = CScript() << pPush->nOutput << pPush->code << OP_PUSHCODE;
-		  }
-		  else if (pPush->nParams == 3) {
-		    scriptPush = CScript() << pPush->txid << pPush->nOutput << pPush->code << OP_PUSHCODE;
-		  }
-		  else if (pPush->nParams == 4) {
-		    if (pPush->pushtype & PUSHTYPE_TX) {
-		      scriptPush = CScript() << pPush->pushtype << pPush->txid << pPush->nOutput << pPush->code << OP_PUSHCODE;
+		  for (int i=0; i<pPush->codes.size(); i++) {
+
+		    LogPrintf("code iter i=%d\n",i);
+		    
+		    valtype code = pPush->codes[i];
+		    int nParams = 2; // simple pushcode referencing previous output of same tx
+		    if (i == 0) {
+		      nParams = pPush->nParams;
+		      itPushPos = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
+		      pushPos = itPushPos - wtxNew.vout.begin();
+		      LogPrintf("pushPos = %d\n",pushPos);
+		    }
+		  
+		    CScript scriptPush;
+		    if (nParams == 1) {
+		      scriptPush = CScript() << code << OP_PUSHCODE;
+		    }
+		    else if (nParams == 2) {
+		      if (i == 0) {
+			scriptPush = CScript() << pPush->nOutput << code << OP_PUSHCODE;
+		      }
+		      else {
+			scriptPush = CScript() << pushPos << code << OP_PUSHCODE;
+		      }
+		    }
+		    else if (nParams == 3) {
+		      scriptPush = CScript() << pPush->txid << pPush->nOutput << code << OP_PUSHCODE;
+		    }
+		    else if (nParams == 4) {
+		      if (pPush->pushtype & PUSHTYPE_TX) {
+			scriptPush = CScript() << pPush->pushtype << pPush->txid << pPush->nOutput << code << OP_PUSHCODE;
+		      }
+		      else {
+			scriptPush = CScript() << pPush->pushtype << pPush->nOutput << pPush->nPart << code << OP_PUSHCODE;
+		      }
+		    }
+		    else if (nParams == 5) {
+		      scriptPush = CScript() << pPush->pushtype;
+		      if (pPush->pushtype & PUSHTYPE_TX) {
+			scriptPush <<= pPush->txid;
+		      }
+		      scriptPush <<= pPush->nOutput;
+		      if (pPush->pushtype & PUSHTYPE_PART1) {
+			scriptPush <<= pPush->nPart;
+		      }
+		      if (pPush->nPart2 >= 0)
+			scriptPush <<= pPush->nPart2;
+		      scriptPush <<= code;
+		      scriptPush <<= OP_PUSHCODE;
+		    }
+		    else if (nParams == 6) {
+		      scriptPush = CScript() << pPush->pushtype << pPush->txid << pPush->nOutput << pPush->nPart << pPush->nPart2 << code << OP_PUSHCODE;
+		    }
+		    if (i>0) {
+		      LogPrintf("i>0 so increment pushpos\n");
+		      pushPos = wtxNew.vout.size();
+		      CTxOut newTxOut(0,scriptPush);
+		      LogPrintf("do push_back\n");
+		      wtxNew.vout.push_back(newTxOut);
+		      LogPrintf("did push_back\n");
 		    }
 		    else {
-		      scriptPush = CScript() << pPush->pushtype << pPush->nOutput << pPush->nPart << pPush->code << OP_PUSHCODE;
+		      CTxOut newTxOut(0,scriptPush);
+		      LogPrintf("do insert to wtxNew.vout pos %d\n",pushPos);
+		      wtxNew.vout.insert(itPushPos, newTxOut);
+		      LogPrintf("did insert to wtxNew.vout\n");
 		    }
 		  }
-		  else if (pPush->nParams == 5) {
-		    LogPrintf("wallet pushcode with nParams 5\n");
-		    scriptPush = CScript() << pPush->pushtype;
-		    if (pPush->pushtype & PUSHTYPE_TX) {
-		      scriptPush <<= pPush->txid;
-		    }
-		    scriptPush <<= pPush->nOutput;
-		    if (pPush->pushtype & PUSHTYPE_PART1) {
-		      scriptPush <<= pPush->nPart;
-		    }
-		    if (pPush->nPart2 >= 0)
-		      scriptPush <<= pPush->nPart2;
-		    scriptPush <<= pPush->code;
-		    scriptPush <<= OP_PUSHCODE;
-		  }
-		  else if (pPush->nParams == 6) {
-		    scriptPush = CScript() << pPush->pushtype << pPush->txid << pPush->nOutput << pPush->nPart << pPush->nPart2 << pPush->code << OP_PUSHCODE;
-		  }
-		  CTxOut newTxOut(0,scriptPush);
-		  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
-		  pushPos = position - wtxNew.vout.begin();
-		  LogPrintf("pushPos = %d\n",pushPos);
-		  wtxNew.vout.insert(position, newTxOut);
 		}
 
-		/*if (comment) {
-		  vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
-		  int commentPosition = position-wtxNew.vout.begin();
-		  LogPrintf("comment position = %d\n",commentPosition);
-		  if (commentPosition <= dataPosition) {
-		    dataPosition++;
-		    LogPrintf("change data position to %d\n",dataPosition);
-		  }
-		  CScript scriptComment;
-		  int commentLen = strlen(comment);
-		  char * commentHex = (char *)malloc(commentLen*2+1);
-		  for (int i=0; i<commentLen; i++) {
-		    sprintf(commentHex+2*i,"%02x",comment[i]&0xff);
-		  }
-		  if (data && !txid && nOutput == -1) {
-		    LogPrintf("set nOutput to dataPosition\n");
-		    nOutput = dataPosition;
-		  }
-		  LogPrintf("nOutput = %d\n",nOutput);
-		  if (!txid and nOutput < 0) {
-		    LogPrintf("scriptComment variant 1\n");
-		    scriptComment = CScript() << ParseHex(commentHex) << OP_COMMENT;
-		  }
-		  else if (!txid) {
-		    LogPrintf("scriptComment variant 2\n");
-		    scriptComment = CScript() << (int64_t)nOutput << ParseHex(commentHex) << OP_COMMENT;
-		  }
-		  else if (nOutput < 0) {
-		    LogPrintf("scriptComment variant 3\n");
-		    scriptComment = CScript() << ParseHex(txid) << ParseHex(commentHex) << OP_COMMENT;
-		  }
-		  else {
-		    LogPrintf("scriptComment variant 4\n");
-		    scriptComment = CScript() << ParseHex(txid) << (int64_t)nOutput << ParseHex(commentHex) << OP_COMMENT;
-		  }
-		  LogPrintf("scriptComment = %s nOutput = %d\n",HexStr(scriptComment),nOutput);
-		  CTxOut newTxOut(0,scriptComment);
-		  wtxNew.vout.insert(position, newTxOut);
-		  }*/
+		LogPrintf("CreateTransaction: done with vout\n");
 
                 // Fill vin
                 BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)

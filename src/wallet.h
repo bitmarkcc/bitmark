@@ -29,7 +29,7 @@ extern int64_t nTransactionFee;
 extern bool bSpendZeroConfChange;
 
 // -paytxfee default
-static const int64_t DEFAULT_TRANSACTION_FEE = 0;
+static const int64_t DEFAULT_TRANSACTION_FEE = 1; // 1 satoshi
 // -paytxfee will warn if called with a higher fee than this amount (in satoshis) per KB
 static const int nHighTransactionFeeWarning = 0.01 * COIN;
 
@@ -58,7 +58,7 @@ struct CodePush {
   int nOutput;
   int nPart;
   int nPart2;
-  valtype code;
+  std::vector<valtype> codes;
 };
 
 /** A key pool entry */
