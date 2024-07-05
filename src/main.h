@@ -71,7 +71,7 @@ static const unsigned int MAX_PUSHCODE_PART_DEPTH = 525600;
 /** Max length of code (in terms of block height), from first push to last push (128 years) */
 static const unsigned int MAX_PUSHCODE_LENGTH = 33638400;
 /** Max size of code in bytes (no limit for now) */
-static const int64_t MAX_PUSHCODE_SIZE = std::numeric_limits<int64_t>::max;
+static const int64_t MAX_PUSHCODE_SIZE = std::numeric_limits<int64_t>::max();
 
 #ifdef USE_UPNP
 static const int fHaveUPnP = true;
