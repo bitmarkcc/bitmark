@@ -64,14 +64,14 @@ static const int DEFAULT_SCRIPTCHECK_THREADS = 0;
 static const int MAX_BLOCKS_IN_TRANSIT_PER_PEER = 128;
 /** Timeout in seconds before considering a block download peer unresponsive. */
 static const unsigned int BLOCK_DOWNLOAD_TIMEOUT = 60;
-/** Max depth of pushcode branch referenced (2 year) */
-static const unsigned int MAX_PUSHCODE_DEPTH = 525600;
-/** Max depth, relative to branch, of pushcode part referenced (2 year) */
+/** Max depth of pushcode branch referenced (128 years) */
+static const unsigned int MAX_PUSHCODE_DEPTH = 33638400;
+/** Max depth, relative to branch, of pushcode part referenced (2 years) (not used now)*/
 static const unsigned int MAX_PUSHCODE_PART_DEPTH = 525600;
-/** Max length of code (in terms of block height), from first push to last push (4 year) */
-static const unsigned int MAX_PUSHCODE_LENGTH = 1051200;
-/** Max size of code in bytes (80 MB) */
-static const unsigned int MAX_PUSHCODE_SIZE = 80000000;
+/** Max length of code (in terms of block height), from first push to last push (128 years) */
+static const unsigned int MAX_PUSHCODE_LENGTH = 33638400;
+/** Max size of code in bytes (no limit for now) */
+static const int64_t MAX_PUSHCODE_SIZE = std::numeric_limits<int64_t>::max;
 
 #ifdef USE_UPNP
 static const int fHaveUPnP = true;

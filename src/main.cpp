@@ -2581,7 +2581,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		    opointpCur = opointpPrev;
 		  }
 		  COutPointPair opointpNext;
-		  int nCodeSize = 0;
+		  int64_t nCodeSize = 0;
 		  while (ReadCodeNextIndex(opointpCur,opointpNext,&vCN)) { // go from start to end
 		    LogPrintf("(go fwd) opointpCur %s opointpNext %s\n",opointpCur.ToString(),opointpNext.ToString());
 		    int curHeight = -1;
@@ -2640,7 +2640,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  bool foundInsertionPoint = false;
 		  int iPart = 0; // part iterator. Count parts from 0,...,nParts-1
 		  COutPointPair opointpMatchPart;
-		  int nCodeSize = 0;
+		  int64_t nCodeSize = 0;
 		  while (ReadCodeNextIndex(opointpCur,opointpNext,&vCN)) { // go from start to end
 		    LogPrintf("(go fwd) opointpCur %s opointpNext %s opointpPrev %s\n",opointpCur.ToString(),opointpNext.ToString(),opointpPrev.ToString());
 		    int curHeight = -1;
@@ -2727,7 +2727,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 		  bool foundPart2 = false;
 		  int iPart = 0; // part iterator. Count parts from 0,...,nParts-1
 		  if (!havenPart2) nPart2 = nPart;
-		  int nCodeSize = 0;
+		  int64_t nCodeSize = 0;
 		  while (ReadCodeNextIndex(opointpCur,opointpNext,&vCN)) { // go from start to end
 		    LogPrintf("(go fwd) opointpCur %s opointpNext %s opointpPrev %s\n",opointpCur.ToString(),opointpNext.ToString(),opointpPrev.ToString());
 		    int curHeight = -1;
