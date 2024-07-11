@@ -1,0 +1,30 @@
+Source: bitmark-qt
+Maintainer: AK <ak@xmark.cc>
+Section: net
+Priority: optional
+Standards-Version: 4.6.2
+Build-Depends: debhelper-compat (= 13),
+	       libssl-dev,
+	       libboost-all-dev,
+	       libminiupnpc-dev,
+	       libsodium-dev,
+	       libqrencode-dev,
+	       libqt5gui5,
+	       libqt5dbus5,
+	       qttools5-dev,
+	       qttools5-dev-tools
+
+Package: bitmark-qt
+Architecture: any
+Depends: libssl3,
+	 libboost-filesystem-dev,
+	 libboost-program-options-dev,
+	 libboost-thread-dev,
+	 libboost-chrono-dev,
+	 libboost-test-dev,
+	 libminiupnpc-dev,
+	 libsodium-dev,
+	 libqt5gui5,
+	 libqt5dbus5,
+	 libqrencode-dev	 
+Description: P2P cryptocurrency

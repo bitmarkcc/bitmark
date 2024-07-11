@@ -360,6 +360,12 @@ QT_FORMS_H=$(join $(dir $(QT_FORMS_UI)),$(addprefix ui_, $(notdir $(QT_FORMS_UI:
 #locale/foo.ts -> locale/foo.qm
 QT_QM=$(QT_TS:.ts=.qm)
 
+icondir = $(datadir)/pixmaps
+utildir = $(datadir)/applications
+
+dist_icon_DATA = $(top_srcdir)/share/pixmaps/bitmark256.png
+dist_util_DATA = $(top_srcdir)/share/bitmark-qt.desktop
+
 .PHONY: FORCE
 .SECONDARY: $(QT_QM)
 
