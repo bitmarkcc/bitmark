@@ -307,7 +307,7 @@ Försök igen.</translation>
         <translation type="unfinished">Belopp</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Ange en Bitcoin-adress (t.ex. %1)</translation>
     </message>
     <message>
@@ -1446,7 +1446,7 @@ Om den här plånboken innehåller lösbara</translation>
         <translation type="unfinished">Nyligen gjorda transaktioner visas inte korrekt och därför kan din plånboks saldo visas felaktigt. Denna information kommer att visas korrekt så snart din plånbok har synkroniserats med Bitcoin-nätverket enligt informationen nedan.</translation>
     </message>
     <message>
-        <source>Attempting to spend bitcoins that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
+        <source>Attempting to spend bitmarks that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
         <translation type="unfinished">Att försöka spendera bitcoin som påverkas av transaktioner som ännu inte visas kommer inte accepteras av nätverket.</translation>
     </message>
     <message>

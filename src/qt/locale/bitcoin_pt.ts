@@ -319,7 +319,7 @@ A assinatura só é possível com endereços do tipo "legado".</translation>
         <translation type="unfinished">Quantia</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Introduza um endereço Bitcoin (ex. %1)</translation>
     </message>
     <message>
@@ -1482,7 +1482,7 @@ O processo de migração criará uma cópia de segurança da carteira antes da m
         <translation type="unfinished">As transações recentes podem ainda não ser visíveis e, por isso, o saldo da sua carteira pode estar incorreto. Esta informação estará correta assim que a sua carteira terminar a sincronização com a rede bitcoin, conforme detalhado abaixo.</translation>
     </message>
     <message>
-        <source>Attempting to spend bitcoins that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
+        <source>Attempting to spend bitmarks that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
         <translation type="unfinished">A rede não aceitará tentativas de gastar bitcoins afetados por transações que ainda não foram mostradas.</translation>
     </message>
     <message>

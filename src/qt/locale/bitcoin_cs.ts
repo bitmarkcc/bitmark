@@ -294,7 +294,7 @@ Signing is only possible with addresses of the type 'legacy'.</source>
         <translation type="unfinished">Částka</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Zadej bitcoinovou adresu (např. %1)</translation>
     </message>
     <message>
@@ -1407,7 +1407,7 @@ Signing is only possible with addresses of the type 'legacy'.</source>
         <translation type="unfinished">Nedávné transakce ještě nemusí být vidět, takže stav tvého účtu nemusí být platný. Jakmile se však tvá peněženka dosynchronizuje s bitcoinovou sítí (viz informace níže), tak už bude stav správně.</translation>
     </message>
     <message>
-        <source>Attempting to spend bitcoins that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
+        <source>Attempting to spend bitmarks that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
         <translation type="unfinished">Utrácení bitcoinů, které už utratily zatím nezobrazené transakce, nebude bitcoinovou sítí umožněno.</translation>
     </message>
     <message>
@@ -4222,7 +4222,7 @@ u chybět či být nesprávné.
 
 The wallet might have been tampered with or created with malicious intent.
 </source>
-        <translation type="unfinished">Nalezena neočekávaná starší položka v deskriptorové peněžence. Načítání peněženky %s 
+        <translation type="unfinished">Nalezena neočekávaná starší položka v deskriptorové peněžence. Načítání peněženky %s
 
 Peněženka mohla být zfalšována nebo vytvořena se zlým úmyslem.
 </translation>

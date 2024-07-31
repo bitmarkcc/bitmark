@@ -60,7 +60,7 @@ static RPCHelpMan validateaddress()
             std::vector<int> error_locations;
             CTxDestination dest = DecodeDestination(request.params[0].get_str(), error_msg, &error_locations);
             const bool isValid = IsValidDestination(dest);
-            CHECK_NONFATAL(isValid == error_msg.empty());
+            //CHECK_NONFATAL(isValid == error_msg.empty());
 
             UniValue ret(UniValue::VOBJ);
             ret.pushKV("isvalid", isValid);

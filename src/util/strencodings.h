@@ -23,6 +23,12 @@
 #include <type_traits>
 #include <vector>
 
+#define ARRAYLEN(array) (sizeof(array) / sizeof((array)[0]))
+#define BEGIN(a) ((char*)&(a))
+#define END(a) ((char*)&((&(a))[1]))
+#define UBEGIN(a) ((unsigned char*)&(a))
+#define UEND(a) ((unsigned char*)&((&(a))[1]))
+
 /** Used by SanitizeString() */
 enum SafeChars
 {
@@ -79,6 +85,12 @@ std::string EncodeBase64(Span<const unsigned char> input);
 inline std::string EncodeBase64(Span<const std::byte> input) { return EncodeBase64(MakeUCharSpan(input)); }
 inline std::string EncodeBase64(std::string_view str) { return EncodeBase64(MakeUCharSpan(str)); }
 std::optional<std::vector<unsigned char>> DecodeBase32(std::string_view str);
+
+inline uint32_t ByteReverse(uint32_t value)
+{
+    value = ((value & 0xFF00FF00) >> 8) | ((value & 0x00FF00FF) << 8);
+    return (value << 16) | (value >> 16);
+}
 
 /**
  * Base32 encode.
@@ -237,6 +249,24 @@ std::optional<T> ToIntegral(std::string_view str)
 std::string HexStr(const Span<const uint8_t> s);
 inline std::string HexStr(const Span<const char> s) { return HexStr(MakeUCharSpan(s)); }
 inline std::string HexStr(const Span<const std::byte> s) { return HexStr(MakeUCharSpan(s)); }
+
+template <typename T>
+std::string HexStr(const T itbegin, const T itend, bool fSpaces = false)
+{
+    std::string rv;
+    static const char hexmap[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                                    '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    rv.reserve((itend - itbegin) * 3);
+    for (T it = itbegin; it < itend; ++it) {
+        unsigned char val = (unsigned char)(*it);
+        if (fSpaces && it != itbegin)
+            rv.push_back(' ');
+        rv.push_back(hexmap[val >> 4]);
+        rv.push_back(hexmap[val & 15]);
+    }
+
+    return rv;
+}
 
 /**
  * Format a paragraph of text to a fixed width, adding spaces for

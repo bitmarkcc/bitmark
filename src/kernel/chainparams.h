@@ -13,6 +13,7 @@
 #include <util/chaintype.h>
 #include <util/hash_type.h>
 #include <util/vector.h>
+#include <util/bignum.h>
 
 #include <cstdint>
 #include <iterator>
@@ -73,7 +74,8 @@ struct ChainTxData {
     double dTxRate;   //!< estimated number of transactions per second after that timestamp
 };
 
-/**
+class CBlockIndex;
+    /**
  * CChainParams defines various tweakable parameters of a given instance of the
  * Bitcoin system.
  */
@@ -99,6 +101,7 @@ public:
     bool DefaultConsistencyChecks() const { return fDefaultConsistencyChecks; }
     /** If this chain is exclusively used for testing */
     bool IsTestChain() const { return m_chain_type != ChainType::MAIN; }
+    bool IsRegTest() const { return m_chain_type == ChainType::REGTEST; }
     /** If this chain allows time to be mocked */
     bool IsMockableChain() const { return m_is_mockable_chain; }
     uint64_t PruneAfterHeight() const { return nPruneAfterHeight; }
@@ -112,6 +115,7 @@ public:
     std::string GetChainTypeString() const { return ChainTypeToString(m_chain_type); }
     /** Return the chain type */
     ChainType GetChainType() const { return m_chain_type; }
+
     /** Return the list of hostnames to look up for DNS seeds */
     const std::vector<std::string>& DNSSeeds() const { return vSeeds; }
     const std::vector<unsigned char>& Base58Prefix(Base58Type type) const { return base58Prefixes[type]; }
@@ -127,6 +131,8 @@ public:
     {
         return FindFirst(m_assumeutxo_data, [&](const auto& d) { return d.blockhash == blockhash; });
     }
+
+    CBigNum ProofOfWorkLimit(Algo algo) const;
 
     const ChainTxData& TxData() const { return chainTxData; }
 

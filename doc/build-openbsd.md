@@ -10,7 +10,7 @@ This guide describes how to build bitcoind, command-line utilities, and GUI on O
 Run the following as root to install the base dependencies for building.
 
 ```bash
-pkg_add bash git gmake libevent libtool boost
+pkg_add bash git gmake libevent libtool boost libssl libsodium
 # Select the newest version of the following packages:
 pkg_add autoconf automake python
 ```

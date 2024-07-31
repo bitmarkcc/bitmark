@@ -85,33 +85,33 @@ EXTRA_LIBRARIES += \
   $(LIBBITCOIN_ZMQ)
 
 if BUILD_BITCOIND
-  bin_PROGRAMS += bitcoind
+  bin_PROGRAMS += bitmarkd
 endif
 
 if BUILD_BITCOIN_NODE
-  bin_PROGRAMS += bitcoin-node
+  bin_PROGRAMS += bitmark-node
 endif
 
 if BUILD_BITCOIN_CLI
-  bin_PROGRAMS += bitcoin-cli
+  bin_PROGRAMS += bitmark-cli
 endif
 
 if BUILD_BITCOIN_TX
-  bin_PROGRAMS += bitcoin-tx
+  bin_PROGRAMS += bitmark-tx
 endif
 
 if ENABLE_WALLET
 if BUILD_BITCOIN_WALLET
-  bin_PROGRAMS += bitcoin-wallet
+  bin_PROGRAMS += bitmark-wallet
 endif
 endif
 
 if BUILD_BITCOIN_UTIL
-  bin_PROGRAMS += bitcoin-util
+  bin_PROGRAMS += bitmark-util
 endif
 
 if BUILD_BITCOIN_CHAINSTATE
-  bin_PROGRAMS += bitcoin-chainstate
+  bin_PROGRAMS += bitmark-chainstate
 endif
 
 .PHONY: FORCE check-symbols check-security
@@ -553,7 +553,7 @@ crypto_libbitcoin_crypto_base_la_CPPFLAGS = $(AM_CPPFLAGS)
 # static version of this library. We don't need a dynamic version, and a dynamic
 # version can't be used on windows anyway because the library doesn't currently
 # export DLL symbols.
-crypto_libbitcoin_crypto_base_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) -static
+crypto_libbitcoin_crypto_base_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) $(SSL_CFLAGS) -static
 crypto_libbitcoin_crypto_base_la_LDFLAGS = $(AM_LDFLAGS) -static
 
 crypto_libbitcoin_crypto_base_la_SOURCES = \
@@ -576,6 +576,52 @@ crypto_libbitcoin_crypto_base_la_SOURCES = \
   crypto/muhash.cpp \
   crypto/ripemd160.cpp \
   crypto/ripemd160.h \
+  crypto/scrypt.cpp \
+  crypto/scrypt-sse2.cpp \
+  crypto/scrypt.h \
+  crypto/sph/blake.c \
+  crypto/sph/bmw.c \
+  crypto/sph/cubehash.c \
+  crypto/sph/echo.c \
+  crypto/sph/fugue.c \
+  crypto/sph/groestl.c \
+  crypto/sph/hamsi.c \
+  crypto/sph/haval.c \
+  crypto/sph/jh.c \
+  crypto/sph/keccak.c \
+  crypto/sph/luffa.c \
+  crypto/sph/shabal.c \
+  crypto/sph/shavite.c \
+  crypto/sph/simd.c \
+  crypto/sph/skein.c \
+  crypto/sph/sph_sha2big.c \
+  crypto/sph/whirlpool.c \
+  crypto/ar2/argon2.c \
+  crypto/ar2/core.c \
+  crypto/ar2/encoding.c \
+  crypto/ar2/thread.c \
+  crypto/ar2/blake2/blake2b.c \
+  crypto/yescrypt/yescryptcommon.c \
+  crypto/yescrypt/yescrypt-best.c \
+  crypto/yescrypt/sha256_Y.c \
+  crypto/lyra2/Lyra2.c \
+  crypto/lyra2/Lyra2RE.c \
+  crypto/lyra2/Sponge.c \
+  crypto/equihash/equihash.cpp \
+  crypto/equihash/equihash.tcc \
+  crypto/cryptonight/crypto/slow-hash.c \
+  crypto/cryptonight/crypto/oaes_lib.c \
+  crypto/cryptonight/crypto/aesb.c \
+  crypto/cryptonight/crypto/hash.c \
+  crypto/cryptonight/crypto/hash-extra-blake.c \
+  crypto/cryptonight/crypto/hash-extra-groestl.c \
+  crypto/cryptonight/crypto/hash-extra-jh.c \
+  crypto/cryptonight/crypto/hash-extra-skein.c \
+  crypto/cryptonight/crypto/blake256.c \
+  crypto/cryptonight/crypto/cn-groestl.c \
+  crypto/cryptonight/crypto/cn-jh.c \
+  crypto/cryptonight/crypto/cn-skein.c \
+  crypto/cryptonight/common/c_keccak.c \
   crypto/sha1.cpp \
   crypto/sha1.h \
   crypto/sha256.cpp \
@@ -587,6 +633,13 @@ crypto_libbitcoin_crypto_base_la_SOURCES = \
   crypto/sha512.h \
   crypto/siphash.cpp \
   crypto/siphash.h
+
+if BUILD_ARGON2_OPTIMIZED
+crypto_libbitcoin_crypto_base_la_SOURCES += crypto/ar2/opt.c
+else
+crypto_libbitcoin_crypto_base_la_SOURCES += crypto/ar2/ref.c
+endif
+
 
 # See explanation for -static in crypto_libbitcoin_crypto_base_la's LDFLAGS and
 # CXXFLAGS above
@@ -642,6 +695,8 @@ libbitcoin_consensus_a_SOURCES = \
   prevector.h \
   primitives/block.cpp \
   primitives/block.h \
+  primitives/pureheader.cpp \
+  primitives/pureheader.h \
   primitives/transaction.cpp \
   primitives/transaction.h \
   pubkey.cpp \
@@ -774,7 +829,7 @@ libbitcoin_cli_a_SOURCES = \
 nodist_libbitcoin_util_a_SOURCES = $(srcdir)/obj/build.h
 #
 
-# bitcoind & bitcoin-node binaries #
+# bitmarkd & bitcoin-node binaries #
 bitcoin_daemon_sources = bitcoind.cpp
 bitcoin_bin_cppflags = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 bitcoin_bin_cxxflags = $(AM_CXXFLAGS) $(PIE_FLAGS)
@@ -798,49 +853,49 @@ bitcoin_bin_ldadd = \
 
 bitcoin_bin_ldadd += $(BDB_LIBS) $(MINIUPNPC_LIBS) $(NATPMP_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE_LIBS)
 
-bitcoind_SOURCES = $(bitcoin_daemon_sources) init/bitcoind.cpp
-bitcoind_CPPFLAGS = $(bitcoin_bin_cppflags)
-bitcoind_CXXFLAGS = $(bitcoin_bin_cxxflags)
-bitcoind_LDFLAGS = $(bitcoin_bin_ldflags)
-bitcoind_LDADD = $(LIBBITCOIN_NODE) $(bitcoin_bin_ldadd)
+bitmarkd_SOURCES = $(bitcoin_daemon_sources) init/bitcoind.cpp
+bitmarkd_CPPFLAGS = $(bitcoin_bin_cppflags)
+bitmarkd_CXXFLAGS = $(bitcoin_bin_cxxflags)
+bitmarkd_LDFLAGS = $(bitcoin_bin_ldflags)
+bitmarkd_LDADD = $(LIBBITCOIN_NODE) $(bitcoin_bin_ldadd)
 
-bitcoin_node_SOURCES = $(bitcoin_daemon_sources) init/bitcoin-node.cpp
-bitcoin_node_CPPFLAGS = $(bitcoin_bin_cppflags)
-bitcoin_node_CXXFLAGS = $(bitcoin_bin_cxxflags)
-bitcoin_node_LDFLAGS = $(bitcoin_bin_ldflags)
-bitcoin_node_LDADD = $(LIBBITCOIN_NODE) $(bitcoin_bin_ldadd) $(LIBBITCOIN_IPC) $(LIBMULTIPROCESS_LIBS)
+bitmark_node_SOURCES = $(bitcoin_daemon_sources) init/bitcoin-node.cpp
+bitmark_node_CPPFLAGS = $(bitcoin_bin_cppflags)
+bitmark_node_CXXFLAGS = $(bitcoin_bin_cxxflags)
+bitmark_node_LDFLAGS = $(bitcoin_bin_ldflags)
+bitmark_node_LDADD = $(LIBBITCOIN_NODE) $(bitcoin_bin_ldadd) $(LIBBITCOIN_IPC) $(LIBMULTIPROCESS_LIBS)
 
-# bitcoin-cli binary #
-bitcoin_cli_SOURCES = bitcoin-cli.cpp
-bitcoin_cli_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(EVENT_CFLAGS)
-bitcoin_cli_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-bitcoin_cli_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) $(PTHREAD_FLAGS)
+# bitmark-cli binary #
+bitmark_cli_SOURCES = bitcoin-cli.cpp
+bitmark_cli_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(EVENT_CFLAGS)
+bitmark_cli_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+bitmark_cli_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) $(PTHREAD_FLAGS)
 
 if TARGET_WINDOWS
-bitcoin_cli_SOURCES += bitcoin-cli-res.rc
+bitmark_cli_SOURCES += bitcoin-cli-res.rc
 endif
 
-bitcoin_cli_LDADD = \
+bitmark_cli_LDADD = \
   $(LIBBITCOIN_CLI) \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CRYPTO)
 
-bitcoin_cli_LDADD += $(EVENT_LIBS)
+bitmark_cli_LDADD += $(EVENT_LIBS)
 #
 
 # bitcoin-tx binary #
-bitcoin_tx_SOURCES = bitcoin-tx.cpp
-bitcoin_tx_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-bitcoin_tx_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-bitcoin_tx_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) $(PTHREAD_FLAGS)
+bitmark_tx_SOURCES = bitcoin-tx.cpp
+bitmark_tx_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
+bitmark_tx_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+bitmark_tx_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) $(PTHREAD_FLAGS)
 
 if TARGET_WINDOWS
-bitcoin_tx_SOURCES += bitcoin-tx-res.rc
+bitmark_tx_SOURCES += bitcoin-tx-res.rc
 endif
 
-bitcoin_tx_LDADD = \
+bitmark_tx_LDADD = \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_UTIL) \
@@ -850,12 +905,12 @@ bitcoin_tx_LDADD = \
 #
 
 # bitcoin-wallet binary #
-bitcoin_wallet_SOURCES = bitcoin-wallet.cpp
-bitcoin_wallet_SOURCES += init/bitcoin-wallet.cpp
-bitcoin_wallet_CPPFLAGS = $(bitcoin_bin_cppflags)
-bitcoin_wallet_CXXFLAGS = $(bitcoin_bin_cxxflags)
-bitcoin_wallet_LDFLAGS = $(bitcoin_bin_ldflags)
-bitcoin_wallet_LDADD = \
+bitmark_wallet_SOURCES = bitcoin-wallet.cpp
+bitmark_wallet_SOURCES += init/bitcoin-wallet.cpp
+bitmark_wallet_CPPFLAGS = $(bitcoin_bin_cppflags)
+bitmark_wallet_CXXFLAGS = $(bitcoin_bin_cxxflags)
+bitmark_wallet_LDFLAGS = $(bitcoin_bin_ldflags)
+bitmark_wallet_LDADD = \
   $(LIBBITCOIN_WALLET_TOOL) \
   $(LIBBITCOIN_WALLET) \
   $(LIBBITCOIN_COMMON) \
@@ -868,21 +923,21 @@ bitcoin_wallet_LDADD = \
   $(SQLITE_LIBS)
 
 if TARGET_WINDOWS
-bitcoin_wallet_SOURCES += bitcoin-wallet-res.rc
+bitmark_wallet_SOURCES += bitcoin-wallet-res.rc
 endif
 #
 
 # bitcoin-util binary #
-bitcoin_util_SOURCES = bitcoin-util.cpp
-bitcoin_util_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-bitcoin_util_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-bitcoin_util_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) $(PTHREAD_FLAGS)
+bitmark_util_SOURCES = bitcoin-util.cpp
+bitmark_util_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
+bitmark_util_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+bitmark_util_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) $(PTHREAD_FLAGS)
 
 if TARGET_WINDOWS
-bitcoin_util_SOURCES += bitcoin-util-res.rc
+bitmark_util_SOURCES += bitcoin-util-res.rc
 endif
 
-bitcoin_util_LDADD = \
+bitmark_util_LDADD = \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_UTIL) \
   $(LIBUNIVALUE) \
@@ -892,16 +947,16 @@ bitcoin_util_LDADD = \
 #
 
 # bitcoin-chainstate binary #
-bitcoin_chainstate_SOURCES = bitcoin-chainstate.cpp
-bitcoin_chainstate_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(BOOST_CPPFLAGS)
-bitcoin_chainstate_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+bitmark_chainstate_SOURCES = bitcoin-chainstate.cpp
+bitmark_chainstate_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(BOOST_CPPFLAGS)
+bitmark_chainstate_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
-bitcoin_chainstate_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(PTHREAD_FLAGS) $(LIBTOOL_APP_LDFLAGS) -static
-bitcoin_chainstate_LDADD = $(LIBBITCOINKERNEL)
+bitmark_chainstate_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(PTHREAD_FLAGS) $(LIBTOOL_APP_LDFLAGS) -static
+bitmark_chainstate_LDADD = $(LIBBITCOINKERNEL)
 
 # libtool is unable to calculate this indirect dependency, presumably because it's a subproject.
 # libsecp256k1 only needs to be linked in when libbitcoinkernel is static.
-bitcoin_chainstate_LDADD += $(LIBSECP256K1)
+bitmark_chainstate_LDADD += $(LIBSECP256K1)
 #
 
 # bitcoinkernel library #
@@ -961,6 +1016,7 @@ libbitcoinkernel_la_SOURCES = \
   policy/settings.cpp \
   pow.cpp \
   primitives/block.cpp \
+  primitives/pureheader.cpp \
   primitives/transaction.cpp \
   pubkey.cpp \
   random.cpp \

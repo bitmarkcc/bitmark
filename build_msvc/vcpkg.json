@@ -9,13 +9,19 @@
     "boost-test",
     "libevent",
     "sqlite3",
-    "zeromq"
+    "zeromq",
+    "openssl",
+    "libsodium"
   ],
   "builtin-baseline": "9edb1b8e590cc086563301d735cae4b6e732d2d2",
   "overrides": [
     {
       "name": "libevent",
       "version": "2.1.12#7"
+    },
+    {
+      "name": "openssl",
+      "version-string": "3.3.1"
     }
   ]
 }

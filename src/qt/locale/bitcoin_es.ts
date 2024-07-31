@@ -315,7 +315,7 @@ Solo es posible firmar con direcciones de tipo "legacy".</translation>
         <translation type="unfinished">Importe</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Ingresa una dirección de Bitcoin (p. ej., %1)</translation>
     </message>
     <message>
@@ -588,7 +588,7 @@ Solo es posible firmar con direcciones de tipo "legacy".</translation>
     </message>
     <message>
         <source>Request payments (generates QR codes and bitcoin: URIs)</source>
-        <translation type="unfinished">Solicitar pagos (genera códigos QR y URI de tipo "bitcoin:")</translation>
+        <translation type="unfinished">Solicitar pagos (genera códigos QR y URI de tipo "bitmark:")</translation>
     </message>
     <message>
         <source>Show the list of used sending addresses and labels</source>
@@ -667,7 +667,7 @@ Solo es posible firmar con direcciones de tipo "legacy".</translation>
     </message>
     <message>
         <source>Open a bitcoin: URI</source>
-        <translation type="unfinished">Abrir un URI de tipo "bitcoin:"</translation>
+        <translation type="unfinished">Abrir un URI de tipo "bitmark:"</translation>
     </message>
     <message>
         <source>Open Wallet</source>
@@ -1466,7 +1466,7 @@ El proceso de migración creará una copia de seguridad del monedero antes de mi
         <translation type="unfinished">Es posible que las transacciones recientes aún no estén visibles y, por lo tanto, el saldo del monedero podría ser incorrecto. Esta información será correcta una vez que el monedero haya terminado de sincronizarse con la red Bitcoin, como se detalla a continuación.</translation>
     </message>
     <message>
-        <source>Attempting to spend bitcoins that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
+        <source>Attempting to spend bitmarks that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
         <translation type="unfinished">La red no aceptará intentar gastar bitcoins que se vean afectados por transacciones aún no mostradas.</translation>
     </message>
     <message>
@@ -1518,7 +1518,7 @@ El proceso de migración creará una copia de seguridad del monedero antes de mi
     <name>OpenURIDialog</name>
     <message>
         <source>Open bitcoin URI</source>
-        <translation type="unfinished">Abrir URI de tipo "bitcoin:"</translation>
+        <translation type="unfinished">Abrir URI de tipo "bitmark:"</translation>
     </message>
     <message>
         <source>Paste address from clipboard</source>
@@ -2090,7 +2090,7 @@ El proceso de migración creará una copia de seguridad del monedero antes de mi
     </message>
     <message>
         <source>Cannot start bitcoin: click-to-pay handler</source>
-        <translation type="unfinished">No se puede iniciar el controlador "bitcoin: click-to-pay"</translation>
+        <translation type="unfinished">No se puede iniciar el controlador "bitmark: click-to-pay"</translation>
     </message>
     <message>
         <source>URI handling</source>
@@ -2098,7 +2098,7 @@ El proceso de migración creará una copia de seguridad del monedero antes de mi
     </message>
     <message>
         <source>'bitcoin://' is not a valid URI. Use 'bitcoin:' instead.</source>
-        <translation type="unfinished">"bitcoin://" no es un URI válido. Usa "bitcoin:" en su lugar.</translation>
+        <translation type="unfinished">"bitmark://" no es un URI válido. Usa "bitmark:" en su lugar.</translation>
     </message>
     <message>
         <source>Cannot process payment request because BIP70 is not supported.
@@ -2634,7 +2634,7 @@ For more information on using this console, type %6.
         <extracomment>RPC console welcome message. Placeholders %7 and %8 are style tags for the warning content, and they are not space separated from the rest of the text intentionally.</extracomment>
         <translation type="unfinished">Te damos la bienvenida a la consola RPC de %1.
 Utiliza las flechas hacia arriba y abajo para navegar por el historial y %2 para borrar la pantalla.
-Utiliza %3 y %4 para aumentar o disminuir el tamaño de la fuente. 
+Utiliza %3 y %4 para aumentar o disminuir el tamaño de la fuente.
 Escribe %5 para ver los comandos disponibles.
 Para obtener más información sobre cómo usar esta consola, escribe %6.
 
@@ -3297,7 +3297,7 @@ Nota: Dado que la comisión se calcula por byte, una tasa de "100 satoshis por k
     </message>
     <message>
         <source>A message that was attached to the bitcoin: URI which will be stored with the transaction for your reference. Note: This message will not be sent over the Bitcoin network.</source>
-        <translation type="unfinished">Un mensaje adjunto al URI de tipo "bitcoin:" que se almacenará con la transacción a modo de referencia. Nota: Este mensaje no se enviará por la red de Bitcoin.</translation>
+        <translation type="unfinished">Un mensaje adjunto al URI de tipo "bitmark:" que se almacenará con la transacción a modo de referencia. Nota: Este mensaje no se enviará por la red de Bitcoin.</translation>
     </message>
 </context>
 <context>

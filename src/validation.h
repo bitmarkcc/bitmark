@@ -64,7 +64,7 @@ class SignalInterrupt;
 
 /** Block files containing a block-height within MIN_BLOCKS_TO_KEEP of ActiveChain().Tip() will not be pruned. */
 static const unsigned int MIN_BLOCKS_TO_KEEP = 288;
-static const signed int DEFAULT_CHECKBLOCKS = 6;
+static const signed int DEFAULT_CHECKBLOCKS = 240;
 static constexpr int DEFAULT_CHECKLEVEL{3};
 // Require that user allocate at least 550 MiB for block & undo files (blk???.dat and rev???.dat)
 // At 1MB per block, 288 blocks = 288MB.
@@ -91,7 +91,22 @@ extern uint256 g_best_block;
 /** Documentation for argument 'checklevel'. */
 extern const std::vector<std::string> CHECKLEVEL_DOC;
 
-CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams);
+extern Algo miningAlgo;
+
+inline bool SetMiningAlgo(int algoID) {
+    if (algoID < 0 || algoID > 7) {
+        return false;
+    }
+
+    miningAlgo = (Algo)algoID;
+
+    return true;
+}
+
+double GetNextBlockReward(const CBlockIndex* tip, Algo algo, bool noScale);
+CAmount GetBlockSubsidy(const CBlockIndex* pindex, bool noScale = false);
+
+bool update_ssf(int nVersion);
 
 bool FatalError(kernel::Notifications& notifications, BlockValidationState& state, const std::string& strMessage, const bilingual_str& userMessage = {});
 

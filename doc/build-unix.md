@@ -48,7 +48,7 @@ Build requirements:
 
 Now, you can either build from self-compiled [depends](#dependencies) or install the required dependencies:
 
-    sudo apt-get install libevent-dev libboost-dev
+    sudo apt-get install libevent-dev libboost-dev libssl-dev libsodium-dev
 
 SQLite is required for the descriptor wallet:
 
@@ -105,7 +105,7 @@ Build requirements:
 
 Now, you can either build from self-compiled [depends](#dependencies) or install the required dependencies:
 
-    sudo dnf install libevent-devel boost-devel
+    sudo dnf install libevent-devel boost-devel openssl-devel libsodium-devel
 
 SQLite is required for the descriptor wallet:
 
@@ -202,7 +202,7 @@ Setup and Build Example: Arch Linux
 -----------------------------------
 This example lists the steps necessary to setup and build a command line only distribution of the latest changes on Arch Linux:
 
-    pacman --sync --needed autoconf automake boost gcc git libevent libtool make pkgconf python sqlite
+    pacman --sync --needed autoconf automake boost gcc git libevent libtool make pkgconf python sqlite libssl libsodium
     git clone https://github.com/bitcoin/bitcoin.git
     cd bitcoin/
     ./autogen.sh

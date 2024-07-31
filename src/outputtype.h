@@ -24,9 +24,10 @@ enum class OutputType {
 
 static constexpr auto OUTPUT_TYPES = std::array{
     OutputType::LEGACY,
-    OutputType::P2SH_SEGWIT,
-    OutputType::BECH32,
-    OutputType::BECH32M,
+    // TODO: uncomment after segwit softfork
+    //OutputType::P2SH_SEGWIT,
+    //OutputType::BECH32,
+    //OutputType::BECH32M,
 };
 
 std::optional<OutputType> ParseOutputType(const std::string& str);

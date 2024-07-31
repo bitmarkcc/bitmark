@@ -77,7 +77,7 @@
         <translation type="unfinished">Upphædd</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Inntøppa eina Bitcoin adressu (t.d. %1)</translation>
     </message>
     <message>

@@ -12,7 +12,7 @@ Install the required dependencies the usual way you [install software on NetBSD]
 The example commands below use `pkgin`.
 
 ```bash
-pkgin install autoconf automake libtool pkg-config git gmake boost libevent
+pkgin install autoconf automake libtool pkg-config git gmake boost libevent libssl libsodium
 
 ```
 

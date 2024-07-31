@@ -307,7 +307,7 @@ Signing is only possible with addresses of the type 'legacy'.</source>
         <translation type="unfinished">Сумма</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Введите биткоин-адрес (например,%1)</translation>
     </message>
     <message>
@@ -1526,7 +1526,7 @@ The migration process will create a backup of the wallet before migrating. This 
         <translation type="unfinished">Недавние транзакции могут быть пока не видны, и поэтому отображаемый баланс вашего кошелька может быть неточной. Информация станет точной после завершения синхронизации с сетью биткоина. Прогресс синхронизации вы можете видеть снизу.</translation>
     </message>
     <message>
-        <source>Attempting to spend bitcoins that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
+        <source>Attempting to spend bitmarks that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
         <translation type="unfinished">Попытка потратить средства, затронутые не видными пока транзакциями, будет отклонена сетью.</translation>
     </message>
     <message>
@@ -2165,7 +2165,7 @@ The migration process will create a backup of the wallet before migrating. This 
     </message>
     <message>
         <source>'bitcoin://' is not a valid URI. Use 'bitcoin:' instead.</source>
-        <translation type="unfinished">"bitcoin://" — это неверный URI. Используйте вместо него "bitcoin:".</translation>
+        <translation type="unfinished">"bitmark://" — это неверный URI. Используйте вместо него "bitmark:".</translation>
     </message>
     <message>
         <source>Cannot process payment request because BIP70 is not supported.

@@ -14,7 +14,6 @@ DEFAULT_PLATFORM_TOOLSET = R'v143'
 libs = [
     'libbitcoin_cli',
     'libbitcoin_common',
-    'libbitcoin_crypto',
     'libbitcoin_node',
     'libbitcoin_util',
     'libbitcoin_wallet_tool',

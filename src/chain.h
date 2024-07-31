@@ -11,10 +11,12 @@
 #include <flatfile.h>
 #include <kernel/cs_main.h>
 #include <primitives/block.h>
+#include <primitives/transaction.h>
 #include <serialize.h>
 #include <sync.h>
 #include <uint256.h>
 #include <util/time.h>
+#include <chainparams.h>
 
 #include <algorithm>
 #include <cassert>
@@ -204,6 +206,16 @@ public:
     uint32_t nTime{0};
     uint32_t nBits{0};
     uint32_t nNonce{0};
+    uint256 nNonce256{0};
+    std::vector<unsigned char> nSolution;
+
+    uint256 hashReserved{0};
+    // pointer to the AuxPoW header, if this block has one
+    mutable std::shared_ptr<CAuxPow> pauxpow;
+    // track the amount of coins emitted since genesis block, allowing us to determine max block reward
+    uint64_t nMoneySupply{0};
+    // the scaling factor for the block
+    mutable CBigNum subsidyScalingFactor{0};
 
     //! (memory only) Sequential id assigned to distinguish order in which blocks are received.
     int32_t nSequenceId{0};
@@ -216,7 +228,10 @@ public:
           hashMerkleRoot{block.hashMerkleRoot},
           nTime{block.nTime},
           nBits{block.nBits},
-          nNonce{block.nNonce}
+          nNonce{block.nNonce},
+          nNonce256{block.nNonce256},
+          nSolution{block.nSolution},
+          hashReserved{block.hashReserved}
     {
     }
 
@@ -252,7 +267,16 @@ public:
         block.nTime = nTime;
         block.nBits = nBits;
         block.nNonce = nNonce;
+        block.nNonce256 = nNonce256;
+        block.nSolution = nSolution;
+        block.hashReserved = hashReserved;
+        block.auxpow = pauxpow;
+
         return block;
+    }
+
+    Algo GetAlgo() const {
+        return ::GetAlgo(nVersion);
     }
 
     uint256 GetBlockHash() const
@@ -298,8 +322,12 @@ public:
         int64_t* pend = &pmedian[nMedianTimeSpan];
 
         const CBlockIndex* pindex = this;
-        for (int i = 0; i < nMedianTimeSpan && pindex; i++, pindex = pindex->pprev)
+        bool wasOnFork = false;
+        for (int i = 0; i < nMedianTimeSpan && pindex; i++, pindex = pindex->pprev) {
             *(--pbegin) = pindex->GetBlockTime();
+            if (pindex->OnFork()) wasOnFork = true;
+            if (wasOnFork && !pindex->OnFork()) break;
+        }
 
         std::sort(pbegin, pend);
         return pbegin[(pend - pbegin) / 2];
@@ -357,6 +385,90 @@ public:
     CBlockIndex() = default;
     ~CBlockIndex() = default;
 
+    /**
+     * Returns true if there are nRequired or more blocks of minVersion or above
+     * in the last nToCheck blocks, starting at pstart and going backwards.
+     */
+    static bool IsSuperMajority(int minVersion, const CBlockIndex* pstart,
+                                unsigned int nRequired, unsigned int nToCheck);
+
+    /**
+     * Returns true if there are nRequired or more blocks of minVersion or above
+     * in the last nToCheck blocks, starting at pstart and going backwards,
+     * with variant matching as well.
+     */
+    static bool IsSuperMajorityVariant12(int minVersion, bool variant, const CBlockIndex* pstart,
+                                         unsigned int nRequired, unsigned int nToCheck);
+
+    /**
+     * Returns true if there are nRequired or more blocks of minVersion or above
+     * in the last nToCheck blocks, starting at pstart and going backwards,
+     * with variant2 matching as well.
+     */
+    static bool IsSuperMajorityVariant2(int minVersion, bool variant, const CBlockIndex* pstart,
+                                        unsigned int nRequired, unsigned int nToCheck);
+
+
+    bool OnFork() const;
+    bool OnFork2() const { return false;  }
+
+    /* Get previous CBlockIndex pointer with the given algo */
+    static CBlockIndex* GetPrevAlgoBlockIndex(const CBlockIndex* pindex, Algo use_algo = Algo::UNKNOWN)
+    {
+        if (pindex == NULL) {
+            return 0;
+        }
+
+        if (!pindex->OnFork())
+            return 0;
+
+        Algo algo;
+
+        if (use_algo != Algo::UNKNOWN) {
+            algo = use_algo;
+        } else {
+            algo = pindex->GetAlgo();
+        }
+
+        CBlockIndex* pprev = pindex->pprev;
+        while (pprev && pprev->OnFork()) {
+            Algo cur_algo = pprev->GetAlgo();
+            if (cur_algo == algo) {
+                return pprev;
+            }
+            pprev = pprev->pprev;
+        }
+        // LogPrintf("return 0 for pprev_algo (%d)\n",algo);
+        return 0;
+    }
+
+    CBigNum GetBlockWork() const
+    {
+        CBigNum bnTarget;
+        bnTarget.SetCompact(nBits);
+        if (bnTarget <= 0)
+            return 0;
+        unsigned int algo_weight = GetAlgoWeight(this->GetAlgo());
+        CBigNum weight(algo_weight);
+        // LogPrintf("algo is %d and weight is %lu\n",nVersion & BLOCK_VERSION_ALGO,weight.getulong());
+        return (CBigNum(1) << 256) / (bnTarget / weight + 1);
+    }
+
+    // Get Average Work of latest 50 Blocks
+    CBigNum GetBlockWorkAv() const
+    {
+        CBigNum work = 0;
+        const CBlockIndex* pindex = this;
+        int n = 0;
+        for (int i = 0; i < 50; i++) {
+            work += pindex->GetBlockWork();
+            n++;
+            pindex = pindex->pprev;
+            if (!pindex) break;
+        }
+        return work / n;
+    }
+
 protected:
     //! CBlockIndex should not allow public copy construction because equality
     //! comparison via pointer is very common throughout the codebase, making
@@ -407,23 +519,61 @@ public:
     SERIALIZE_METHODS(CDiskBlockIndex, obj)
     {
         LOCK(::cs_main);
+
         int _nVersion = DUMMY_VERSION;
         READWRITE(VARINT_MODE(_nVersion, VarIntMode::NONNEGATIVE_SIGNED));
 
         READWRITE(VARINT_MODE(obj.nHeight, VarIntMode::NONNEGATIVE_SIGNED));
+        READWRITE(VARINT(obj.nMoneySupply));
         READWRITE(VARINT(obj.nStatus));
         READWRITE(VARINT(obj.nTx));
-        if (obj.nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO)) READWRITE(VARINT_MODE(obj.nFile, VarIntMode::NONNEGATIVE_SIGNED));
-        if (obj.nStatus & BLOCK_HAVE_DATA) READWRITE(VARINT(obj.nDataPos));
-        if (obj.nStatus & BLOCK_HAVE_UNDO) READWRITE(VARINT(obj.nUndoPos));
+        if (obj.nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO))
+            READWRITE(VARINT_MODE(obj.nFile, VarIntMode::NONNEGATIVE_SIGNED));
+        if (obj.nStatus & BLOCK_HAVE_DATA)
+            READWRITE(VARINT(obj.nDataPos));
+        if (obj.nStatus & BLOCK_HAVE_UNDO)
+            READWRITE(VARINT(obj.nUndoPos));
 
         // block header
         READWRITE(obj.nVersion);
         READWRITE(obj.hashPrev);
         READWRITE(obj.hashMerkleRoot);
+        bool onFork = true; // assume true for disk IO
+        if (obj.GetAlgo() == Algo::EQUIHASH && onFork) {
+            READWRITE(obj.hashReserved);
+        }
         READWRITE(obj.nTime);
         READWRITE(obj.nBits);
-        READWRITE(obj.nNonce);
+        if (obj.GetAlgo() == Algo::EQUIHASH && onFork) {
+            READWRITE(obj.nNonce256);
+            READWRITE(obj.nSolution);
+        } else {
+            READWRITE(obj.nNonce);
+        }
+
+        if (IsAuxpow(obj.nVersion) && onFork) {
+            if (ser_action.ForRead()) {
+                obj.pauxpow.reset(new CAuxPow());
+            }
+
+            assert(obj.pauxpow);
+            obj.pauxpow->parentBlock.isParent = true;
+            Algo algo = obj.GetAlgo();
+            obj.pauxpow->parentBlock.algoParent = algo;
+
+            if (algo == Algo::EQUIHASH || algo == Algo::CRYPTONIGHT)
+                obj.pauxpow->vector_format = true;
+
+            if (algo == Algo::CRYPTONIGHT) {
+                obj.pauxpow->parentBlock.vector_format = true;
+                obj.pauxpow->keccak_hash = true;
+            }
+            READWRITE(TX_NO_WITNESS(*(obj.pauxpow)));
+        } else {
+            if (ser_action.ForRead()) {
+                obj.pauxpow.reset();
+            }
+        }
     }
 
     uint256 ConstructBlockHash() const
@@ -435,6 +585,11 @@ public:
         block.nTime = nTime;
         block.nBits = nBits;
         block.nNonce = nNonce;
+        block.nNonce256 = nNonce256;
+        block.hashReserved = hashReserved;
+        block.nSolution = nSolution;
+        block.auxpow = pauxpow;
+
         return block.GetHash();
     }
 

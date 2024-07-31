@@ -1,78 +1,96 @@
-Bitcoin Core integration/staging tree
-=====================================
+# Introduction
 
-https://bitcoincore.org
+Project Bitmark is a multi faceted project which aims to provide:
 
-For an immediately usable, binary version of the Bitcoin Core software, see
-https://bitcoincore.org/en/download/.
+1. A ** stable cryptographic currency network** which balances the requirements of all parties involved.
+2. A **far reaching adoption initiative** guided by the vision of a novel reputation+currency system called [Marking](https://github.com/project-bitmark/marking/wiki)
 
-What is Bitcoin Core?
----------------------
+This repository contains the Bitmark cryptograpic currency software, and a wiki which provides all details pertaining to the software, it's configuration and the rationale of all design decisions.
 
-Bitcoin Core connects to the Bitcoin peer-to-peer network to download and fully
-validate blocks and transactions. It also includes a wallet and graphical user
-interface, which can be optionally built.
+# Bitmark
 
-Further information about Bitcoin Core is available in the [doc folder](/doc).
+[![Join the chat at https://gitter.im/project-bitmark/bitmark](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/project-bitmark/bitmark?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-License
--------
+Bitmark aims to be a relatively stable, user focused crypto currency, which refines and implements maturing innovations from the crypto currency sector.
 
-Bitcoin Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
-information or see https://opensource.org/licenses/MIT.
+### Overview
+**Technically**: Light and stable with a modern codebase, [maturing features from the alternative currency sector](https://github.com/project-bitmark/bitmark/wiki#maturing-innovations) which *benefit* users added on a faster timeline than bitcoin. Think of it more as [standardization rather than innovation](https://github.com/project-bitmark/bitmark/wiki#relatively-stable).
 
-Development Process
--------------------
+**User focused**: Daily development effort and innovation goes in to making bitmark as [user friendly, and simple to integrate](https://github.com/project-bitmark/bitmark/wiki#user-focused) as possible.
 
-The `master` branch is regularly built (see `doc/build-*.md` for instructions) and tested, but it is not guaranteed to be
-completely stable. [Tags](https://github.com/bitcoin/bitcoin/tags) are created
-regularly from release branches to indicate new official, stable release versions of Bitcoin Core.
+**Earned Value**: Every aspect of Project Bitmark is focused on earned value. It's a project to make a viable every day currency, any value will be earned.
 
-The https://github.com/bitcoin-core/gui repository is used exclusively for the
-development of the GUI. Its master branch is identical in all monotree
-repositories. Release branches and tags do not exist, so please do not fork
-that repository unless it is for development reasons.
+**Longevity**: The Bitmark network has been operational since mid July, 2014. A well funded Bitmark Foundation is being created and funded by the community to support long term development.
 
-The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md)
-and useful hints for developers can be found in [doc/developer-notes.md](doc/developer-notes.md).
+**Distribution**: A [configuration](https://github.com/project-bitmark/bitmark/wiki#block-chain-parameters) which aims to ensure [fair distribution](https://github.com/project-bitmark/bitmark/wiki/Currency#supply-and-distribution) whilst using [proven PoW](https://github.com/project-bitmark/bitmark/wiki#proof-of-work) which has had substantial investment in hardware. Extensive distribution of the currency is achieved through wide spread adoption under the banner of [Marking](https://github.com/project-bitmark/marking/wiki).
 
-Testing
--------
+**Balance**: Every aspect of Bitmark has been designed in order to balance the interests of everybody involved or associated with the project. This includes [Investor Public Mining (IPM)](https://github.com/project-bitmark/bitmark/wiki/IPM-Pool) which balances Investors, Miners, and Developers in a way that is mutually beneficial and which critically enables those at the core to provide the best network experience to those who rely on it, the users.
 
-Testing and code review is the bottleneck for development; we get more pull
-requests than we can review and test on short notice. Please be patient and help out by testing
-other people's pull requests, and remember this is a security-critical project where any mistake might cost people
-lots of money.
+* [Documentation and Plan](https://github.com/project-bitmark/bitmark/wiki)
+* [Discussion and Updates](https://bitcointalk.org/index.php?topic=660544.0)
+* [Block Explorer](http://explorer.bitmark.co)
+* [Testnet Explorer](http://explorer.bitmark.co/testnet)
 
-### Automated Testing
+## Getting Bitmark
 
-Developers are strongly encouraged to write [unit tests](src/test/README.md) for new code, and to
-submit new unit tests for old code. Unit tests can be compiled and run
-(assuming they weren't disabled in configure) with: `make check`. Further details on running
-and extending unit tests can be found in [/src/test/README.md](/src/test/README.md).
+All Bitmark software releases are published through the github release process, you can download the [latest release](https://github.com/project-bitmark/bitmark/releases) from the releases tab above.
 
-There are also [regression and integration tests](/test), written
-in Python.
-These tests can be run (if the [test dependencies](/test) are installed) with: `test/functional/test_runner.py`
+## Eight Algortihm mPoW Hard Fork (v0.9.7)
 
-The CI (Continuous Integration) systems make sure that every pull request is built for Windows, Linux, and macOS,
-and that unit/sanity tests are run automatically.
+The hard fork for multiple proof-of-work algorithms (SCRYPT, SHA256D, YESCRYPT, ARGON2D, X17, LYRA2REv2, EQUIHASH, CRYPTONIGHT) under DGWv3 was adopted by the Bitmark community by supermajority consensus after block 450946. The first block where v0.9.7 rules are in effect is 450947.
 
-### Manual Quality Assurance (QA) Testing
+Each algorithm has its difficulty adjusted independently, with a target spacing of 16 min (for a combined average of  2 min as per the Bitmark specification).
+The subsidy reduces at the same emission points as before, but each algorithm contributes only 1/8 of the number of emitted coins. The peak hash rate that determines the subsidy scaling factor is dynamic (depends on at most 1 year of hashing history for each algorithm) and the scaling factor remains constant throughout each 24 hour period (it is updated every 90 blocks per algo, which is approximately once a day ).
+The difficulty adjustment algorithm is Dark Gravity Wave v3, customized for multi algo usage. It has special difficulty retargeting rules, the Surge Protector and the Resurrector. Surge Protector activates if there is a string of 9 blocks in-a-row by the same algorithm. Resurrector activates if blocks from one algo are halted for over 160 minutes.
 
-Changes should be tested by somebody other than the developer who wrote the
-code. This is especially important for large or high-risk changes. It is useful
-to add a test plan to the pull request description if testing the changes is
-not straightforward.
+Download the current version from 'Master' branch, and put the following settings in your bitmark.conf
 
-Translations
-------------
+rpcuser=bitmarkrpc
+rpcpassword=YoUrSecreT-PaSsWoRd
+listen=1
 
-Changes to translations as well as new translations can be submitted to
-[Bitcoin Core's Transifex page](https://www.transifex.com/bitcoin/bitcoin/).
 
-Translations are periodically pulled from Transifex and merged into the git repository. See the
-[translation process](doc/translation_process.md) for details on how this works.
+##Note: libsodium cryptographic library is required by Bitmark v0.9.7
 
-**Important**: We do not accept translation changes as GitHub pull requests because the next
-pull from Transifex would automatically overwrite them again.
+Ubuntu 16 and higher may simply do:
+
+sudo apt-get install libsodium-dev
+
+otherwise, you may compile this library from sources::
+
+git clone git://github.com/jedisct1/libsodium.git
+cd libsodium
+./autogen.sh
+./configure && make check
+sudo make install
+sudo ldconfig
+
+
+## Mining
+You can mine all algorithms using our fork of cpuminer-multi (https://github.com/piratelinux/cpuminer-multi default linux branch), with the following command:
+
+`cpuminer -a <algo> -o http://localhost:19266 -u bitmarkrpc -p YoUrPaSsWoRd`
+
+`<algo>` is `sha256d`, `scrypt`, `ar2`, `x17`, `lyra2REV2`, `equihash`, or `cryptonight`.
+
+Note: The `miningAlgo` variable in src/rpcmining.cpp (choose one from `ALGO_SCRYPT` (0), `ALGO_SHA256D` (1), `ALGO_YESCRYPT` (2), `ALGO_ARGON2` (3), `ALGO_X17` (4), `ALGO_LYRA2REv2` (5), `ALGO_EQUIHASH` (6), `ALGO_CRYPTONIGHT` (7).
+
+You can also control the mining algo via the rpcommand `bitmark-cli setminingalgo <algo number>`.
+
+You can also use the bitmark-cli command to mine. The last parameter is the algorithm number as defined in core.h. For example, to mine argon2,
+
+`bitmark-cli setgenerate true <ncores> 3`
+
+For equihash and cryptonight, it is recommended to use the built in miner as the cpuminer is slow at the moment.
+
+There are currently 3 types of tests implemented.
+
+1) The testnet block explorer with details for each block, general stats, and charts. These tests are good for looking at how the difficulty adjusts with time.
+
+2) The built in testing framework in src/test. After you compile Bitmark, you can run the tests using the executable `test_bitmark`. Some of the old tests have been disabled, but after disabling a few, all tests should pass now.
+
+3) The newly built tests for the fork, in the directory src/test/fork_tests. To run the tests, you can execute the script `run_tests.sh` and you should see the message "TESTS PASSED" at the end. These ones use the constant min difficulty `regtest` network to perform efficient tests that need to quickly generate a large number of blocks.
+
+## Merge Mining
+
+Also part of the hard fork is merge mining, a way to increase the hashpower security of the chain by allowing the mining of the chain simultaneously with other chains. All 8 algorithms are supported.

@@ -9,4 +9,14 @@
     <Copy SourceFiles="@(BuildArtifacts)" SkipUnchangedFiles="true" DestinationFolder="..\..\src\" Condition="'$(OutDir)' != ''"></Copy>
   </Target>
   <Import Project="common.vcxproj.user" Condition="Exists('common.vcxproj.user')" />
+    <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+      <ClCompile>
+        <PreprocessorDefinitions>SODIUM_STATIC;DEBUG_LOCKORDER;OPENSSL_API_COMPAT=0x10101000L;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      </ClCompile>
+    </ItemDefinitionGroup>
+    <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+      <ClCompile>
+        <PreprocessorDefinitions>SODIUM_STATIC;OPENSSL_API_COMPAT=0x10101000L;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      </ClCompile>
+    </ItemDefinitionGroup>
 </Project>

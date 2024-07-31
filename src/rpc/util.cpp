@@ -28,7 +28,7 @@
 #include <tuple>
 
 const std::string UNIX_EPOCH_TIME = "UNIX epoch time";
-const std::string EXAMPLE_ADDRESS[2] = {"bc1q09vm5lfy0j5reeulh4x5752q25uqqvz34hufdl", "bc1q02ad21edsxd23d32dfgqqsz4vv4nmtfzuklhy3"};
+const std::string EXAMPLE_ADDRESS[2] = {"bDL8zCBrsaUktSE1fwhypquTi2gLbFJkZg", "bS6twXAeTt66opnqcPapwfHb8qZY91cZAF"};
 
 std::string GetAllOutputTypes()
 {
@@ -864,7 +864,7 @@ UniValue RPCArg::MatchesType(const UniValue& request) const
     if (!exp_type) return true; // nothing to check
 
     if (*exp_type != request.getType()) {
-        return strprintf("JSON value of type %s is not of expected type %s", uvTypeName(request.getType()), uvTypeName(*exp_type));
+        return strprintf("JSON value of type %s - %s is not of expected type %s", uvTypeName(request.getType()), request.getValStr(), uvTypeName(*exp_type));
     }
     return true;
 }

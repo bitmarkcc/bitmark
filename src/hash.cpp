@@ -6,6 +6,12 @@
 #include <span.h>
 #include <crypto/common.h>
 #include <crypto/hmac_sha512.h>
+#include <crypto/scrypt.h>
+#include <crypto/ar2/argon2.h>
+#include <crypto/x17/hashx17.h>
+#include <crypto/lyra2/Lyra2RE.h>
+#include <crypto/yescrypt/yescrypt.h>
+#include <crypto/cryptonight/crypto/hash-ops.h>
 
 #include <bit>
 #include <string>
@@ -89,4 +95,90 @@ HashWriter TaggedHash(const std::string& tag)
     CSHA256().Write((const unsigned char*)tag.data(), tag.size()).Finalize(taghash.begin());
     writer << taghash << taghash;
     return writer;
+}
+
+uint32_t murmur3_32(const uint8_t* key, size_t len, uint32_t seed)
+{
+    uint32_t h = seed;
+    if (len > 3) {
+        const uint32_t* key_x4 = (const uint32_t*)key;
+        size_t i = len >> 2;
+        do {
+            uint32_t k = *key_x4++;
+            k *= 0xcc9e2d51;
+            k = (k << 15) | (k >> 17);
+            k *= 0x1b873593;
+            h ^= k;
+            h = (h << 13) | (h >> 19);
+            h = (h * 5) + 0xe6546b64;
+        } while (--i);
+        key = (const uint8_t*)key_x4;
+    }
+    if (len & 3) {
+        size_t i = len & 3;
+        uint32_t k = 0;
+        key = &key[i - 1];
+        do {
+            k <<= 8;
+            k |= *key--;
+        } while (--i);
+        k *= 0xcc9e2d51;
+        k = (k << 15) | (k >> 17);
+        k *= 0x1b873593;
+        h ^= k;
+    }
+    h ^= len;
+    h ^= h >> 16;
+    h *= 0x85ebca6b;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35;
+    h ^= h >> 16;
+    return h;
+}
+
+
+void hash_scrypt(const char* input, char* output)
+{
+    scrypt_1024_1_1_256(input, output);
+}
+
+void hash_easy(const char* input, char* output)
+{
+    for (int i = 0; i < 7; i++) {
+        uint32_t hashpart = murmur3_32((uint8_t*)input + 10 * i, 10, ((uint32_t*)input)[16 - 2 * i]);
+        // LogPrintf("murmur %d = %u\n",i,hashpart);
+        ((uint32_t*)output)[i] = hashpart;
+    }
+    ((uint32_t*)output)[7] = 0;
+}
+
+void hash_argon2(const char* input, char* output)
+{
+    argon2d_hash_raw(1, 4096, 1, input, 80, input, 80, output, 32);
+}
+
+uint256 hash_x17(const char* begin, const char* end)
+{
+    return HashX17(begin, end);
+}
+
+void hash_lyra2rev2(const char* input, char* output)
+{
+    lyra2re2_hash(input, output);
+}
+
+void hash_equihash(const char* input, char* output)
+{
+    return;
+    // lyra2re2_hash(input,output);
+}
+
+void hash_cryptonight(const char* input, char* output, int len)
+{
+    cn_slow_hash((const void*)input, len, (char*)output, 1, 0);
+}
+
+void hash_yescrypt(const char* input, char* output)
+{
+    yescrypt_hash(input, output);
 }

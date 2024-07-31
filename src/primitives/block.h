@@ -7,9 +7,12 @@
 #define BITCOIN_PRIMITIVES_BLOCK_H
 
 #include <primitives/transaction.h>
+#include <primitives/pureheader.h>
+#include <primitives/algo.h>
 #include <serialize.h>
 #include <uint256.h>
 #include <util/time.h>
+
 
 /** Nodes collect new transactions into a block, hash them into a hash tree,
  * and scan through nonce values to make the block's hash satisfy proof-of-work
@@ -18,40 +21,75 @@
  * in the block is a special one that creates a new coin owned by the creator
  * of the block.
  */
-class CBlockHeader
+class CBlockHeader : public CPureBlockHeader
 {
 public:
-    // header
-    int32_t nVersion;
-    uint256 hashPrevBlock;
-    uint256 hashMerkleRoot;
-    uint32_t nTime;
-    uint32_t nBits;
-    uint32_t nNonce;
+    mutable std::shared_ptr<CAuxPow> auxpow;
 
     CBlockHeader()
     {
         SetNull();
     }
 
-    SERIALIZE_METHODS(CBlockHeader, obj) { READWRITE(obj.nVersion, obj.hashPrevBlock, obj.hashMerkleRoot, obj.nTime, obj.nBits, obj.nNonce); }
+    SERIALIZE_METHODS(CBlockHeader, obj)
+    {
+        READWRITE(AsBase<CPureBlockHeader>(obj));
+
+        if (obj.IsAuxpow()) {
+            if (ser_action.ForRead()) {
+                obj.auxpow.reset(new CAuxPow());
+            }
+            assert(obj.auxpow);
+            obj.auxpow->parentBlock.isParent = true;
+            Algo algo = AsBase<CPureBlockHeader>(obj).GetAlgo();
+            obj.auxpow->parentBlock.algoParent = algo;
+            if (algo == Algo::EQUIHASH || algo == Algo::CRYPTONIGHT)
+                obj.auxpow->vector_format = true;
+
+            if (algo == Algo::CRYPTONIGHT) {
+                obj.auxpow->parentBlock.vector_format = true;
+                obj.auxpow->keccak_hash = true;
+            }
+
+            READWRITE(TX_NO_WITNESS(*(obj.auxpow)));
+        } else {
+            if (ser_action.ForRead()) {
+                obj.auxpow.reset();
+            }
+        }
+    }
 
     void SetNull()
     {
-        nVersion = 0;
-        hashPrevBlock.SetNull();
-        hashMerkleRoot.SetNull();
-        nTime = 0;
-        nBits = 0;
-        nNonce = 0;
+        CPureBlockHeader::SetNull();
+        auxpow.reset();
     }
 
-    bool IsNull() const
+    void SetAuxpow(CAuxPow* apow)
     {
-        return (nBits == 0);
+        if (apow) {
+            Algo algo = GetAlgo();
+            if (algo == Algo::EQUIHASH || algo == Algo::CRYPTONIGHT) {
+                apow->vector_format = true;
+            }
+            apow->parentBlock.isParent = true;
+            apow->parentBlock.algoParent = algo;
+            if (algo == Algo::CRYPTONIGHT) {
+                apow->parentBlock.vector_format = true;
+                apow->keccak_hash = true;
+            }
+            auxpow.reset(apow);
+            CPureBlockHeader::SetAuxpow(true);
+        } else {
+            auxpow.reset();
+            CPureBlockHeader::SetAuxpow(false);
+        }
     }
 
-    uint256 GetHash() const;
+    void SetAuxpow(bool apow)
+    {
+        CPureBlockHeader::SetAuxpow(apow);
+    }
 
     NodeSeconds Time() const
     {
@@ -62,8 +100,29 @@ public:
     {
         return (int64_t)nTime;
     }
+
+    std::string ToString() const;
 };
 
+class CEquihashInput : private CPureBlockHeader
+{
+public:
+    CEquihashInput(const CPureBlockHeader& header)
+    {
+        CPureBlockHeader::SetNull();
+        *((CPureBlockHeader*)this) = header;
+    }
+
+    SERIALIZE_METHODS(CEquihashInput, obj)
+    {
+        READWRITE(obj.nVersion);
+        READWRITE(obj.hashPrevBlock);
+        READWRITE(obj.hashMerkleRoot);
+        READWRITE(obj.hashReserved);
+        READWRITE(obj.nTime);
+        READWRITE(obj.nBits);
+    }
+};
 
 class CBlock : public CBlockHeader
 {
@@ -75,6 +134,8 @@ public:
     mutable bool fChecked;                            // CheckBlock()
     mutable bool m_checked_witness_commitment{false}; // CheckWitnessCommitment()
     mutable bool m_checked_merkle_root{false};        // CheckMerkleRoot()
+
+    mutable std::vector<uint256> vMerkleTree;
 
     CBlock()
     {
@@ -112,6 +173,12 @@ public:
         block.nNonce         = nNonce;
         return block;
     }
+
+    uint256 BuildMerkleTree() const;
+    std::vector<uint256> GetMerkleBranch(int nIndex) const;
+    static uint256 CheckMerkleBranch(uint256 hash, const std::vector<uint256>& vMerkleBranch, int nIndex);
+    static uint256 CheckMerkleBranchKeccak(uint256 hash, const std::vector<uint256>& vMerkleBranch, int nIndex);
+
 
     std::string ToString() const;
 };

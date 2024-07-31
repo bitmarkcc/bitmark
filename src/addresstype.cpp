@@ -152,10 +152,10 @@ public:
     bool operator()(const PubKeyDestination& dest) const { return false; }
     bool operator()(const PKHash& dest) const { return true; }
     bool operator()(const ScriptHash& dest) const { return true; }
-    bool operator()(const WitnessV0KeyHash& dest) const { return true; }
-    bool operator()(const WitnessV0ScriptHash& dest) const { return true; }
-    bool operator()(const WitnessV1Taproot& dest) const { return true; }
-    bool operator()(const WitnessUnknown& dest) const { return true; }
+    bool operator()(const WitnessV0KeyHash& dest) const { return false; } // TODO: set to true after SEGWIT softfork
+    bool operator()(const WitnessV0ScriptHash& dest) const { return false; }
+    bool operator()(const WitnessV1Taproot& dest) const { return false; }
+    bool operator()(const WitnessUnknown& dest) const { return false; }
 };
 } // namespace
 

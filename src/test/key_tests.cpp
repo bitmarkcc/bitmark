@@ -18,16 +18,16 @@
 
 #include <boost/test/unit_test.hpp>
 
-static const std::string strSecret1 = "5HxWvvfubhXpYYpS3tJkw6fq9jE9j18THftkZjHHfmFiWtmAbrj";
-static const std::string strSecret2 = "5KC4ejrDjv152FGwP386VD1i2NYc5KkfSMyv1nGy1VGDxGHqVY3";
-static const std::string strSecret1C = "Kwr371tjA9u2rFSMZjTNun2PXXP3WPZu2afRHTcta6KxEUdm1vEw";
-static const std::string strSecret2C = "L3Hq7a8FEQwJkW1M2GNKDW28546Vp5miewcCzSqUD9kCAXrJdS3g";
-static const std::string addr1 = "1QFqqMUD55ZV3PJEJZtaKCsQmjLT6JkjvJ";
-static const std::string addr2 = "1F5y5E5FMc5YzdJtB9hLaUe43GDxEKXENJ";
-static const std::string addr1C = "1NoJrossxPBKfCHuJXT4HadJrXRE9Fxiqs";
-static const std::string addr2C = "1CRj2HyM1CXWzHAXLQtiGLyggNT9WQqsDs";
+static const std::string strSecret1 = "89GZNEbvN2umtxHJ19Z75YYzJ7V26JAJxcGB4bue72MGVk2w9BY";
+static const std::string strSecret2 = "8AgxTjy1wbRd6TJi8dQCUwH9yfYctFd7qZp3GN3SeRHmm3yDHnW";
+static const std::string strSecret1C = "YXVfrj38XqRwAJzv3ekhq4GBtXcfpNk6GSdyQu5LmaxTPanvvcJj";
+static const std::string strSecret2C = "YdmMo2eF9xwgK57AYffPgJaJd78ZPDYRBMpczosnCAD2ZL2aBnbA";
+static const std::string addr1 = "bVkSsJU8pi7PvEWN4jgHkLAd6jo4ZWYd16";
+static const std::string addr2 = "bWRDtv3FPPAii7SSJ6zR3dMnDEAXFk1koe";
+static const std::string addr1C = "bQ3Gyigyd12kJDkhwi9M9QSZ9qu6M4NZzR";
+static const std::string addr2C = "bGvwzZoFyDvxGDjPGQmzA9hgeWRHXDsZQo";
 
-static const std::string strAddressBad = "1HV9Lc3sNHZxwj4Zk6fB38tEmBryq2cBiF";
+static const std::string strAddressBad = "bHV9Lc3sNHZxwj4Zk6fB38tEmBryq2cBiF";
 
 
 BOOST_FIXTURE_TEST_SUITE(key_tests, BasicTestingSetup)
@@ -139,19 +139,19 @@ BOOST_AUTO_TEST_CASE(key_test1)
     BOOST_CHECK(key1.Sign(hashMsg, detsig));
     BOOST_CHECK(key1C.Sign(hashMsg, detsigc));
     BOOST_CHECK(detsig == detsigc);
-    BOOST_CHECK(detsig == ParseHex("304402205dbbddda71772d95ce91cd2d14b592cfbc1dd0aabd6a394b6c2d377bbe59d31d022014ddda21494a4e221f0824f0b8b924c43fa43c0ad57dccdaa11f81a6bd4582f6"));
+    BOOST_CHECK(detsig == ParseHex("3044022046df8017d8a087228182dc6e660eaeab4a79574f1614274df6b666a2ab1b5c5e0220350c94aa28350693e8e011089ff219b95b05d17654a69e2f9187ba51902f0511"));
     BOOST_CHECK(key2.Sign(hashMsg, detsig));
     BOOST_CHECK(key2C.Sign(hashMsg, detsigc));
     BOOST_CHECK(detsig == detsigc);
-    BOOST_CHECK(detsig == ParseHex("3044022052d8a32079c11e79db95af63bb9600c5b04f21a9ca33dc129c2bfa8ac9dc1cd5022061d8ae5e0f6c1a16bde3719c64c2fd70e404b6428ab9a69566962e8771b5944d"));
+    BOOST_CHECK(detsig == ParseHex("30440220197cb0f29b84badfbf2257f6176702a769401d3ead7da0c05bf52e731516b7fa02201c267f9648b9c981eed907d87ba84cf4a841afe900118220d534adec42d7f934"));
     BOOST_CHECK(key1.SignCompact(hashMsg, detsig));
     BOOST_CHECK(key1C.SignCompact(hashMsg, detsigc));
-    BOOST_CHECK(detsig == ParseHex("1c5dbbddda71772d95ce91cd2d14b592cfbc1dd0aabd6a394b6c2d377bbe59d31d14ddda21494a4e221f0824f0b8b924c43fa43c0ad57dccdaa11f81a6bd4582f6"));
-    BOOST_CHECK(detsigc == ParseHex("205dbbddda71772d95ce91cd2d14b592cfbc1dd0aabd6a394b6c2d377bbe59d31d14ddda21494a4e221f0824f0b8b924c43fa43c0ad57dccdaa11f81a6bd4582f6"));
+    BOOST_CHECK(detsig == ParseHex("1b46df8017d8a087228182dc6e660eaeab4a79574f1614274df6b666a2ab1b5c5e350c94aa28350693e8e011089ff219b95b05d17654a69e2f9187ba51902f0511"));
+    BOOST_CHECK(detsigc == ParseHex("1f46df8017d8a087228182dc6e660eaeab4a79574f1614274df6b666a2ab1b5c5e350c94aa28350693e8e011089ff219b95b05d17654a69e2f9187ba51902f0511"));
     BOOST_CHECK(key2.SignCompact(hashMsg, detsig));
     BOOST_CHECK(key2C.SignCompact(hashMsg, detsigc));
-    BOOST_CHECK(detsig == ParseHex("1c52d8a32079c11e79db95af63bb9600c5b04f21a9ca33dc129c2bfa8ac9dc1cd561d8ae5e0f6c1a16bde3719c64c2fd70e404b6428ab9a69566962e8771b5944d"));
-    BOOST_CHECK(detsigc == ParseHex("2052d8a32079c11e79db95af63bb9600c5b04f21a9ca33dc129c2bfa8ac9dc1cd561d8ae5e0f6c1a16bde3719c64c2fd70e404b6428ab9a69566962e8771b5944d"));
+    BOOST_CHECK(detsig == ParseHex("1bbb44c6819f7fa4567fa9f79380e704f898ea24fa42b95ec44ed955ed2dd5b8df7326fe9f0ab3606fe6b4c13b621f62402710f07b118ddc4080f882a317421f99"));
+    BOOST_CHECK(detsigc == ParseHex("1fbb44c6819f7fa4567fa9f79380e704f898ea24fa42b95ec44ed955ed2dd5b8df7326fe9f0ab3606fe6b4c13b621f62402710f07b118ddc4080f882a317421f99"));
 }
 
 BOOST_AUTO_TEST_CASE(key_signature_tests)
@@ -217,18 +217,19 @@ BOOST_AUTO_TEST_CASE(key_key_negation)
     key.Sign(hash, vch_sig);
 
     // negate the key twice
-    BOOST_CHECK(key.GetPubKey().data()[0] == 0x03);
+
+    BOOST_CHECK(key.GetPubKey().data()[0] == 0x02);
     key.Negate();
     // after the first negation, the signature must be different
     key.Sign(hash, vch_sig_cmp);
     BOOST_CHECK(vch_sig_cmp != vch_sig);
-    BOOST_CHECK(key.GetPubKey().data()[0] == 0x02);
+    BOOST_CHECK(key.GetPubKey().data()[0] == 0x03);
     key.Negate();
     // after the second negation, we should have the original key and thus the
     // same signature
     key.Sign(hash, vch_sig_cmp);
     BOOST_CHECK(vch_sig_cmp == vch_sig);
-    BOOST_CHECK(key.GetPubKey().data()[0] == 0x03);
+    BOOST_CHECK(key.GetPubKey().data()[0] == 0x02);
 }
 
 static CPubKey UnserializePubkey(const std::vector<uint8_t>& data)

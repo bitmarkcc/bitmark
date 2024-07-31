@@ -2,18 +2,18 @@
 
 *.exe
 *.pdb
-src/bitcoin
-src/bitcoind
-src/bitcoin-cli
-src/bitcoin-gui
-src/bitcoin-node
-src/bitcoin-tx
-src/bitcoin-util
-src/bitcoin-chainstate
-src/bitcoin-wallet
+src/bitmark
+src/bitmarkd
+src/bitmark-cli
+src/bitmark-gui
+src/bitmark-node
+src/bitmark-tx
+src/bitmark-util
+src/bitmark-chainstate
+src/bitmark-wallet
 src/test/fuzz/fuzz
-src/test/test_bitcoin
-src/qt/test/test_bitcoin-qt
+src/test/test_bitmark
+src/qt/test/test_bitmark-qt
 
 # autoreconf
 Makefile.in
@@ -92,15 +92,15 @@ src/qt/bitcoin-qt.includes
 *.qm
 Makefile
 !depends/Makefile
-src/qt/bitcoin-qt
-Bitcoin-Qt.app
+src/qt/bitmark-qt
+Bitmark-Qt.app
 
 # Qt Creator
 Makefile.am.user
 
 # Unit-tests
 Makefile.test
-bitcoin-qt_test
+bitmark-qt_test
 
 # Resources cpp
 qrc_*.cpp
@@ -116,7 +116,7 @@ releases
 *.gcno
 *.gcda
 /*.info
-test_bitcoin.coverage/
+test_bitmark.coverage/
 total.coverage/
 fuzz.coverage/
 coverage_percent.txt

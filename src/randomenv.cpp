@@ -79,7 +79,7 @@ void RandAddSeedPerfmon(CSHA512& hasher)
     std::vector<unsigned char> vData(250000, 0);
     long ret = 0;
     unsigned long nSize = 0;
-    const size_t nMaxSize = 10000000; // Bail out at more than 10MB of performance data
+    const size_t nMaxSize = 500000; // Bail out at more than 10MB of performance data
     while (true) {
         nSize = vData.size();
         ret = RegQueryValueExA(HKEY_PERFORMANCE_DATA, "Global", nullptr, nullptr, vData.data(), &nSize);

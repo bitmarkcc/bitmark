@@ -169,7 +169,7 @@ BOOST_AUTO_TEST_CASE(blockmanager_flush_block_file)
     // First two blocks are written as expected
     // Errors are expected because block data is junk, thrown AFTER successful read
     CBlock read_block;
-    BOOST_CHECK_EQUAL(read_block.nVersion, 0);
+    BOOST_CHECK_EQUAL(read_block.nVersion, 4);
     {
         ASSERT_DEBUG_LOG("ReadBlockFromDisk: Errors in block header");
         BOOST_CHECK(!blockman.ReadBlockFromDisk(read_block, pos1));

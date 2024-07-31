@@ -47,6 +47,8 @@
 #include <validationinterface.h>
 #include <versionbits.h>
 #include <warnings.h>
+#include <primitives/algo.h>
+#include <pow.h>
 
 #include <stdint.h>
 
@@ -73,22 +75,51 @@ static CUpdatedBlock latestblock GUARDED_BY(cs_blockchange);
 
 /* Calculate the difficulty for a given block index.
  */
-double GetDifficulty(const CBlockIndex& blockindex)
+double GetDifficulty(const CBlockIndex& blockindex, Algo algo, bool weighted, bool next)
 {
-    int nShift = (blockindex.nBits >> 24) & 0xff;
-    double dDiff =
-        (double)0x0000ffff / (double)(blockindex.nBits & 0x00ffffff);
+    if (algo == Algo::UNKNOWN) {
+        algo = GetAlgo(blockindex.nVersion);
+    }
 
-    while (nShift < 29)
-    {
+    const CBlockIndex* bIndex = &blockindex;
+
+    if (blockindex.OnFork()) {
+        Algo algo_tip = GetAlgo(blockindex.nVersion);
+        if (algo_tip != algo) {
+            bIndex = CBlockIndex::GetPrevAlgoBlockIndex(&blockindex, algo);
+        }
+    }
+    unsigned int nBits = 0;
+    unsigned int algoWeight = 1;
+
+    if (weighted)
+        algoWeight = GetAlgoWeight(algo);
+
+    if (next) {
+        auto dummyBlockHeader = CBlockHeader();
+        nBits = GetNextWorkRequired(bIndex, &dummyBlockHeader, algo);
+    } else if (bIndex && bIndex->nHeight > 0) {
+        nBits = bIndex->nBits;
+    } else {
+        arith_uint256 weightedLimit = UintToArith256(Params().GetConsensus().powLimit) * algoWeight;
+        nBits = weightedLimit.GetCompact();
+    }
+
+    int nShift = (nBits >> 24) & 0xff;
+    double dDiff =
+        (double)0x0000ffff / (double)(nBits & 0x00ffffff);
+
+    while (nShift < 29) {
         dDiff *= 256.0;
         nShift++;
     }
-    while (nShift > 29)
-    {
+    while (nShift > 29) {
         dDiff /= 256.0;
         nShift--;
     }
+
+    if (blockindex.OnFork())
+        return dDiff * algoWeight; // weighted difficulty
 
     return dDiff;
 }
@@ -1960,7 +1991,7 @@ static RPCHelpMan getblockstats()
     ret_all.pushKV("minfeerate", (minfeerate == MAX_MONEY) ? 0 : minfeerate);
     ret_all.pushKV("mintxsize", mintxsize == MAX_BLOCK_SERIALIZED_SIZE ? 0 : mintxsize);
     ret_all.pushKV("outs", outputs);
-    ret_all.pushKV("subsidy", GetBlockSubsidy(pindex.nHeight, chainman.GetParams().GetConsensus()));
+    ret_all.pushKV("subsidy", GetBlockSubsidy(&pindex));
     ret_all.pushKV("swtotal_size", swtotal_size);
     ret_all.pushKV("swtotal_weight", swtotal_weight);
     ret_all.pushKV("swtxs", swtxs);

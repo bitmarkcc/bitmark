@@ -13,6 +13,7 @@
 #include <txmempool.h>
 #include <util/any.h>
 #include <validation.h>
+#include <wallet/context.h>
 
 #include <any>
 

@@ -10,10 +10,12 @@
 #include <crypto/common.h>
 #include <crypto/ripemd160.h>
 #include <crypto/sha256.h>
+#include <crypto/cryptonight/common/c_keccak.h>
 #include <prevector.h>
 #include <serialize.h>
 #include <span.h>
 #include <uint256.h>
+#include <openssl/sha.h>
 
 #include <string>
 #include <vector>
@@ -87,6 +89,34 @@ inline uint256 Hash(const T1& in1, const T2& in2) {
     return result;
 }
 
+/** Compute the 256-bit hash of the concatenation of two objects. */
+template <typename T1>
+inline uint256 Hash256(const T1 pbegin, const T1 pend)
+{
+    static unsigned char pblank[1];
+    uint256 hash1;
+    SHA256((pbegin == pend ? pblank : (unsigned char*)&pbegin[0]), (pend - pbegin) * sizeof(pbegin[0]), (unsigned char*)&hash1);
+    uint256 hash2;
+    SHA256((unsigned char*)&hash1, sizeof(hash1), (unsigned char*)&hash2);
+    return hash2;
+}
+
+template <typename T1, typename T2>
+inline uint256 Hash(const T1 p1begin, const T1 p1end,
+                    const T2 p2begin, const T2 p2end)
+{
+    static unsigned char pblank[1];
+    uint256 hash1;
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+    SHA256_Update(&ctx, (p1begin == p1end ? pblank : (unsigned char*)&p1begin[0]), (p1end - p1begin) * sizeof(p1begin[0]));
+    SHA256_Update(&ctx, (p2begin == p2end ? pblank : (unsigned char*)&p2begin[0]), (p2end - p2begin) * sizeof(p2begin[0]));
+    SHA256_Final((unsigned char*)&hash1, &ctx);
+    uint256 hash2;
+    SHA256((unsigned char*)&hash1, sizeof(hash1), (unsigned char*)&hash2);
+    return hash2;
+}
+
 /** Compute the 160-bit hash an object. */
 template<typename T1>
 inline uint160 Hash160(const T1& in1)
@@ -95,6 +125,68 @@ inline uint160 Hash160(const T1& in1)
     CHash160().Write(MakeUCharSpan(in1)).Finalize(result);
     return result;
 }
+
+template <typename T1>
+inline uint256 KeccakHash(const T1 pbegin, const T1 pend)
+{
+    static unsigned char pblank[1];
+    unsigned char md[200];
+    int ret = keccak((pbegin == pend ? pblank : (unsigned char*)&pbegin[0]), (pend - pbegin) * sizeof(pbegin[0]), md, 200);
+    uint256 hash;
+    memcpy(&hash, md, 32);
+    return hash;
+}
+
+template <typename T1>
+inline uint256 KeccakHashCBTX(const T1 pbegin, const T1 pend)
+{
+    static unsigned char pblank[1];
+    unsigned char md[200];
+    unsigned char* input = (pbegin == pend ? pblank : (unsigned char*)&pbegin[0]);
+    int input_size = (pend - pbegin) * sizeof(pbegin[0]);
+    /*LogPrintf("do keccakhashcbtx (%d) on\n",input_size);
+    for (int i=0; i<input_size; i++) {
+      LogPrintf("%02x",input[i]);
+    }
+    LogPrintf("\n");*/
+    int ret = keccak((pbegin == pend ? pblank : (unsigned char*)&pbegin[0]), (pend - pbegin) * sizeof(pbegin[0]), md, 200);
+    const char* hash2 = "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a";
+    const char* hash3 = "0000000000000000000000000000000000000000000000000000000000000000";
+    for (int i = 0; i < 32; i++) {
+        ret = sscanf(hash2 + 2 * i, "%2hhx", md + 32 + i);
+        ret = sscanf(hash3 + 2 * i, "%2hhx", md + 64 + i);
+    }
+    /*LogPrintf("do 2nd keccakhashcbtx on\n");
+    for (int i=0; i<96; i++) {
+      LogPrintf("%02x",md[i]);
+    }
+    LogPrintf("\n");*/
+    ret = keccak(md, 96, md, 200);
+    /*LogPrintf("output=\n");
+    for (int i=0; i<32; i++) {
+      LogPrintf("%02x",md[i]);
+    }
+    LogPrintf("\n");*/
+    uint256 hash;
+    memcpy(&hash, md, 32);
+    return hash;
+}
+
+template <typename T1, typename T2>
+inline uint256 KeccakHash(const T1 p1begin, const T1 p1end, const T2 p2begin, const T2 p2end)
+{
+    static unsigned char pblank[1];
+    size_t input_size = (p1end - p1begin) * sizeof(p1begin[0]) + (p2end - p2begin) * sizeof(p2begin[0]);
+    unsigned char* input = (unsigned char*)malloc(input_size);
+    memcpy(input, (p1begin == p1end ? pblank : (unsigned char*)&p1begin[0]), (p1end - p1begin) * sizeof(p1begin[0]));
+    memcpy(input + (p1end - p1begin) * sizeof(p1begin[0]), (p2begin == p2end ? pblank : (unsigned char*)&p2begin[0]), (p2end - p2begin) * sizeof(p2begin[0]));
+    unsigned char md[200];
+    int ret = keccak(input, input_size, md, 200);
+    uint256 hash;
+    memcpy(&hash, md, 32);
+    return hash;
+}
+
 
 /** A writer stream (for serialization) that computes a 256-bit hash. */
 class HashWriter
@@ -225,5 +317,14 @@ inline uint160 RIPEMD160(Span<const unsigned char> data)
     CRIPEMD160().Write(data.data(), data.size()).Finalize(result.begin());
     return result;
 }
+
+void hash_scrypt(const char* input, char* output);
+void hash_argon2(const char* input, char* output);
+uint256 hash_x17(const char* begin, const char* end);
+void hash_lyra2rev2(const char* input, char* output);
+void hash_equihash(const char* input, char* output);
+void hash_cryptonight(const char* input, char* output, int len);
+void hash_yescrypt(const char* input, char* output);
+void hash_easy(const char* input, char* output); // special hash for testing
 
 #endif // BITCOIN_HASH_H

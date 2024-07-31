@@ -59,7 +59,7 @@
         <translation type="unfinished">Marii</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Nyora kero ye Bitcoin (sekuti %1)</translation>
     </message>
     <message>

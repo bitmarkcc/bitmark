@@ -319,7 +319,7 @@ Il n’est possible de signer qu’avec les adresses de type « legacy ».</tr
         <translation type="unfinished">Montant</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Saisir une adresse Bitcoin (p. ex. %1)</translation>
     </message>
     <message>
@@ -1106,7 +1106,7 @@ If this wallet contains any solvable but not watched scripts, a different and ne
 
 The migration process will create a backup of the wallet before migrating. This backup file will be named &lt;wallet name&gt;-&lt;timestamp&gt;.legacy.bak and can be found in the directory for this wallet. In the event of an incorrect migration, the backup can be restored with the "Restore Wallet" functionality.</source>
         <translation type="unfinished">La migration du porte-monnaie le convertira en un ou plusieurs porte-monnaie de descripteurs. Une nouvelle sauvegarde du porte-monnaie devra être effectuée.
-Si ce porte-monnaie contient des scripts juste-regarder, un nouveau porte-monnaie sera créé qui comprendra ces scripts juste-regarder. 
+Si ce porte-monnaie contient des scripts juste-regarder, un nouveau porte-monnaie sera créé qui comprendra ces scripts juste-regarder.
 Si ce porte-monnaie comprend des scripts solubles, mais non surveillés, un nouveau porte-monnaie différent sera créé comportant ces scripts.
 
 Le processus de migration créera une sauvegarde du porte-monnaie avant migration. Ce fichier de sauvegarde sera nommé &lt;wallet name&gt;-&lt;timestamp&gt;.legacy.bak et se trouvera dans le dossier de ce porte-monnaie. En cas de migration erronée, la sauvegarde peut être restaurée avec la fonction « Restaurer le porte-monnaie ».</translation>
@@ -1494,7 +1494,7 @@ Le processus de migration créera une sauvegarde du porte-monnaie avant migratio
         <translation type="unfinished">Les transactions récentes ne sont peut-être pas encore visibles et par conséquent le solde de votre porte-monnaie est peut-être erroné. Ces renseignements seront justes quand votre porte-monnaie aura fini de se synchroniser avec le réseau Bitcoin, comme décrit ci-dessous.</translation>
     </message>
     <message>
-        <source>Attempting to spend bitcoins that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
+        <source>Attempting to spend bitmarks that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
         <translation type="unfinished">Toute tentative de dépense de bitcoins affectés par des transactions qui ne sont pas encore affichées ne sera pas acceptée par le réseau.</translation>
     </message>
     <message>

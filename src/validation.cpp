@@ -64,6 +64,8 @@
 #include <util/translation.h>
 #include <validationinterface.h>
 #include <warnings.h>
+#include <chainparams.h>
+#include <node/miner.h>
 
 #include <algorithm>
 #include <cassert>
@@ -112,6 +114,8 @@ static constexpr int PRUNE_LOCK_BUFFER{10};
 GlobalMutex g_best_block_mutex;
 std::condition_variable g_best_block_cv;
 uint256 g_best_block;
+
+Algo miningAlgo{Algo::SCRYPT};
 
 const CBlockIndex* Chainstate::FindForkInGlobalIndex(const CBlockLocator& locator) const
 {
@@ -1688,17 +1692,244 @@ PackageMempoolAcceptResult ProcessNewPackage(Chainstate& active_chainstate, CTxM
     return result;
 }
 
-CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
+int64_t get_mpow_ms_correction(const CBlockIndex* p)
 {
-    int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
-    // Force block reward to zero when right shift is undefined.
-    if (halvings >= 64)
-        return 0;
+    CBlockIndex* pprev = p->pprev;
+    while (pprev) {
+        if (!pprev->OnFork()) {
+            if (pprev->nHeight == 0) {
+                return 2000000000 / NUM_ALGOS;
+            }
+            return pprev->nMoneySupply / NUM_ALGOS;
+        }
+        pprev = pprev->pprev;
+    }
+    // LogPrintf("just return 0 for correction\n");
+    return 0;
+}
 
-    CAmount nSubsidy = 50 * COIN;
-    // Subsidy is cut in half every 210,000 blocks which will occur approximately every 4 years.
-    nSubsidy >>= halvings;
-    return nSubsidy;
+bool update_ssf(int nVersion)
+{
+    return nVersion & BLOCK_VERSION_UPDATE_SSF;
+}
+
+CBigNum get_ssf(const CBlockIndex* pindex)
+{
+    CBigNum scalingFactor = CBigNum(0); // ensures that it has no effect
+    const CBlockIndex* pprev_algo = pindex;
+    CBigNum hashes_peak = CBigNum(0);
+    CBigNum hashes_cur = CBigNum(0);
+    for (int i = 0; i < 365; i++) { // use at most a year's worth of history
+        // LogPrintf("i=%d\n",i);
+        pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo);
+        if (!pprev_algo) {
+            break;
+        }
+        CBigNum hashes = pprev_algo->GetBlockWork();
+        unsigned int time_f = pprev_algo->GetMedianTimePast();
+        unsigned int time_i = 0;
+        for (int j = 0; j < nSSF - 1; j++) { // nSSF blocks = 24 hours, using only blocks from the same algo as the target block
+            pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo);
+            if (!pprev_algo) {
+                hashes = CBigNum(0);
+                break;
+            }
+            hashes += pprev_algo->GetBlockWork();
+            time_i = pprev_algo->GetMedianTimePast();
+        }
+        CBlockIndex* pprev_algo_time = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo);
+
+        if (pprev_algo_time) {
+            time_i = pprev_algo_time->GetMedianTimePast();
+        } else { // get prefork block time
+            const CBlockIndex* blockindex = pprev_algo;
+            while (blockindex && blockindex->OnFork()) {
+                blockindex = blockindex->pprev;
+            }
+            if (blockindex) time_i = blockindex->GetBlockTime();
+        }
+        if (time_f > time_i) {
+            time_f -= time_i;
+        } else {
+            // LogPrintf("time_f = %d while time_i = %d\n",time_f,time_i);
+            return scalingFactor;
+        }
+        // LogPrintf("hashes = %lu, time = %u\n",hashes.getulong(),time_f);
+        hashes = (hashes * 100000000) / time_f;
+        // LogPrintf("hashes per sec = %f\n",hashes);
+        if (hashes > hashes_peak) hashes_peak = hashes;
+        if (i == 0) hashes_cur = hashes;
+    }
+    if (hashes_peak > CBigNum(0) && hashes_cur != hashes_peak) {
+        if (pindex->OnFork2()) {
+            scalingFactor = (100000000 * hashes_peak) / (hashes_peak - hashes_cur);
+        } else {
+            scalingFactor = CBigNum(((100000000 * hashes_peak) / (hashes_peak - hashes_cur)).getuint());
+        }
+    }
+    // LogPrintf("return scaling factor %lu\n",scalingFactor);
+    return scalingFactor;
+}
+
+double GetNextBlockReward(const CBlockIndex* tip, Algo algo, bool noScale)
+{
+    if (tip == NULL)
+          return 0.;
+
+    if (algo == Algo::UNKNOWN) {
+        algo = GetAlgo(tip->nVersion);
+    }
+
+    CBlock block;
+    block.nVersion = 4;
+    block.SetAlgo(algo);
+    CBlockIndex indexDummy(block);
+    indexDummy.pprev = const_cast<CBlockIndex*>(tip);
+    indexDummy.nHeight = tip->nHeight + 1;
+
+    return GetBlockSubsidy(&indexDummy, noScale);
+}
+
+CAmount GetBlockSubsidy(const CBlockIndex* pindex, bool noScale)
+{
+    if (pindex == NULL) {
+        return 0;
+    }
+
+    // for testnet
+    int nHeight = pindex->nHeight;
+    Consensus::Params params = Params().GetConsensus();
+    bool onForkNow = pindex->OnFork();
+
+    if (!onForkNow) {
+        int64_t nHalfReward = 10 * COIN;
+        int64_t nSubsidy = 0;
+        int halvings = nHeight / params.nSubsidyHalvingInterval;
+
+        // Force block reward to zero after reward would drop below 0.1 marks.
+        if (halvings >= 18)
+            return 0;
+
+        // Halving:	Subsidy is cut in half every 788,000 blocks which will occur approximately every 3 years (36 months).
+        // Quartering:	Subsidy has an interim reduction every 394,000 blocks, approximately every 1.5 years  (18 months)
+        nSubsidy = (nHalfReward >> halvings) + (nHalfReward >> ((nHeight + params.SubsidyInterimInterval()) / params.nSubsidyHalvingInterval));
+
+        return nSubsidy;
+    }
+    // And after fork 1, we will halve & quarter based on how many coins have been emitted
+    CBigNum emitted;
+
+    CBlockIndex* pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pindex);
+
+    if (pprev_algo) { // make emitted 8 times bigger so that the target points are divided in 8 for each algo
+        emitted = NUM_ALGOS * pprev_algo->nMoneySupply;
+    } else {
+        // LogPrintf("emitted uses mpow correction \n");
+        emitted = NUM_ALGOS * get_mpow_ms_correction(pindex);
+    }
+
+    CBigNum scalingFactor = CBigNum(0);
+    if (onForkNow && !noScale) {
+        scalingFactor = pindex->subsidyScalingFactor;
+        if (!scalingFactor.getuint()) { // find the key block and recalculate
+            const CBlockIndex* pprev_algo = pindex;
+            do {
+                if (update_ssf(pprev_algo->nVersion)) {
+                    scalingFactor = get_ssf(pprev_algo);
+                    pindex->subsidyScalingFactor = scalingFactor;
+                    break;
+                }
+                pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo);
+            } while (pprev_algo);
+        }
+    } else {
+        scalingFactor = 0;
+    }
+
+    int64_t baseSubsidy = 0;
+    // LogPrintf("for height %d use scaling factor %f\n",nHeight,scalingFactor);
+
+    // Generated by generate_emitted_points.py
+    if (emitted < 788000000000000) { // Q 1 H 0 height 394000
+        baseSubsidy = 2000000000;
+    } else if (emitted < 1379000000000000) { // Q 1 H 1 height 788000
+        baseSubsidy = 1500000000;
+    } else if (emitted < 1773000000000000) { // Q 2 H 1 height 1182000
+        baseSubsidy = 1000000000;
+    } else if (emitted < 2068500000000000) { // Q 2 H 2 height 1576000
+        baseSubsidy = 750000000;
+    } else if (emitted < 2265500000000000) { // Q 3 H 2 height 1970000
+        baseSubsidy = 500000000;
+    } else if (emitted < 2413250000000000) { // Q 3 H 3 height 2364000
+        baseSubsidy = 375000000;
+    } else if (emitted < 2511750000000000) { // Q 4 H 3 height 2758000
+        baseSubsidy = 250000000;
+    } else if (emitted < 2585625000000000) { // Q 4 H 4 height 3152000
+        baseSubsidy = 187500000;
+    } else if (emitted < 2634875000000000) { // Q 5 H 4 height 3546000
+        baseSubsidy = 125000000;
+    } else if (emitted < 2671812500000000) { // Q 5 H 5 height 3940000
+        baseSubsidy = 93750000;
+    } else if (emitted < 2696437500000000) { // Q 6 H 5 height 4334000
+        baseSubsidy = 62500000;
+    } else if (emitted < 2714906250000000) { // Q 6 H 6 height 4728000
+        baseSubsidy = 46875000;
+    } else if (emitted < 2727218750000000) { // Q 7 H 6 height 5122000
+        baseSubsidy = 31250000;
+    } else if (emitted < 2736453125000000) { // Q 7 H 7 height 5516000
+        baseSubsidy = 23437500;
+    } else if (emitted < 2742609375000000) { // Q 8 H 7 height 5910000
+        baseSubsidy = 15625000;
+    } else if (emitted < 2747226562500000) { // Q 8 H 8 height 6304000
+        baseSubsidy = 11718750;
+    } else if (emitted < 2750304687500000) { // Q 9 H 8 height 6698000
+        baseSubsidy = 7812500;
+    } else if (emitted < 2752613281250000) { // Q 9 H 9 height 7092000
+        baseSubsidy = 5859375;
+    } else if (emitted < 2754152343750000) { // Q 10 H 9 height 7486000
+        baseSubsidy = 3906250;
+    } else if (emitted < 2755306640428000) { // Q 10 H 10 height 7880000
+        baseSubsidy = 2929687;
+    } else if (emitted < 2756076171284000) { // Q 11 H 10 height 8274000
+        baseSubsidy = 1953124;
+    } else if (emitted < 2756653319426000) { // Q 11 H 11 height 8668000
+        baseSubsidy = 1464843;
+    } else if (emitted < 2757038084854000) { // Q 12 H 11 height 9062000
+        baseSubsidy = 976562;
+    } else if (emitted < 2757326658728000) { // Q 12 H 12 height 9456000
+        baseSubsidy = 732421;
+    } else if (emitted < 2757519041048000) { // Q 13 H 12 height 9850000
+        baseSubsidy = 488280;
+    } else if (emitted < 2757663327788000) { // Q 13 H 13 height 10244000
+        baseSubsidy = 366210;
+    } else if (emitted < 2757759518948000) { // Q 14 H 13 height 10638000
+        baseSubsidy = 244140;
+    } else if (emitted < 2757831662318000) { // Q 14 H 14 height 11032000
+        baseSubsidy = 183105;
+    } else if (emitted < 2757879757898000) { // Q 15 H 14 height 11426000
+        baseSubsidy = 122070;
+    } else if (emitted < 2757915829386000) { // Q 15 H 15 height 11820000
+        baseSubsidy = 91552;
+    } else if (emitted < 2757939876782000) { // Q 16 H 15 height 12214000
+        baseSubsidy = 61034;
+    } else if (emitted < 2757957912132000) { // Q 16 H 16 height 12608000
+        baseSubsidy = 45775;
+    } else if (emitted < 2757969935436000) { // Q 17 H 16 height 13002000
+        baseSubsidy = 30516;
+    } else if (emitted < 2757978952914000) { // Q 17 H 17 height 13396000
+        baseSubsidy = 22887;
+    } else if (emitted < 2757984964566000) { // Q 18 H 17 height 13790000
+        baseSubsidy = 15258;
+    }
+
+    // Total Emission		        27579894.73108000
+    // -------------------------------------------------------------------------------------------------------------------
+    // Total of   27,579,894.73,108,000   coins emitted
+    //          Twenty seven million, five hundred seventy nine thousand, eight hundred ninety four   Bitmarks (MARKS) and
+    // 		   Seventy three million, one hundred and eight thousand   Bitmark-Satoshis.
+
+    if (!scalingFactor) return baseSubsidy;
+    return baseSubsidy - ((CBigNum(baseSubsidy) * CBigNum(100000000)) / scalingFactor).getuint() / 2;
 }
 
 CoinsViews::CoinsViews(DBParams db_params, CoinsViewOptions options)
@@ -1799,7 +2030,8 @@ void Chainstate::CheckForkWarningConditions()
         return;
     }
 
-    if (m_chainman.m_best_invalid && m_chainman.m_best_invalid->nChainWork > m_chain.Tip()->nChainWork + (GetBlockProof(*m_chain.Tip()) * 6)) {
+    if (m_chainman.m_best_invalid &&
+        m_chainman.m_best_invalid->nChainWork > m_chain.Tip()->nChainWork + UintToArith256(m_chain.Tip()->GetBlockWorkAv().getuint256()) * 30) {
         LogPrintf("%s: Warning: Found invalid chain at least ~6 blocks longer than our best chain.\nChain state database corruption likely.\n", __func__);
         SetfLargeWorkInvalidChainFound(true);
     } else {
@@ -2057,8 +2289,10 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
     // Note: the blocks specified here are different than the ones used in ConnectBlock because DisconnectBlock
     // unwinds the blocks in reverse. As a result, the inconsistency is not discovered until the earlier
     // blocks with the duplicate coinbase transactions are disconnected.
-    bool fEnforceBIP30 = !((pindex->nHeight==91722 && pindex->GetBlockHash() == uint256S("0x00000000000271a2dc26e7667f8419f2e15416dc6955e5a6c6cdf3f2574dd08e")) ||
-                           (pindex->nHeight==91812 && pindex->GetBlockHash() == uint256S("0x00000000000af0aed4792b1acee3d966af36cf5def14935db8de83d6f9306f2f")));
+
+    bool fEnforceBIP30 = true;
+ /*   bool fEnforceBIP30 = !((pindex->nHeight==91722 && pindex->GetBlockHash() == uint256S("0x00000000000271a2dc26e7667f8419f2e15416dc6955e5a6c6cdf3f2574dd08e")) ||
+                           (pindex->nHeight==91812 && pindex->GetBlockHash() == uint256S("0x00000000000af0aed4792b1acee3d966af36cf5def14935db8de83d6f9306f2f")));*/
 
     // undo transactions in reverse order
     for (int i = block.vtx.size() - 1; i >= 0; i--) {
@@ -2222,6 +2456,37 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         return error("%s: Consensus::CheckBlock: %s", __func__, state.ToString());
     }
 
+    bool onForkNow = pindex->OnFork();
+
+        // Check SSF
+    if (onForkNow) { // new multi algo blocks are identified like this
+        CBlockIndex* pprev_algo = pindex;
+        if (update_ssf(pindex->nVersion)) {
+            for (int i = 0; i < nSSF; i++) {
+                pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo);
+                if (!pprev_algo) break;
+                if (update_ssf(pprev_algo->nVersion)) {
+                    if (i != nSSF - 1) {
+                        LogPrintf("marked with update ssf flag, but not at right time: i=%d\n", i);
+                        return false; // make sure the SSF update block happens every nSSF blocks
+                    }
+                }
+            }
+        } else {
+            for (int i = 0; i < nSSF; i++) {
+                pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo);
+                if (!pprev_algo) break;
+                if (update_ssf(pprev_algo->nVersion)) {
+                    if (i == nSSF - 1) {
+                        LogPrintf("Should be marked with update ssf flag\n");
+                        return false; // make sure the SSF update block happens every nSSF blocks
+                    }
+                }
+            }
+        }
+    }
+
+
     // verify that the view's current state corresponds to the previous block
     uint256 hashPrevBlock = pindex->pprev == nullptr ? uint256() : pindex->pprev->GetBlockHash();
     assert(hashPrevBlock == view.GetBestBlock());
@@ -2231,6 +2496,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // Special case for the genesis block, skipping connection of its transactions
     // (its coinbase is unspendable)
     if (block_hash == params.GetConsensus().hashGenesisBlock) {
+        pindex->nMoneySupply = 2000000000;
+
         if (!fJustCheck)
             view.SetBestBlock(pindex->GetBlockHash());
         return true;
@@ -2274,6 +2541,16 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
              Ticks<SecondsDouble>(time_check),
              Ticks<MillisecondsDouble>(time_check) / num_blocks_total);
 
+    CBlockIndex* pprev_algo = 0;
+    if (!fJustCheck) pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pindex);
+    if (!fJustCheck && onForkNow) { // set scaling factor
+        if (update_ssf(pindex->nVersion)) {
+            pindex->subsidyScalingFactor = get_ssf(pindex);
+        } else if (pprev_algo) {
+            pindex->subsidyScalingFactor = pprev_algo->subsidyScalingFactor;
+        }
+    }
+
     // Do not allow blocks that contain transactions which 'overwrite' older transactions,
     // unless those are already completely spent.
     // If such overwrites are allowed, coinbases and transactions depending upon those
@@ -2312,7 +2589,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // future consensus change to do a new and improved version of BIP34 that
     // will actually prevent ever creating any duplicate coinbases in the
     // future.
-    static constexpr int BIP34_IMPLIES_BIP30_LIMIT = 1983702;
+    //static constexpr int BIP34_IMPLIES_BIP30_LIMIT = 1983702;
 
     // There is no potential to create a duplicate coinbase at block 209,921
     // because this is still before the BIP34 height and so explicit BIP30
@@ -2349,7 +2626,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // TODO: Remove BIP30 checking from block height 1,983,702 on, once we have a
     // consensus change that ensures coinbases at those heights cannot
     // duplicate earlier coinbases.
-    if (fEnforceBIP30 || pindex->nHeight >= BIP34_IMPLIES_BIP30_LIMIT) {
+    if (fEnforceBIP30) {
         for (const auto& tx : block.vtx) {
             for (size_t o = 0; o < tx->vout.size(); o++) {
                 if (view.HaveCoin(COutPoint(tx->GetHash(), o))) {
@@ -2466,16 +2743,21 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
              Ticks<SecondsDouble>(time_connect),
              Ticks<MillisecondsDouble>(time_connect) / num_blocks_total);
 
-    CAmount blockReward = nFees + GetBlockSubsidy(pindex->nHeight, params.GetConsensus());
+    CAmount blockReward = nFees + GetBlockSubsidy(pindex);
     if (block.vtx[0]->GetValueOut() > blockReward) {
         LogPrintf("ERROR: ConnectBlock(): coinbase pays too much (actual=%d vs limit=%d)\n", block.vtx[0]->GetValueOut(), blockReward);
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-amount");
+    }
+
+    if (block.vtx[0]->GetValueOut() < blockReward) {
+        LogPrintf("coinbase pays less than block value, coinbase value: %d, expected block reward: %d\n", block.vtx[0]->GetValueOut(), blockReward);
     }
 
     if (!control.Wait()) {
         LogPrintf("ERROR: %s: CheckQueue failed\n", __func__);
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "block-validation-failed");
     }
+
     const auto time_4{SteadyClock::now()};
     time_verify += time_4 - time_2;
     LogPrint(BCLog::BENCH, "    - Verify %u txins: %.2fms (%.3fms/txin) [%.2fs (%.2fms/blk)]\n", nInputs - 1,
@@ -2486,6 +2768,24 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
     if (fJustCheck)
         return true;
+
+    // Increment the nMoneySupply to include this blocks subsidy
+    if (onForkNow) {
+        if (pprev_algo) {
+            pindex->nMoneySupply = pprev_algo->nMoneySupply + block.vtx[0]->GetValueOut() - nFees;
+        } else {
+            int64_t ms_correction = get_mpow_ms_correction(pindex);
+            pindex->nMoneySupply = ms_correction + block.vtx[0]->GetValueOut() - nFees;
+        }
+    } else {
+        if (pindex->pprev) {
+            pindex->nMoneySupply = pindex->pprev->nMoneySupply + block.vtx[0]->GetValueOut() - nFees;
+        } else {
+            pindex->nMoneySupply = 2000000000;
+        }
+    }
+
+
 
     if (!m_blockman.WriteUndoDataForBlock(blockundo, state, *pindex)) {
         return false;
@@ -2739,7 +3039,7 @@ static void UpdateTipLog(
 {
 
     AssertLockHeld(::cs_main);
-    LogPrintf("%s%s: new best=%s height=%d version=0x%08x log2_work=%f tx=%lu date='%s' progress=%f cache=%.1fMiB(%utxo)%s\n",
+    LogPrintf("%s%s: new best=%s height=%d version=0x%08x log2_work=%f tx=%lu date='%s' progress=%f cache=%.1fMiB(%utxo)%s algo=%s\n",
         prefix, func_name,
         tip->GetBlockHash().ToString(), tip->nHeight, tip->nVersion,
         log(tip->nChainWork.getdouble()) / log(2.0), (unsigned long)tip->nChainTx,
@@ -2747,7 +3047,8 @@ static void UpdateTipLog(
         GuessVerificationProgress(params.TxData(), tip),
         coins_tip.DynamicMemoryUsage() * (1.0 / (1 << 20)),
         coins_tip.GetCacheSize(),
-        !warning_messages.empty() ? strprintf(" warning='%s'", warning_messages) : "");
+        !warning_messages.empty() ? strprintf(" warning='%s'", warning_messages) : "",
+        ToString(tip->GetAlgo()));
 }
 
 void Chainstate::UpdateTip(const CBlockIndex* pindexNew)
@@ -3277,7 +3578,10 @@ bool Chainstate::ActivateBestChain(BlockValidationState& state, std::shared_ptr<
 
                 bool fInvalidFound = false;
                 std::shared_ptr<const CBlock> nullBlockPtr;
-                if (!ActivateBestChainStep(state, pindexMostWork, pblock && pblock->GetHash() == pindexMostWork->GetBlockHash() ? pblock : nullBlockPtr, fInvalidFound, connectTrace)) {
+                if (!ActivateBestChainStep(
+                    state,
+                    pindexMostWork,
+                    pblock && pblock->GetHash() == pindexMostWork->GetBlockHash() ? pblock : nullBlockPtr, fInvalidFound, connectTrace)) {
                     // A system error occurred
                     return false;
                 }
@@ -3656,7 +3960,7 @@ void ChainstateManager::ReceivedBlockTransactions(const CBlock& block, CBlockInd
 static bool CheckBlockHeader(const CBlockHeader& block, BlockValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true)
 {
     // Check proof of work matches claimed amount
-    if (fCheckPOW && !CheckProofOfWork(block.GetHash(), block.nBits, consensusParams))
+    if (fCheckPOW && !CheckProofOfWork(block))
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "high-hash", "proof of work failed");
 
     return true;
@@ -3743,6 +4047,8 @@ static bool CheckWitnessMalleation(const CBlock& block, bool expect_witness_comm
     return true;
 }
 
+int nSinceBlockTooFarInFuture = 0;
+
 bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW, bool fCheckMerkleRoot)
 {
     // These are checks that are independent of context.
@@ -3754,6 +4060,23 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
     // redundant with the call in AcceptBlockHeader.
     if (!CheckBlockHeader(block, state, consensusParams, fCheckPOW))
         return false;
+
+    // Check timestamp
+    int64_t nNow = GetTime();
+    // if (fDebug) LogPrintf("block_delta = %ld\n",block.GetBlockTime()-nNow); // for generating statistics
+    if (block.GetBlockTime() > nNow + 12 * 60) {
+        if (block.GetBlockTime() <= GetTime() + 2 * 60 * 60) {
+            SetfBlockTooFarInFuture(true);
+            LogPrintf("Warning: Block timestamp too far in the future. Please check your clock and be careful of network forks.");
+        }
+        return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "CheckBlock() : block timestamp too far in the future", "time-too-new");
+    } else {
+        nSinceBlockTooFarInFuture++;
+        if (nSinceBlockTooFarInFuture > 720) {
+            SetfBlockTooFarInFuture(false);
+            nSinceBlockTooFarInFuture = 0;
+        }
+    }
 
     // Signet only: check block solution
     if (consensusParams.signet_blocks && fCheckPOW && !CheckSignetBlockSolution(block, consensusParams)) {
@@ -3850,7 +4173,9 @@ std::vector<unsigned char> ChainstateManager::GenerateCoinbaseCommitment(CBlock&
 bool HasValidProofOfWork(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams)
 {
     return std::all_of(headers.cbegin(), headers.cend(),
-            [&](const auto& header) { return CheckProofOfWork(header.GetHash(), header.nBits, consensusParams);});
+                       [&](const CBlockHeader& header) {
+            return CheckProofOfWork(header);
+    });
 }
 
 bool IsBlockMutated(const CBlock& block, bool check_witness_root)
@@ -3910,8 +4235,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
     const int nHeight = pindexPrev->nHeight + 1;
 
     // Check proof of work
-    const Consensus::Params& consensusParams = chainman.GetConsensus();
-    if (block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
+    if (block.nBits != GetNextWorkRequired(pindexPrev, &block, block.GetAlgo()))
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-diffbits", "incorrect proof of work");
 
     // Check against checkpoints
@@ -4029,10 +4353,6 @@ bool ChainstateManager::AcceptBlockHeader(const CBlockHeader& block, BlockValida
             return true;
         }
 
-        if (!CheckBlockHeader(block, state, GetConsensus())) {
-            LogPrint(BCLog::VALIDATION, "%s: Consensus::CheckBlockHeader: %s, %s\n", __func__, hash.ToString(), state.ToString());
-            return false;
-        }
 
         // Get prev block index
         CBlockIndex* pindexPrev = nullptr;
@@ -4048,6 +4368,24 @@ bool ChainstateManager::AcceptBlockHeader(const CBlockHeader& block, BlockValida
         }
         if (!ContextualCheckBlockHeader(block, state, m_blockman, *this, pindexPrev)) {
             LogPrint(BCLog::VALIDATION, "%s: Consensus::ContextualCheckBlockHeader: %s, %s\n", __func__, hash.ToString(), state.ToString());
+            return false;
+        }
+
+        // Check proof of work
+        Algo block_algo = block.GetAlgo();
+        unsigned int next_work_required = GetNextWorkRequired(pindexPrev, &block, block_algo);
+        if (block.nBits != next_work_required) {
+            LogPrint(BCLog::VALIDATION, "nbits = %d, required = %d\n", block.nBits, next_work_required);
+            return state.Invalid(BlockValidationResult::BLOCK_HEADER_LOW_WORK, "incorrect proof of work", "bad-diffbits");
+        }
+
+        // Reject block.nVersion=2 blocks when 95% of the network has upgraded:
+        if (block.nVersion < 3 && pindexPrev->OnFork()) {
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "rejected nVersion=2 block", "bad-version");
+        }
+
+        if (!CheckBlockHeader(block, state, GetConsensus())) {
+            LogPrint(BCLog::VALIDATION, "%s: Consensus::CheckBlockHeader: %s, %s\n", __func__, hash.ToString(), state.ToString());
             return false;
         }
 

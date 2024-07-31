@@ -26,6 +26,16 @@ struct CompressedHeader {
     uint32_t nBits{0};
     uint32_t nNonce{0};
 
+    uint256 nNonce256{0};
+    std::vector<unsigned char> nSolution;
+    uint256 hashReserved{0};
+    bool isParent{false};
+    Algo algoParent{Algo::SCRYPT};
+    bool vector_format{false};
+    std::vector<unsigned char> vector_rep;
+
+    mutable std::shared_ptr<CAuxPow> auxpow;
+
     CompressedHeader()
     {
         hashMerkleRoot.SetNull();
@@ -38,6 +48,15 @@ struct CompressedHeader {
         nTime = header.nTime;
         nBits = header.nBits;
         nNonce = header.nNonce;
+
+        nNonce256 = header.nNonce256;
+        nSolution = header.nSolution;
+        hashReserved = header.hashReserved;
+        isParent = header.isParent;
+        algoParent = header.algoParent;
+        vector_format = header.vector_format;
+        vector_rep = header.vector_rep;
+        auxpow = header.auxpow;
     }
 
     CBlockHeader GetFullHeader(const uint256& hash_prev_block) {
@@ -48,6 +67,16 @@ struct CompressedHeader {
         ret.nTime = nTime;
         ret.nBits = nBits;
         ret.nNonce = nNonce;
+
+        ret.nNonce256 = nNonce256;
+        ret.nSolution =nSolution;
+        ret.hashReserved = hashReserved;
+        ret.isParent = isParent;
+        ret.algoParent = algoParent;
+        ret.vector_format = vector_format;
+        ret.vector_rep = vector_rep;
+        ret.auxpow = auxpow;
+
         return ret;
     };
 };

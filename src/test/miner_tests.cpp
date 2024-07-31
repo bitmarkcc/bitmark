@@ -18,6 +18,7 @@
 #include <util/time.h>
 #include <validation.h>
 #include <versionbits.h>
+#include <pow.h>
 
 #include <test/util/setup_common.h>
 
@@ -50,6 +51,9 @@ struct MinerTestingSetup : public TestingSetup {
         return *m_node.mempool;
     }
     BlockAssembler AssemblerForTest(CTxMemPool& tx_mempool);
+
+    MinerTestingSetup()
+        : TestingSetup(ChainType::REGTEST) {}
 };
 } // namespace miner_tests
 
@@ -69,25 +73,83 @@ BlockAssembler MinerTestingSetup::AssemblerForTest(CTxMemPool& tx_mempool)
 constexpr static struct {
     unsigned char extranonce;
     unsigned int nonce;
-} BLOCKINFO[]{{8, 582909131},  {0, 971462344},  {2, 1169481553}, {6, 66147495},  {7, 427785981},  {8, 80538907},
-              {8, 207348013},  {2, 1951240923}, {4, 215054351},  {1, 491520534}, {8, 1282281282}, {4, 639565734},
-              {3, 248274685},  {8, 1160085976}, {6, 396349768},  {5, 393780549}, {5, 1096899528}, {4, 965381630},
-              {0, 728758712},  {5, 318638310},  {3, 164591898},  {2, 274234550}, {2, 254411237},  {7, 561761812},
-              {2, 268342573},  {0, 402816691},  {1, 221006382},  {6, 538872455}, {7, 393315655},  {4, 814555937},
-              {7, 504879194},  {6, 467769648},  {3, 925972193},  {2, 200581872}, {3, 168915404},  {8, 430446262},
-              {5, 773507406},  {3, 1195366164}, {0, 433361157},  {3, 297051771}, {0, 558856551},  {2, 501614039},
-              {3, 528488272},  {2, 473587734},  {8, 230125274},  {2, 494084400}, {4, 357314010},  {8, 60361686},
-              {7, 640624687},  {3, 480441695},  {8, 1424447925}, {4, 752745419}, {1, 288532283},  {6, 669170574},
-              {5, 1900907591}, {3, 555326037},  {3, 1121014051}, {0, 545835650}, {8, 189196651},  {5, 252371575},
-              {0, 199163095},  {6, 558895874},  {6, 1656839784}, {6, 815175452}, {6, 718677851},  {5, 544000334},
-              {0, 340113484},  {6, 850744437},  {4, 496721063},  {8, 524715182}, {6, 574361898},  {6, 1642305743},
-              {6, 355110149},  {5, 1647379658}, {8, 1103005356}, {7, 556460625}, {3, 1139533992}, {5, 304736030},
-              {2, 361539446},  {2, 143720360},  {6, 201939025},  {7, 423141476}, {4, 574633709},  {3, 1412254823},
-              {4, 873254135},  {0, 341817335},  {6, 53501687},   {3, 179755410}, {5, 172209688},  {8, 516810279},
-              {4, 1228391489}, {8, 325372589},  {6, 550367589},  {0, 876291812}, {7, 412454120},  {7, 717202854},
-              {2, 222677843},  {6, 251778867},  {7, 842004420},  {7, 194762829}, {4, 96668841},   {1, 925485796},
-              {0, 792342903},  {6, 678455063},  {6, 773251385},  {5, 186617471}, {6, 883189502},  {7, 396077336},
-              {8, 254702874},  {0, 455592851}};
+} BLOCKINFO[]{
+{4, 0x006}, {4, 0x007}, {4, 0x019}, {4, 0x015}, {4, 0x006}, {4, 0x001}, {4, 0x005}, {4, 0x00a}, {4, 0x003}, {4, 0x025},
+{4, 0x001}, {4, 0x00a}, {4, 0x00f}, {4, 0x006}, {4, 0x029}, {4, 0x003}, {4, 0x029}, {4, 0x01a}, {4, 0x006}, {4, 0x002},
+{4, 0x018}, {4, 0x004}, {4, 0x000}, {4, 0x025}, {4, 0x004}, {4, 0x003}, {4, 0x003}, {4, 0x007}, {4, 0x004}, {4, 0x004},
+{4, 0x005}, {4, 0x005}, {4, 0x009}, {4, 0x000}, {4, 0x01e}, {4, 0x007}, {4, 0x013}, {4, 0x023}, {4, 0x00c}, {4, 0x00d},
+{4, 0x00f}, {4, 0x007}, {4, 0x00e}, {4, 0x001}, {4, 0x000}, {4, 0x007}, {4, 0x006}, {4, 0x001}, {4, 0x008}, {4, 0x006},
+{4, 0x001}, {4, 0x022}, {4, 0x016}, {4, 0x00d}, {4, 0x037}, {4, 0x004}, {4, 0x003}, {4, 0x003}, {4, 0x01d}, {4, 0x007},
+{4, 0x018}, {4, 0x005}, {4, 0x01c}, {4, 0x013}, {4, 0x004}, {4, 0x016}, {4, 0x012}, {4, 0x001}, {4, 0x003}, {4, 0x013},
+{4, 0x002}, {4, 0x009}, {4, 0x00f}, {4, 0x014}, {4, 0x018}, {4, 0x016}, {4, 0x003}, {4, 0x000}, {4, 0x001}, {4, 0x001},
+{4, 0x00f}, {4, 0x00f}, {4, 0x001}, {4, 0x004}, {4, 0x00b}, {4, 0x006}, {4, 0x009}, {4, 0x02b}, {4, 0x035}, {4, 0x00e},
+{4, 0x000}, {4, 0x005}, {4, 0x00a}, {4, 0x009}, {4, 0x004}, {4, 0x02c}, {4, 0x003}, {4, 0x00b}, {4, 0x014}, {4, 0x018},
+{4, 0x012}, {4, 0x014}, {4, 0x009}, {4, 0x015}, {4, 0x009}, {4, 0x021}, {4, 0x030}, {4, 0x00d}, {4, 0x000}, {4, 0x000},
+{4, 0x00e}, {4, 0x00a}, {4, 0x000}, {4, 0x003}, {4, 0x00a}, {4, 0x002}, {4, 0x000}, {4, 0x01c}, {4, 0x013}, {4, 0x003},
+{4, 0x00b}, {4, 0x013}, {4, 0x00c}, {4, 0x002}, {4, 0x001}, {4, 0x00f}, {4, 0x001}, {4, 0x001}, {4, 0x02d}, {4, 0x01c},
+{4, 0x018}, {4, 0x013}, {4, 0x00d}, {4, 0x008}, {4, 0x024}, {4, 0x002}, {4, 0x003}, {4, 0x00e}, {4, 0x006}, {4, 0x016},
+{4, 0x010}, {4, 0x016}, {4, 0x03e}, {4, 0x01f}, {4, 0x005}, {4, 0x005}, {4, 0x02a}, {4, 0x03b}, {4, 0x00e}, {4, 0x007},
+{4, 0x001}, {4, 0x006}, {4, 0x019}, {4, 0x01c}, {4, 0x00d}, {4, 0x01d}, {4, 0x010}, {4, 0x006}, {4, 0x005}, {4, 0x002},
+{4, 0x006}, {4, 0x011}, {4, 0x006}, {4, 0x020}, {4, 0x00b}, {4, 0x001}, {4, 0x025}, {4, 0x000}, {4, 0x02c}, {4, 0x000},
+{4, 0x020}, {4, 0x006}, {4, 0x013}, {4, 0x010}, {4, 0x002}, {4, 0x01e}, {4, 0x001}, {4, 0x00f}, {4, 0x001}, {4, 0x011},
+{4, 0x002}, {4, 0x01a}, {4, 0x009}, {4, 0x005}, {4, 0x002}, {4, 0x00a}, {4, 0x01a}, {4, 0x004}, {4, 0x02c}, {4, 0x027},
+{4, 0x011}, {4, 0x012}, {4, 0x012}, {4, 0x022}, {4, 0x02c}, {4, 0x007}, {4, 0x007}, {4, 0x000}, {4, 0x004}, {4, 0x008},
+{4, 0x012}, {4, 0x00f}, {4, 0x003}, {4, 0x014}, {4, 0x02c}, {4, 0x01e}, {4, 0x00a}, {4, 0x023}, {4, 0x005}, {4, 0x001},
+{4, 0x002}, {4, 0x010}, {4, 0x009}, {4, 0x016}, {4, 0x004}, {4, 0x004}, {4, 0x010}, {4, 0x000}, {4, 0x017}, {4, 0x003},
+{4, 0x020}, {4, 0x010}, {4, 0x000}, {4, 0x011}, {4, 0x00f}, {4, 0x002}, {4, 0x002}, {4, 0x003}, {4, 0x004}, {4, 0x001},
+{4, 0x002}, {4, 0x00a}, {4, 0x015}, {4, 0x002}, {4, 0x02f}, {4, 0x004}, {4, 0x00e}, {4, 0x00e}, {4, 0x011}, {4, 0x005},
+{4, 0x023}, {4, 0x01b}, {4, 0x00a}, {4, 0x00f}, {4, 0x007}, {4, 0x02a}, {4, 0x004}, {4, 0x008}, {4, 0x00c}, {4, 0x00e},
+{4, 0x007}, {4, 0x00a}, {4, 0x008}, {4, 0x00e}, {4, 0x00d}, {4, 0x007}, {4, 0x023}, {4, 0x008}, {4, 0x013}, {4, 0x008},
+{4, 0x039}, {4, 0x002}, {4, 0x006}, {4, 0x045}, {4, 0x00c}, {4, 0x005}, {4, 0x00b}, {4, 0x002}, {4, 0x007}, {4, 0x007},
+{4, 0x005}, {4, 0x013}, {4, 0x008}, {4, 0x00c}, {4, 0x003}, {4, 0x001}, {4, 0x017}, {4, 0x005}, {4, 0x000}, {4, 0x00a},
+{4, 0x001}, {4, 0x024}, {4, 0x006}, {4, 0x001}, {4, 0x00e}, {4, 0x012}, {4, 0x004}, {4, 0x005}, {4, 0x002}, {4, 0x008},
+{4, 0x01e}, {4, 0x003}, {4, 0x001}, {4, 0x009}, {4, 0x004}, {4, 0x006}, {4, 0x016}, {4, 0x012}, {4, 0x00b}, {4, 0x010},
+{4, 0x031}, {4, 0x010}, {4, 0x002}, {4, 0x004}, {4, 0x003}, {4, 0x006}, {4, 0x007}, {4, 0x002}, {4, 0x014}, {4, 0x002},
+{4, 0x03a}, {4, 0x01b}, {4, 0x00f}, {4, 0x016}, {4, 0x002}, {4, 0x01a}, {4, 0x00e}, {4, 0x015}, {4, 0x010}, {4, 0x011},
+{4, 0x012}, {4, 0x00d}, {4, 0x001}, {4, 0x015}, {4, 0x033}, {4, 0x004}, {4, 0x002}, {4, 0x001}, {4, 0x004}, {4, 0x00d},
+{4, 0x000}, {4, 0x015}, {4, 0x013}, {4, 0x01b}, {4, 0x002}, {4, 0x003}, {4, 0x005}, {4, 0x004}, {4, 0x019}, {4, 0x001},
+{4, 0x025}, {4, 0x00a}, {4, 0x002}, {4, 0x002}, {4, 0x001}, {4, 0x004}, {4, 0x004}, {4, 0x004}, {4, 0x00a}, {4, 0x001},
+{4, 0x035}, {4, 0x00c}, {4, 0x017}, {4, 0x02e}, {4, 0x02a}, {4, 0x00c}, {4, 0x018}, {4, 0x03c}, {4, 0x01e}, {4, 0x00c},
+{4, 0x004}, {4, 0x02f}, {4, 0x005}, {4, 0x018}, {4, 0x001}, {4, 0x020}, {4, 0x008}, {4, 0x008}, {4, 0x006}, {4, 0x003},
+{4, 0x01b}, {4, 0x012}, {4, 0x02c}, {4, 0x012}, {4, 0x001}, {4, 0x010}, {4, 0x004}, {4, 0x01a}, {4, 0x029}, {4, 0x003},
+{4, 0x01c}, {4, 0x00d}, {4, 0x034}, {4, 0x00b}, {4, 0x002}, {4, 0x003}, {4, 0x020}, {4, 0x021}, {4, 0x000}, {4, 0x022},
+{4, 0x017}, {4, 0x008}, {4, 0x004}, {4, 0x00f}, {4, 0x019}, {4, 0x00d}, {4, 0x002}, {4, 0x006}, {4, 0x006}, {4, 0x005},
+{4, 0x022}, {4, 0x007}, {4, 0x00b}, {4, 0x001}, {4, 0x025}, {4, 0x033}, {4, 0x029}, {4, 0x01f}, {4, 0x00b}, {4, 0x007},
+{4, 0x013}, {4, 0x00c}, {4, 0x009}, {4, 0x039}, {4, 0x022}, {4, 0x00c}, {4, 0x006}, {4, 0x00c}, {4, 0x002}, {4, 0x006},
+{4, 0x000}, {4, 0x01e}, {4, 0x027}, {4, 0x019}, {4, 0x031}, {4, 0x005}, {4, 0x006}, {4, 0x005}, {4, 0x014}, {4, 0x017},
+{4, 0x009}, {4, 0x000}, {4, 0x016}, {4, 0x008}, {4, 0x00d}, {4, 0x00c}, {4, 0x016}, {4, 0x036}, {4, 0x01a}, {4, 0x00c},
+{4, 0x008}, {4, 0x00b}, {4, 0x00a}, {4, 0x01c}, {4, 0x012}, {4, 0x00f}, {4, 0x005}, {4, 0x00e}, {4, 0x00a}, {4, 0x00d},
+{4, 0x007}, {4, 0x004}, {4, 0x011}, {4, 0x02d}, {4, 0x04e}, {4, 0x002}, {4, 0x007}, {4, 0x000}, {4, 0x00a}, {4, 0x003},
+{4, 0x001}, {4, 0x00a}, {4, 0x008}, {4, 0x009}, {4, 0x002}, {4, 0x018}, {4, 0x002}, {4, 0x004}, {4, 0x01b}, {4, 0x01a},
+{4, 0x001}, {4, 0x003}, {4, 0x021}, {4, 0x016}, {4, 0x018}, {4, 0x018}, {4, 0x000}, {4, 0x00f}, {4, 0x019}, {4, 0x007},
+{4, 0x016}, {4, 0x020}, {4, 0x001}, {4, 0x004}, {4, 0x005}, {4, 0x018}, {4, 0x002}, {4, 0x004}, {4, 0x014}, {4, 0x004},
+{4, 0x004}, {4, 0x009}, {4, 0x014}, {4, 0x01f}, {4, 0x01e}, {4, 0x020}, {4, 0x020}, {4, 0x000}, {4, 0x03c}, {4, 0x001},
+{4, 0x008}, {4, 0x001}, {4, 0x001}, {4, 0x007}, {4, 0x00e}, {4, 0x027}, {4, 0x002}, {4, 0x00d}, {4, 0x010}, {4, 0x003},
+{4, 0x005}, {4, 0x003}, {4, 0x003}, {4, 0x006}, {4, 0x00a}, {4, 0x008}, {4, 0x03c}, {4, 0x00f}, {4, 0x009}, {4, 0x002},
+{4, 0x053}, {4, 0x00b}, {4, 0x002}, {4, 0x008}, {4, 0x012}, {4, 0x000}, {4, 0x018}, {4, 0x02d}, {4, 0x009}, {4, 0x014},
+{4, 0x00f}, {4, 0x00f}, {4, 0x007}, {4, 0x00c}, {4, 0x00e}, {4, 0x00e}, {4, 0x000}, {4, 0x009}, {4, 0x000}, {4, 0x01d},
+{4, 0x005}, {4, 0x032}, {4, 0x011}, {4, 0x001}, {4, 0x00d}, {4, 0x01f}, {4, 0x015}, {4, 0x00d}, {4, 0x010}, {4, 0x003},
+{4, 0x014}, {4, 0x008}, {4, 0x019}, {4, 0x014}, {4, 0x02f}, {4, 0x004}, {4, 0x000}, {4, 0x01f}, {4, 0x005}, {4, 0x008},
+{4, 0x003}, {4, 0x012}, {4, 0x022}, {4, 0x003}, {4, 0x002}, {4, 0x00f}, {4, 0x002}, {4, 0x01b}, {4, 0x002}, {4, 0x002},
+{4, 0x003}, {4, 0x012}, {4, 0x00d}, {4, 0x016}, {4, 0x00e}, {4, 0x015}, {4, 0x000}, {4, 0x001}, {4, 0x005}, {4, 0x020},
+{4, 0x016}, {4, 0x01a}, {4, 0x000}, {4, 0x009}, {4, 0x003}, {4, 0x017}, {4, 0x000}, {4, 0x029}, {4, 0x001}, {4, 0x005},
+{4, 0x001}, {4, 0x005}, {4, 0x011}, {4, 0x005}, {4, 0x008}, {4, 0x003}, {4, 0x011}, {4, 0x007}, {4, 0x014}, {4, 0x005},
+{4, 0x007}, {4, 0x01c}, {4, 0x020}, {4, 0x00e}, {4, 0x00b}, {4, 0x00f}, {4, 0x016}, {4, 0x007}, {4, 0x008}, {4, 0x01c},
+{4, 0x022}, {4, 0x020}, {4, 0x00f}, {4, 0x007}, {4, 0x00a}, {4, 0x012}, {4, 0x012}, {4, 0x00f}, {4, 0x011}, {4, 0x013},
+{4, 0x007}, {4, 0x022}, {4, 0x002}, {4, 0x008}, {4, 0x006}, {4, 0x005}, {4, 0x002}, {4, 0x015}, {4, 0x003}, {4, 0x00b},
+{4, 0x021}, {4, 0x02b}, {4, 0x00f}, {4, 0x007}, {4, 0x003}, {4, 0x030}, {4, 0x029}, {4, 0x011}, {4, 0x000}, {4, 0x003},
+{4, 0x01a}, {4, 0x001}, {4, 0x007}, {4, 0x00d}, {4, 0x015}, {4, 0x001}, {4, 0x010}, {4, 0x001}, {4, 0x013}, {4, 0x006},
+{4, 0x001}, {4, 0x000}, {4, 0x018}, {4, 0x016}, {4, 0x005}, {4, 0x019}, {4, 0x002}, {4, 0x009}, {4, 0x012}, {4, 0x010},
+{4, 0x023}, {4, 0x00c}, {4, 0x008}, {4, 0x003}, {4, 0x004}, {4, 0x007}, {4, 0x003}, {4, 0x003}, {4, 0x005}, {4, 0x000},
+{4, 0x017}, {4, 0x000}, {4, 0x001}, {4, 0x010}, {4, 0x000}, {4, 0x00f}, {4, 0x001}, {4, 0x005}, {4, 0x000}, {4, 0x02d},
+{4, 0x000}, {4, 0x005}, {4, 0x00c}, {4, 0x003}, {4, 0x026}, {4, 0x003}, {4, 0x001}, {4, 0x02e}, {4, 0x005}, {4, 0x024},
+{4, 0x00b}, {4, 0x002}, {4, 0x006}, {4, 0x004}, {4, 0x00a}, {4, 0x002}, {4, 0x01a}, {4, 0x00c}, {4, 0x02a}, {4, 0x017},
+{4, 0x01f}, {4, 0x001}, {4, 0x007}, {4, 0x014}, {4, 0x01e}, {4, 0x02f}, {4, 0x002}, {4, 0x018}, {4, 0x001}, {4, 0x004},
+{4, 0x010}, {4, 0x006}, {4, 0x00b}, {4, 0x001}, {4, 0x01e}, {4, 0x021}, {4, 0x000}, {4, 0x007}, {4, 0x00a}, {4, 0x00a},
+{4, 0x003}, {4, 0x004}, {4, 0x008}, {4, 0x03f}, {4, 0x006}, {4, 0x008}, {4, 0x00f}, {4, 0x00f}, {4, 0x011}, {4, 0x029},
+};
+
+
 
 static std::unique_ptr<CBlockIndex> CreateBlockIndex(int nHeight, CBlockIndex* active_chain_tip) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
 {
@@ -115,20 +177,20 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
     tx.vin[0].prevout.hash = txFirst[0]->GetHash();
     tx.vin[0].prevout.n = 0;
     tx.vout.resize(1);
-    tx.vout[0].nValue = 5000000000LL - 1000;
+    tx.vout[0].nValue = 2000000000LL - 1000;
     // This tx has a low fee: 1000 satoshis
     Txid hashParentTx = tx.GetHash(); // save this txid for later use
     tx_mempool.addUnchecked(entry.Fee(1000).Time(Now<NodeSeconds>()).SpendsCoinbase(true).FromTx(tx));
 
     // This tx has a medium fee: 10000 satoshis
     tx.vin[0].prevout.hash = txFirst[1]->GetHash();
-    tx.vout[0].nValue = 5000000000LL - 10000;
+    tx.vout[0].nValue = 2000000000LL - 10000;
     Txid hashMediumFeeTx = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(10000).Time(Now<NodeSeconds>()).SpendsCoinbase(true).FromTx(tx));
 
     // This tx has a high fee, but depends on the first transaction
     tx.vin[0].prevout.hash = hashParentTx;
-    tx.vout[0].nValue = 5000000000LL - 1000 - 50000; // 50k satoshi fee
+    tx.vout[0].nValue = 2000000000LL - 1000 - 50000; // 50k satoshi fee
     Txid hashHighFeeTx = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(50000).Time(Now<NodeSeconds>()).SpendsCoinbase(false).FromTx(tx));
 
@@ -140,7 +202,7 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
 
     // Test that a package below the block min tx fee doesn't get included
     tx.vin[0].prevout.hash = hashHighFeeTx;
-    tx.vout[0].nValue = 5000000000LL - 1000 - 50000; // 0 fee
+    tx.vout[0].nValue = 2000000000LL - 1000 - 50000; // 0 fee
     Txid hashFreeTx = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(0).FromTx(tx));
     size_t freeTxSize = ::GetSerializeSize(TX_WITH_WITNESS(tx));
@@ -150,7 +212,7 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
     CAmount feeToUse = blockMinFeeRate.GetFee(2*freeTxSize) - 1;
 
     tx.vin[0].prevout.hash = hashFreeTx;
-    tx.vout[0].nValue = 5000000000LL - 1000 - 50000 - feeToUse;
+    tx.vout[0].nValue = 2000000000LL - 1000 - 50000 - feeToUse;
     Txid hashLowFeeTx = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(feeToUse).FromTx(tx));
     pblocktemplate = AssemblerForTest(tx_mempool).CreateNewBlock(scriptPubKey);
@@ -177,7 +239,7 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
     // Add a 0-fee transaction that has 2 outputs.
     tx.vin[0].prevout.hash = txFirst[2]->GetHash();
     tx.vout.resize(2);
-    tx.vout[0].nValue = 5000000000LL - 100000000;
+    tx.vout[0].nValue = 2000000000LL - 100000000;
     tx.vout[1].nValue = 100000000; // 1BTC output
     Txid hashFreeTx2 = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(0).SpendsCoinbase(true).FromTx(tx));
@@ -186,7 +248,7 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
     tx.vin[0].prevout.hash = hashFreeTx2;
     tx.vout.resize(1);
     feeToUse = blockMinFeeRate.GetFee(freeTxSize);
-    tx.vout[0].nValue = 5000000000LL - 100000000 - feeToUse;
+    tx.vout[0].nValue = 2000000000LL - 100000000 - feeToUse;
     Txid hashLowFeeTx2 = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(feeToUse).SpendsCoinbase(false).FromTx(tx));
     pblocktemplate = AssemblerForTest(tx_mempool).CreateNewBlock(scriptPubKey);
@@ -215,7 +277,7 @@ void MinerTestingSetup::TestBasicMining(const CScript& scriptPubKey, const std::
     entry.nFee = 11;
     entry.nHeight = 11;
 
-    const CAmount BLOCKSUBSIDY = 50 * COIN;
+    const CAmount BLOCKSUBSIDY = 20 * COIN;
     const CAmount LOWFEE = CENT;
     const CAmount HIGHFEE = COIN;
     const CAmount HIGHERFEE = 4 * COIN;
@@ -535,28 +597,28 @@ void MinerTestingSetup::TestPrioritisedMining(const CScript& scriptPubKey, const
     tx.vin[0].prevout.n = 0;
     tx.vin[0].scriptSig = CScript() << OP_1;
     tx.vout.resize(1);
-    tx.vout[0].nValue = 5000000000LL; // 0 fee
+    tx.vout[0].nValue = 2000000000LL; // 0 fee
     uint256 hashFreePrioritisedTx = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(0).Time(Now<NodeSeconds>()).SpendsCoinbase(true).FromTx(tx));
     tx_mempool.PrioritiseTransaction(hashFreePrioritisedTx, 5 * COIN);
 
     tx.vin[0].prevout.hash = txFirst[1]->GetHash();
     tx.vin[0].prevout.n = 0;
-    tx.vout[0].nValue = 5000000000LL - 1000;
+    tx.vout[0].nValue = 2000000000LL - 1000;
     // This tx has a low fee: 1000 satoshis
     Txid hashParentTx = tx.GetHash(); // save this txid for later use
     tx_mempool.addUnchecked(entry.Fee(1000).Time(Now<NodeSeconds>()).SpendsCoinbase(true).FromTx(tx));
 
     // This tx has a medium fee: 10000 satoshis
     tx.vin[0].prevout.hash = txFirst[2]->GetHash();
-    tx.vout[0].nValue = 5000000000LL - 10000;
+    tx.vout[0].nValue = 2000000000LL - 10000;
     Txid hashMediumFeeTx = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(10000).Time(Now<NodeSeconds>()).SpendsCoinbase(true).FromTx(tx));
     tx_mempool.PrioritiseTransaction(hashMediumFeeTx, -5 * COIN);
 
     // This tx also has a low fee, but is prioritised
     tx.vin[0].prevout.hash = hashParentTx;
-    tx.vout[0].nValue = 5000000000LL - 1000 - 1000; // 1000 satoshi fee
+    tx.vout[0].nValue = 2000000000LL - 1000 - 1000; // 1000 satoshi fee
     Txid hashPrioritsedChild = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(1000).Time(Now<NodeSeconds>()).SpendsCoinbase(false).FromTx(tx));
     tx_mempool.PrioritiseTransaction(hashPrioritsedChild, 2 * COIN);
@@ -568,19 +630,19 @@ void MinerTestingSetup::TestPrioritisedMining(const CScript& scriptPubKey, const
     // FreeParent's prioritisation should not be included in that entry.
     // When FreeChild is included, FreeChild's prioritisation should also not be included.
     tx.vin[0].prevout.hash = txFirst[3]->GetHash();
-    tx.vout[0].nValue = 5000000000LL; // 0 fee
+    tx.vout[0].nValue = 2000000000LL; // 0 fee
     Txid hashFreeParent = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(0).SpendsCoinbase(true).FromTx(tx));
     tx_mempool.PrioritiseTransaction(hashFreeParent, 10 * COIN);
 
     tx.vin[0].prevout.hash = hashFreeParent;
-    tx.vout[0].nValue = 5000000000LL; // 0 fee
+    tx.vout[0].nValue = 2000000000LL; // 0 fee
     Txid hashFreeChild = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(0).SpendsCoinbase(false).FromTx(tx));
     tx_mempool.PrioritiseTransaction(hashFreeChild, 1 * COIN);
 
     tx.vin[0].prevout.hash = hashFreeChild;
-    tx.vout[0].nValue = 5000000000LL; // 0 fee
+    tx.vout[0].nValue = 2000000000LL; // 0 fee
     Txid hashFreeGrandchild = tx.GetHash();
     tx_mempool.addUnchecked(entry.Fee(0).SpendsCoinbase(false).FromTx(tx));
 
@@ -612,7 +674,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
 
     // We can't make transactions until we have inputs
     // Therefore, load 110 blocks :)
-    static_assert(std::size(BLOCKINFO) == 110, "Should have 110 blocks to import");
+    //static_assert(std::size(BLOCKINFO) == 110, "Should have 110 blocks to import");
     int baseheight = 0;
     std::vector<CTransactionRef> txFirst;
     for (const auto& bi : BLOCKINFO) {

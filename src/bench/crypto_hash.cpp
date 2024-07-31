@@ -28,7 +28,7 @@ static void BenchRIPEMD160(benchmark::Bench& bench)
     });
 }
 
-static void SHA1(benchmark::Bench& bench)
+static void SHA1_STD(benchmark::Bench& bench)
 {
     uint8_t hash[CSHA1::OUTPUT_SIZE];
     std::vector<uint8_t> in(BUFFER_SIZE,0);
@@ -178,7 +178,7 @@ static void SHA256D64_1024_SHANI(benchmark::Bench& bench)
     SHA256AutoDetect();
 }
 
-static void SHA512(benchmark::Bench& bench)
+static void SHA512_STD(benchmark::Bench& bench)
 {
     uint8_t hash[CSHA512::OUTPUT_SIZE];
     std::vector<uint8_t> in(BUFFER_SIZE,0);
@@ -257,12 +257,12 @@ static void MuHashPrecompute(benchmark::Bench& bench)
 }
 
 BENCHMARK(BenchRIPEMD160, benchmark::PriorityLevel::HIGH);
-BENCHMARK(SHA1, benchmark::PriorityLevel::HIGH);
+BENCHMARK(SHA1_STD, benchmark::PriorityLevel::HIGH);
 BENCHMARK(SHA256_STANDARD, benchmark::PriorityLevel::HIGH);
 BENCHMARK(SHA256_SSE4, benchmark::PriorityLevel::HIGH);
 BENCHMARK(SHA256_AVX2, benchmark::PriorityLevel::HIGH);
 BENCHMARK(SHA256_SHANI, benchmark::PriorityLevel::HIGH);
-BENCHMARK(SHA512, benchmark::PriorityLevel::HIGH);
+BENCHMARK(SHA512_STD, benchmark::PriorityLevel::HIGH);
 BENCHMARK(SHA3_256_1M, benchmark::PriorityLevel::HIGH);
 
 BENCHMARK(SHA256_32b_STANDARD, benchmark::PriorityLevel::HIGH);

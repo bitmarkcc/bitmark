@@ -28,7 +28,7 @@ struct HeadersGeneratorSetup : public RegTestingSetup {
 
 void HeadersGeneratorSetup::FindProofOfWork(CBlockHeader& starting_header)
 {
-    while (!CheckProofOfWork(starting_header.GetHash(), starting_header.nBits, Params().GetConsensus())) {
+    while (!CheckProofOfWork(starting_header.GetPoWHash(), starting_header.nBits, starting_header.GetAlgo())) {
         ++(starting_header.nNonce);
     }
 }
@@ -72,8 +72,7 @@ BOOST_AUTO_TEST_CASE(headers_sync_state)
 
     std::unique_ptr<HeadersSyncState> hss;
 
-    const int target_blocks = 15000;
-    arith_uint256 chain_work = target_blocks*2;
+    const int target_blocks = 3500;
 
     // Generate headers for two different chains (using differing merkle roots
     // to ensure the headers are different).
@@ -86,6 +85,15 @@ BOOST_AUTO_TEST_CASE(headers_sync_state)
             ArithToUint256(1), Params().GenesisBlock().nBits);
 
     const CBlockIndex* chain_start = WITH_LOCK(::cs_main, return m_node.chainman->m_blockman.LookupBlockIndex(Params().GenesisBlock().GetHash()));
+
+
+    // calculate minimum chain work such as that first chain has enough work and the second doesn't
+    arith_uint256 chain_work = chain_start->nChainWork;
+    for (auto hs : second_chain) {
+        chain_work += GetBlockProof(CBlockIndex(hs));
+    }
+    chain_work = chain_work + 1;
+
     std::vector<CBlockHeader> headers_batch;
 
     // Feed the first chain to HeadersSyncState, by delivering 1 header

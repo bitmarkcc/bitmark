@@ -130,17 +130,7 @@ void CBlockIndex::BuildSkip()
 
 arith_uint256 GetBlockProof(const CBlockIndex& block)
 {
-    arith_uint256 bnTarget;
-    bool fNegative;
-    bool fOverflow;
-    bnTarget.SetCompact(block.nBits, &fNegative, &fOverflow);
-    if (fNegative || fOverflow || bnTarget == 0)
-        return 0;
-    // We need to compute 2**256 / (bnTarget+1), but we can't represent 2**256
-    // as it's too large for an arith_uint256. However, as 2**256 is at least as large
-    // as bnTarget+1, it is equal to ((2**256 - bnTarget - 1) / (bnTarget+1)) + 1,
-    // or ~bnTarget / (bnTarget+1) + 1.
-    return (~bnTarget / (bnTarget + 1)) + 1;
+    return UintToArith256(block.GetBlockWork().getuint256());
 }
 
 int64_t GetBlockProofEquivalentTime(const CBlockIndex& to, const CBlockIndex& from, const CBlockIndex& tip, const Consensus::Params& params)
@@ -177,4 +167,70 @@ const CBlockIndex* LastCommonAncestor(const CBlockIndex* pa, const CBlockIndex* 
     // Eventually all chain branches meet at the genesis block.
     assert(pa == pb);
     return pa;
+}
+
+
+int GetBlockVersion(const int nVersion)
+{
+    return nVersion & 255;
+}
+
+bool GetBlockVariant(const int nVersion)
+{
+    return nVersion & BLOCK_VERSION_VARIANT;
+}
+
+bool GetBlockVariant2(const int nVersion)
+{
+    return nVersion & BLOCK_VERSION_VARIANT2;
+}
+
+bool CBlockIndex::OnFork() const
+{
+    if (IsSuperMajority(4, this->pprev, 75, 100))
+        return true;
+
+    return false;
+}
+
+bool CBlockIndex::IsSuperMajority(int minVersion, const CBlockIndex* pstart, unsigned int nRequired, unsigned int nToCheck)
+{
+    if (Params().IsRegTest()) {
+        return true;
+    }
+
+    unsigned int nFound = 0;
+    for (unsigned int i = 0; i < nToCheck && nFound < nRequired && pstart != NULL; i++) {
+        if (GetBlockVersion(pstart->nVersion) >= minVersion)
+            ++nFound;
+        pstart = pstart->pprev;
+    }
+
+    if (nFound >= nRequired) {
+        return true;
+    }
+
+    return false;
+}
+
+bool CBlockIndex::IsSuperMajorityVariant12(int minVersion, bool variant, const CBlockIndex* pstart, unsigned int nRequired, unsigned int nToCheck)
+{
+    unsigned int nFound = 0;
+    for (unsigned int i = 0; i < nToCheck && nFound < nRequired && pstart != NULL; i++) {
+        if (GetBlockVersion(pstart->nVersion) >= minVersion && (GetBlockVariant(pstart->nVersion) == variant || GetBlockVariant2(pstart->nVersion) == variant))
+            ++nFound;
+        pstart = pstart->pprev;
+    }
+    return (nFound >= nRequired);
+}
+
+bool CBlockIndex::IsSuperMajorityVariant2(int minVersion, bool variant, const CBlockIndex* pstart, unsigned int nRequired, unsigned int nToCheck)
+{
+    unsigned int nFound = 0;
+    for (unsigned int i = 0; i < nToCheck && nFound < nRequired && pstart != NULL; i++) {
+        if (GetBlockVersion(pstart->nVersion) >= minVersion && GetBlockVariant2(pstart->nVersion) == variant)
+            ++nFound;
+        pstart = pstart->pprev;
+    }
+    return (nFound >= nRequired);
 }

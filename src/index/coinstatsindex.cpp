@@ -114,15 +114,17 @@ CoinStatsIndex::CoinStatsIndex(std::unique_ptr<interfaces::Chain> chain, size_t 
 
 bool CoinStatsIndex::CustomAppend(const interfaces::BlockInfo& block)
 {
+    CBlockIndex* pindex = WITH_LOCK(cs_main, return m_chainstate->m_blockman.LookupBlockIndex(block.hash));
+
     CBlockUndo block_undo;
-    const CAmount block_subsidy{GetBlockSubsidy(block.height, Params().GetConsensus())};
+    const CAmount block_subsidy{GetBlockSubsidy(pindex)};
     m_total_subsidy += block_subsidy;
 
     // Ignore genesis block
     if (block.height > 0) {
         // pindex variable gives indexing code access to node internals. It
         // will be removed in upcoming commit
-        const CBlockIndex* pindex = WITH_LOCK(cs_main, return m_chainstate->m_blockman.LookupBlockIndex(block.hash));
+
         if (!m_chainstate->m_blockman.UndoReadFromDisk(block_undo, *pindex)) {
             return false;
         }
@@ -403,7 +405,7 @@ bool CoinStatsIndex::ReverseBlock(const CBlock& block, const CBlockIndex* pindex
     CBlockUndo block_undo;
     std::pair<uint256, DBVal> read_out;
 
-    const CAmount block_subsidy{GetBlockSubsidy(pindex->nHeight, Params().GetConsensus())};
+    const CAmount block_subsidy{GetBlockSubsidy(pindex)};
     m_total_subsidy -= block_subsidy;
 
     // Ignore genesis block

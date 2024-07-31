@@ -284,10 +284,8 @@ BOOST_AUTO_TEST_CASE(tx_invalid)
     for (unsigned int idx = 0; idx < tests.size(); idx++) {
         const UniValue& test = tests[idx];
         std::string strTest = test.write();
-        if (test[0].isArray())
-        {
-            if (test.size() != 3 || !test[1].isStr() || !test[2].isStr())
-            {
+        if (test[0].isArray()) {
+            if (test.size() != 3 || !test[1].isStr() || !test[2].isStr()) {
                 BOOST_ERROR("Bad test: " << strTest);
                 continue;
             }
@@ -303,20 +301,17 @@ BOOST_AUTO_TEST_CASE(tx_invalid)
                     break;
                 }
                 const UniValue& vinput = input.get_array();
-                if (vinput.size() < 3 || vinput.size() > 4)
-                {
+                if (vinput.size() < 3 || vinput.size() > 4) {
                     fValid = false;
                     break;
                 }
                 COutPoint outpoint{TxidFromString(vinput[0].get_str()), uint32_t(vinput[1].getInt<int>())};
                 mapprevOutScriptPubKeys[outpoint] = ParseScript(vinput[2].get_str());
-                if (vinput.size() >= 4)
-                {
+                if (vinput.size() >= 4) {
                     mapprevOutValues[outpoint] = vinput[3].getInt<int64_t>();
                 }
             }
-            if (!fValid)
-            {
+            if (!fValid) {
                 BOOST_ERROR("Bad test: " << strTest);
                 continue;
             }

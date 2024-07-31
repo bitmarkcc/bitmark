@@ -319,7 +319,7 @@ Signing is only possible with addresses of the type 'legacy'.</source>
         <translation type="unfinished">Кількість</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Введіть біткоїн-адресу (наприклад, %1)</translation>
     </message>
     <message>
@@ -723,7 +723,7 @@ Signing is only possible with addresses of the type 'legacy'.</source>
     </message>
     <message>
         <source>Open a bitcoin: URI</source>
-        <translation type="unfinished">Відкрити URI-адресу "bitcoin:"</translation>
+        <translation type="unfinished">Відкрити URI-адресу "bitmark:"</translation>
     </message>
     <message>
         <source>Open Wallet</source>
@@ -1542,7 +1542,7 @@ The migration process will create a backup of the wallet before migrating. This 
         <translation type="unfinished">Нещодавні транзакції ще не відображаються, тому баланс вашого гаманця може бути неточним. Ця інформація буде вірною після того, як ваш гаманець завершить синхронізацію з мережею Біткоїн, враховуйте показники нижче.</translation>
     </message>
     <message>
-        <source>Attempting to spend bitcoins that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
+        <source>Attempting to spend bitmarks that are affected by not-yet-displayed transactions will not be accepted by the network.</source>
         <translation type="unfinished">Спроба відправити біткоїни, які ще не відображаються, не буде прийнята мережею.</translation>
     </message>
     <message>
@@ -2186,7 +2186,7 @@ The migration process will create a backup of the wallet before migrating. This 
     </message>
     <message>
         <source>'bitcoin://' is not a valid URI. Use 'bitcoin:' instead.</source>
-        <translation type="unfinished">"bitcoin://" не є припустимим URI. Використовуйте натомість "bitcoin:".</translation>
+        <translation type="unfinished">"bitmark://" не є припустимим URI. Використовуйте натомість "bitcoin:".</translation>
     </message>
     <message>
         <source>Cannot process payment request because BIP70 is not supported.
@@ -4487,7 +4487,7 @@ Go to File &gt; Open Wallet to load a wallet.
 
 The wallet might have been tampered with or created with malicious intent.
 </source>
-        <translation type="unfinished">В гаманці дескрипторів виявлено неочікуваний запис, що не підтримується. Завантаження гаманця %s 
+        <translation type="unfinished">В гаманці дескрипторів виявлено неочікуваний запис, що не підтримується. Завантаження гаманця %s
 
 Гаманець міг бути підроблений або створений зі злим умислом.
 </translation>

@@ -273,7 +273,7 @@ Signing is only possible with addresses of the type 'legacy'.</source>
         <translation type="unfinished">തുക </translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">ഒരു ബിറ്റ്കോയിൻ വിലാസം നൽകുക(e.g. %1)</translation>
     </message>
     <message>
@@ -600,19 +600,19 @@ Signing is only possible with addresses of the type 'legacy'.</source>
     <message>
         <source>Date: %1
 </source>
-        <translation type="unfinished">തീയതി: %1 
+        <translation type="unfinished">തീയതി: %1
 </translation>
     </message>
     <message>
         <source>Amount: %1
 </source>
-        <translation type="unfinished">തുക : %1 
+        <translation type="unfinished">തുക : %1
 </translation>
     </message>
     <message>
         <source>Wallet: %1
 </source>
-        <translation type="unfinished">വാലറ്റ്: %1 
+        <translation type="unfinished">വാലറ്റ്: %1
 </translation>
     </message>
     <message>
@@ -624,13 +624,13 @@ Signing is only possible with addresses of the type 'legacy'.</source>
     <message>
         <source>Label: %1
 </source>
-        <translation type="unfinished">കുറിപ്പ് : %1 
+        <translation type="unfinished">കുറിപ്പ് : %1
 </translation>
     </message>
     <message>
         <source>Address: %1
 </source>
-        <translation type="unfinished">മേൽവിലാസം : %1 
+        <translation type="unfinished">മേൽവിലാസം : %1
 </translation>
     </message>
     <message>

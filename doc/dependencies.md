@@ -1,6 +1,6 @@
 # Dependencies
 
-These are the dependencies used by Bitcoin Core.
+These are the dependencies used by Bitmark Core.
 You can find installation instructions in the `build-*.md` file for your platform.
 "Runtime" and "Version Used" are both in reference to the release binaries.
 
@@ -15,12 +15,14 @@ You can find installation instructions in the `build-*.md` file for your platfor
 
 ## Required
 
-| Dependency | Releases | Version used | Minimum required | Runtime |
-| --- | --- | --- | --- | --- |
-| [Boost](../depends/packages/boost.mk) | [link](https://www.boost.org/users/download/) | [1.81.0](https://github.com/bitcoin/bitcoin/pull/26557) | [1.73.0](https://github.com/bitcoin/bitcoin/pull/29066) | No |
-| [libevent](../depends/packages/libevent.mk) | [link](https://github.com/libevent/libevent/releases) | [2.1.12-stable](https://github.com/bitcoin/bitcoin/pull/21991) | [2.1.8](https://github.com/bitcoin/bitcoin/pull/24681) | No |
-| glibc | [link](https://www.gnu.org/software/libc/) | N/A | [2.27](https://github.com/bitcoin/bitcoin/pull/27029) | Yes |
-| Linux Kernel | [link](https://www.kernel.org/) | N/A | [3.17.0](https://github.com/bitcoin/bitcoin/pull/27699) | Yes |
+| Dependency                                  | Releases                                              | Version used                                                    | Minimum required                                        | Runtime |
+|---------------------------------------------|-------------------------------------------------------|-----------------------------------------------------------------|---------------------------------------------------------| --- |
+| [Boost](../depends/packages/boost.mk)       | [link](https://www.boost.org/users/download/)         | [1.81.0](https://github.com/bitcoin/bitcoin/pull/26557)         | [1.73.0](https://github.com/bitcoin/bitcoin/pull/29066) | No |
+| [libevent](../depends/packages/libevent.mk) | [link](https://github.com/libevent/libevent/releases) | [2.1.12-stable](https://github.com/bitcoin/bitcoin/pull/21991)  | [2.1.8](https://github.com/bitcoin/bitcoin/pull/24681)  | No |
+| glibc                                       | [link](https://www.gnu.org/software/libc/)            | N/A                                                             | [2.27](https://github.com/bitcoin/bitcoin/pull/27029)   | Yes |
+| Linux Kernel                                | [link](https://www.kernel.org/)                       | N/A                                                             | [3.17.0](https://github.com/bitcoin/bitcoin/pull/27699) | Yes |
+| libsodium                                   | [link](https://doc.libsodium.org/)                    | 1.0.18                                                          | 1.0.18                                                  | No |
+| libssl                                      | [link](https://www.openssl.org/source/)               | 3.3.1                                                           | 1.1.1f                                                  | No |
 
 ## Optional
 

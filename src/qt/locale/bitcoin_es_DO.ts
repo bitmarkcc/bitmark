@@ -315,7 +315,7 @@ Solo es posible firmar con direcciones de tipo legacy.</translation>
         <translation type="unfinished">Importe</translation>
     </message>
     <message>
-        <source>Enter a Bitcoin address (e.g. %1)</source>
+        <source>Enter a Bitmark address (e.g. %1)</source>
         <translation type="unfinished">Ingresar una dirección de Bitcoin (por ejemplo, %1)</translation>
     </message>
     <message>
@@ -2625,7 +2625,7 @@ For more information on using this console, type %6.
         <extracomment>RPC console welcome message. Placeholders %7 and %8 are style tags for the warning content, and they are not space separated from the rest of the text intentionally.</extracomment>
         <translation type="unfinished">Te damos la bienvenida a la consola RPC de %1.
 Utiliza las flechas hacia arriba y abajo para navegar por el historial y %2 para borrar la pantalla.
-Utiliza %3 y %4 para aumentar o disminuir el tamaño de la fuente. 
+Utiliza %3 y %4 para aumentar o disminuir el tamaño de la fuente.
 Escribe %5 para ver los comandos disponibles.
 Para obtener más información sobre cómo usar esta consola, escribe %6.
 
