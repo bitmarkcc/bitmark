@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=Bitmark
-Exec=bitmark-qt
-Icon=bitmark256
-Terminal=false
-Type=Application
-Categories=Network;
-Comment=P2P cryptocurrency
