@@ -35,7 +35,7 @@
 #include "../sph/sph_blake.h"
 #include "../sph/sph_groestl.h"
 #include "../sph/sph_cubehash.h"
-#include "../sph/sph_bmw.h"
+#include "../bmw/BlueMidnightWish.h"
 #include "../sph/sph_keccak.h"
 #include "../sph/sph_skein.h"
 #include "Lyra2.h"
@@ -76,7 +76,7 @@ void lyra2re2_hash(const char* input, char* output)
 	sph_cubehash256_context ctx_cubehash;
 	sph_keccak256_context ctx_keccak;
 	sph_skein256_context ctx_skein;
-	sph_bmw256_context ctx_bmw;
+	//sph_bmw256_context ctx_bmw;
 
 	uint32_t hashA[8], hashB[8];
 
@@ -102,9 +102,9 @@ void lyra2re2_hash(const char* input, char* output)
     sph_cubehash256(&ctx_cubehash, hashA, 32);
     sph_cubehash256_close(&ctx_cubehash, hashB);
 
-    sph_bmw256_init(&ctx_bmw);
-    sph_bmw256(&ctx_bmw, hashB, 32);
-    sph_bmw256_close(&ctx_bmw, hashA);
-
-   	memcpy(output, hashA, 32);
+    //sph_bmw256_init(&ctx_bmw);
+    //sph_bmw256(&ctx_bmw, hashB, 32);
+    //sph_bmw256_close(&ctx_bmw, hashA);
+    BMWHashReturn bmwret = BMWHash(256,(unsigned char *)hashB,256,(unsigned char *)hashA);
+    memcpy(output, hashA, 32);
 }

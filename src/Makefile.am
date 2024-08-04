@@ -581,6 +581,7 @@ crypto_libbitcoin_crypto_base_la_SOURCES = \
   crypto/scrypt.h \
   crypto/sph/blake.c \
   crypto/sph/bmw.c \
+  crypto/bmw/BlueMidnightWish.c \
   crypto/sph/cubehash.c \
   crypto/sph/echo.c \
   crypto/sph/fugue.c \
