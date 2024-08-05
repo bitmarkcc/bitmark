@@ -2306,7 +2306,7 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
                                REJECT_INVALID, "bad-cb-amount");
 
     if (block.vtx[0].GetValueOut() < block_value_needed) {
-      if (fDebug) LogPrintf("coinbase pays less than block value\n");
+      if (fDebug) LogPrintf("coinbase pays less than block value %lld vs %lld\n",block.vtx[0].GetValueOut(),block_value_needed);
       if (onFork3(pindex)) {
 	int64_t block_subsidy_needed = GetBlockValue(pindex,0,false);
 	if (block.vtx[0].GetValueOut() < block_subsidy_needed) {
