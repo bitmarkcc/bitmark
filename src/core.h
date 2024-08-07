@@ -800,6 +800,8 @@ bool CheckAuxPowProofOfWork(const CBlockHeader& block, const CChainParams& param
 
 unsigned int GetAlgoWeight (const int algo);
 
+BoostBigNum BoostBigNumFromCompact(unsigned int nCompact);
+
 static const int64_t nForkHeight = 200; // We set it in past so not really used for fork condition
 
 /** The block chain is a tree shaped structure starting with the
@@ -826,7 +828,7 @@ public:
     int64_t nMoneySupply;
 
     // the scaling factor for the block
-    CBigNum subsidyScalingFactor;
+    BoostBigNum subsidyScalingFactor;
     
     // Which # file this block is stored in (blk?????.dat)
     int nFile;
@@ -998,6 +1000,16 @@ public:
 	//LogPrintf("algo is %d and weight is %lu\n",nVersion & BLOCK_VERSION_ALGO,weight.getulong());
         return (CBigNum(1)<<256) / (bnTarget/weight+1);
     }
+
+  BoostBigNum GetBlockWorkBoost() const {
+    BoostBigNum bnTarget = BoostBigNumFromCompact(nBits);
+    if (bnTarget <= 0)
+      return 0;
+    unsigned int algo_weight = GetAlgoWeight(this->GetAlgo());
+    BoostBigNum weight(algo_weight);
+    //LogPrintf("algo is %d and weight is %lu\n",nVersion & BLOCK_VERSION_ALGO,weight.getulong());
+    return (BoostBigNum(1)<<256) / (bnTarget/weight+BoostBigNum(1));
+  }
   
     // Get Average Work of latest 50 Blocks
     // Q?<<< 

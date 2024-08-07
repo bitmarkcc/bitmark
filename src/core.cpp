@@ -715,3 +715,21 @@ unsigned int GetAlgoWeight (const int algo) {
     }
   return weight;
 }
+
+BoostBigNum BoostBigNumFromCompact(unsigned int nCompact) {
+    unsigned int nSize = nCompact >> 24;
+    bool fNegative     = (nCompact & 0x00800000) != 0;
+    unsigned int nWord = nCompact & 0x007fffff;
+    BoostBigNum out;
+    if (nSize <= 3) {
+	nWord >>= 8*(3-nSize);
+	out = BoostBigNum(nWord);
+    }
+    else {
+	out = BoostBigNum(nWord);
+	out <<= 8*(nSize-3);
+    }
+    if (fNegative && out > 0 || !fNegative && out < 0)
+      out = -out;
+    return out;
+}

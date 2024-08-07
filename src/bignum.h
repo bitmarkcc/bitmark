@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "bignum/bn.h"
+#include <boost/multiprecision/cpp_int.hpp>
 
 //#include "util.h" // for uint64
 
@@ -623,5 +624,30 @@ inline bool operator<=(const CBigNum& a, const CBigNum& b) { return (BN_cmp(a.bn
 inline bool operator>=(const CBigNum& a, const CBigNum& b) { return (BN_cmp(a.bn, b.bn) >= 0); }
 inline bool operator<(const CBigNum& a, const CBigNum& b)  { return (BN_cmp(a.bn, b.bn) < 0); }
 inline bool operator>(const CBigNum& a, const CBigNum& b)  { return (BN_cmp(a.bn, b.bn) > 0); }
+
+typedef boost::multiprecision::cpp_int BoostBigNum;
+//using boost::multiprecision::cpp_int;
+
+/*class BoostBigNum: public cpp_int {
+  using cpp_int::cpp_int;
+public:
+  BoostBigNum& SetCompact(unsigned int nCompact) {
+    unsigned int nSize = nCompact >> 24;
+    bool fNegative     =(nCompact & 0x00800000) != 0;
+    unsigned int nWord = nCompact & 0x007fffff;
+    if (nSize <= 3)
+      {
+	nWord >>= 8*(3-nSize);
+	*this = BoostBigNum(nWord);
+      }
+    else
+      {
+	*this = BoostBigNum(nWord);
+	*this <<= 8*(nSize-3);
+      }
+    //BN_set_negative(bn, fNegative);
+    return *this;
+  }
+  };*/
 
 #endif

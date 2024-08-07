@@ -96,7 +96,7 @@ double GetPeakHashrate (const CBlockIndex* blockindex, const int algo, const boo
       for (int i=0; i<365; i++) {
 	if (!pprev_algo) break;
 	int time_f = pprev_algo->GetMedianTimePast();
-	CBigNum hashes_bn = pprev_algo->GetBlockWork();
+	BoostBigNum hashes_bn = pprev_algo->GetBlockWorkBoost();
 	int time_i = 0;
 	
 	for (int j=0; j<nSSF-1; j++) {
@@ -107,11 +107,11 @@ double GetPeakHashrate (const CBlockIndex* blockindex, const int algo, const boo
 	    time_i = pprev_algo->GetMedianTimePast();
 	  }
 	  else {
-	    hashes_bn = CBigNum(0);
+	    hashes_bn = BoostBigNum(0);
 	    break;
 	  }
 	  //LogPrintf("j=%d add block work of block %lu\n",j,pprev_algo->nHeight);
-	  hashes_bn += pprev_algo->GetBlockWork();	  
+	  hashes_bn += pprev_algo->GetBlockWorkBoost();	  
 	}
 	CBlockIndex * pprev_algo_time = get_pprev_algo(pprev_algo,-1);
 	if (pprev_algo_time) {
@@ -141,7 +141,7 @@ double GetPeakHashrate (const CBlockIndex* blockindex, const int algo, const boo
 	  f1 = 1000000;
 	  f2 = 1000;
 	}
-	double hashes = (((hashes_bn/time_f)/f1)/f2).getuint256().getdouble();
+	double hashes = (((hashes_bn/time_f)/f1)/f2).convert_to<double>();
 	//LogPrintf("hashes per sec = %f\n",hashes);
 	if (hashes>hashes_peak) hashes_peak = hashes;
       }
@@ -173,7 +173,7 @@ double GetCurrentHashrate (const CBlockIndex* blockindex, const int algo, const 
       const CBlockIndex * pcur_algo = get_pprev_algo(blockindex,-1);
       if (!pcur_algo) return 0.;
       int time_f = pcur_algo->GetMedianTimePast();
-      CBigNum hashes_bn = pcur_algo->GetBlockWork();
+      BoostBigNum hashes_bn = pcur_algo->GetBlockWorkBoost();
       int time_i = 0;
       const CBlockIndex * pprev_algo = pcur_algo;
       for (int j=0; j<nSSF-1; j++) {
@@ -184,7 +184,7 @@ double GetCurrentHashrate (const CBlockIndex* blockindex, const int algo, const 
 	else {
 	  return 0.;
 	}
-	hashes_bn += pprev_algo->GetBlockWork();
+	hashes_bn += pprev_algo->GetBlockWorkBoost();
       }
       CBlockIndex * pprev_algo_time = get_pprev_algo(pprev_algo,-1);
       if (pprev_algo_time) {
@@ -211,7 +211,7 @@ double GetCurrentHashrate (const CBlockIndex* blockindex, const int algo, const 
 	f1 = 1000000;
 	f2 = 1000;
       }
-      return (((hashes_bn/time_f)/f1)/f2).getuint256().getdouble();
+      return (((hashes_bn/time_f)/f1)/f2).convert_to<double>();
     }
     blockindex = get_pprev_algo(blockindex,-1);
   } while (blockindex);
