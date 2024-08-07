@@ -75,7 +75,7 @@ double GetDifficulty(const CBlockIndex* blockindex, int algo, bool weighted, boo
     return dDiff;
 }
 
-double GetPeakHashrate (const CBlockIndex* blockindex, int algo) {
+double GetPeakHashrate (const CBlockIndex* blockindex, const int algo, const bool giga) {
   if (blockindex == NULL)
     {
       if (chainActive.Tip() == NULL)
@@ -135,7 +135,13 @@ double GetPeakHashrate (const CBlockIndex* blockindex, int algo) {
 	  return std::numeric_limits<double>::max();
 	}
 	//LogPrintf("hashes = %f, time = %f\n",(double)hashes_bn.getulong(),(double)time_f);
-	double hashes = (((hashes_bn/time_f)/1000000)/1000).getuint256().getdouble();
+	unsigned int f1 = 1;
+	unsigned int f2 = 1;
+	if (giga) {
+	  f1 = 1000000;
+	  f2 = 1000;
+	}
+	double hashes = (((hashes_bn/time_f)/f1)/f2).getuint256().getdouble();
 	//LogPrintf("hashes per sec = %f\n",hashes);
 	if (hashes>hashes_peak) hashes_peak = hashes;
       }
@@ -147,7 +153,7 @@ double GetPeakHashrate (const CBlockIndex* blockindex, int algo) {
   return 0.;
 }
 
-double GetCurrentHashrate (const CBlockIndex* blockindex, int algo) { //as used for the scaling factor calc
+double GetCurrentHashrate (const CBlockIndex* blockindex, const int algo, const bool giga) { //as used for the scaling factor calc
   if (blockindex == NULL)
     {
       if (chainActive.Tip() == NULL)
@@ -199,7 +205,13 @@ double GetCurrentHashrate (const CBlockIndex* blockindex, int algo) { //as used 
 	return std::numeric_limits<double>::max();
       }
       //LogPrintf("return %lu / %f\n",(double)hashes_bn.getulong(),(double)time_f);
-      return (((hashes_bn/time_f)/1000000)/1000).getuint256().getdouble();
+      unsigned int f1 = 1;
+      unsigned int f2 = 1;
+      if (giga) {
+	f1 = 1000000;
+	f2 = 1000;
+      }
+      return (((hashes_bn/time_f)/f1)/f2).getuint256().getdouble();
     }
     blockindex = get_pprev_algo(blockindex,-1);
   } while (blockindex);

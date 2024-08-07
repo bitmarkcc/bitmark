@@ -1386,6 +1386,7 @@ int64_t GetBlockValue(CBlockIndex* pindex, int64_t nFees, bool noScale)
     //          Twenty seven million, five hundred seventy nine thousand, eight hundred ninety four   Bitmarks (MARKS) and 
     // 		   Seventy three million, one hundred and eight thousand   Bitmark-Satoshis.
 
+    if (fDebug) LogPrintf("scalingFactor = %u\n",scalingFactor.getuint());
     if (!scalingFactor) return nFees + baseSubsidy;
     return nFees + baseSubsidy - ((CBigNum(baseSubsidy)*CBigNum(100000000))/scalingFactor).getuint() / 2;
 }
