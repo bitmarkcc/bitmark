@@ -1386,7 +1386,7 @@ int64_t GetBlockValue(CBlockIndex* pindex, int64_t nFees, bool noScale)
     //          Twenty seven million, five hundred seventy nine thousand, eight hundred ninety four   Bitmarks (MARKS) and 
     // 		   Seventy three million, one hundred and eight thousand   Bitmark-Satoshis.
 
-    if (fDebug) LogPrintf("scalingFactor = %u\n",scalingFactor.convert_to<unsigned int>());
+    if (fDebug) LogPrintf("scalingFactor = %u\n",scalingFactor.convert_to<uint32_t>());
     if (!scalingFactor) return nFees + baseSubsidy;
     return nFees + baseSubsidy - ((BoostBigNum(baseSubsidy)*BoostBigNum(100000000))/scalingFactor).convert_to<uint32_t>() / 2;
 }
@@ -5053,7 +5053,10 @@ BoostBigNum get_ssf (CBlockIndex * pindex) {
       scalingFactor = (100000000*hashes_peak)/(hashes_peak-hashes_cur);
     }
     else {
-      uint32_t uintScalingFactor = (uint32_t)(((100000000*hashes_peak)/(hashes_peak-hashes_cur)).convert_to<uint64_t>());
+      BoostBigNum scalingFactorPrecise = (100000000*hashes_peak)/(hashes_peak-hashes_cur);
+      if (scalingFactorPrecise > std::numeric_limits<uint64_t>::max())
+	scalingFactorPrecise = std::numeric_limits<uint64_t>::max();
+      uint32_t uintScalingFactor = (uint32_t)(scalingFactorPrecise.convert_to<uint64_t>());
       scalingFactor = BoostBigNum(uintScalingFactor);
     }
   }
