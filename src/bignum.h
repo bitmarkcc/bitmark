@@ -15,7 +15,7 @@
 #include <stdint.h>
 #include <vector>
 
-#include "bignum/bn.h"
+#include <openssl/bn.h>
 #include <boost/multiprecision/cpp_int.hpp>
 
 //#include "util.h" // for uint64
