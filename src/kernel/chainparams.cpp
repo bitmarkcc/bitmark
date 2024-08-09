@@ -80,8 +80,8 @@ public:
 
         consensus.BIP34Height = 1;
         consensus.BIP34Hash = uint256S("eb114fd075298dd4f113a3af621c812d3f2b1ffda1f20002dbd52179bf62d0a9");
-        consensus.BIP65Height = 451166; // 000000000006f25beea1fcd0bb3cf4202ad42bbd8a43e29b91aeadf5683c1abf
-        consensus.BIP66Height = 451166;  // 000000000006f25beea1fcd0bb3cf4202ad42bbd8a43e29b91aeadf5683c1abf
+        consensus.BIP65Height = 414629; // 35018a03e1ee47ad5c6ed1578030dfae72682cd7c3f45ccaa8059ac6016b4bcb
+        consensus.BIP66Height = 450947;  // eb114fd075298dd4f113a3af621c812d3f2b1ffda1f20002dbd52179bf62d0a9
         consensus.CSVHeight = std::numeric_limits<int>::max();   // TODO: recheck
         consensus.SegwitHeight = std::numeric_limits<int>::max();
         consensus.MinBIP9WarningHeight = std::numeric_limits<int>::max(); // segwit activation height + miner confirmation window
@@ -92,8 +92,8 @@ public:
         consensus.DGWtimespan = 16 * 60;             // 16 minutes
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
-        consensus.nRuleChangeActivationThreshold = 9072; // 90% of 2016
-        consensus.nMinerConfirmationWindow = 10080; // nPowTargetTimespan / nPowTargetSpacing
+        consensus.nRuleChangeActivationThreshold = 1944; // 90% of 2160
+        consensus.nMinerConfirmationWindow = 2160; // 3 days
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = Consensus::BIP9Deployment::NEVER_ACTIVE;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
@@ -105,7 +105,7 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;        // August 11th, 2021
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0; // Approximately November 12th, 2021
 
-        consensus.nMinimumChainWork  = uint256S("0x0000000000000000000000000000000000000000000001c446aafc733e96c610");
+        consensus.nMinimumChainWork  = uint256S("00000000000000000000000000000000000000000014f34e3ab589479907753e");
         consensus.defaultAssumeValid = uint256S("0xf6d49ebc768025e300083d133d1bc1bf4e05b0878685c16237739d569cb9dcfe");
 
         consensus.fStrictChainId = true;
@@ -152,14 +152,13 @@ public:
         vSeeds.emplace_back("dnsseed.bitmark.cc");      // NJ joe
         vSeeds.emplace_back("btm.zmark.org");           // NJ vinny j0
 
-
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,85);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,5);
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,213);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x88, 0xB2, 0x1E};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
 
-        bech32_hrp = "btm";
+        bech32_hrp = "bm";
 
         vFixedSeeds = std::vector<uint8_t>(std::begin(chainparams_seed_main), std::end(chainparams_seed_main));
 
