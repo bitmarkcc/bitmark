@@ -105,7 +105,7 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;        // August 11th, 2021
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0; // Approximately November 12th, 2021
 
-        consensus.nMinimumChainWork  = uint256S("00000000000000000000000000000000000000000014f34e3ab589479907753e");
+        consensus.nMinimumChainWork  = uint256S("0x00000000000000000000000000000000000000000014f34e3ab589479907753e");
         consensus.defaultAssumeValid = uint256S("0xf6d49ebc768025e300083d133d1bc1bf4e05b0878685c16237739d569cb9dcfe");
 
         consensus.fStrictChainId = true;
