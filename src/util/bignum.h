@@ -15,8 +15,8 @@
 #include <stdexcept>
 #include <stdint.h>
 #include <vector>
-
 #include <openssl/bn.h>
+#include <boost/multiprecision/cpp_int.hpp>
 
 /** Errors thrown by the bignum class */
 class bignum_error : public std::runtime_error
@@ -597,5 +597,7 @@ inline bool operator<=(const CBigNum& a, const CBigNum& b) { return (BN_cmp(a.m_
 inline bool operator>=(const CBigNum& a, const CBigNum& b) { return (BN_cmp(a.m_bigNum, b.m_bigNum) >= 0); }
 inline bool operator<(const CBigNum& a, const CBigNum& b) { return (BN_cmp(a.m_bigNum, b.m_bigNum) < 0); }
 inline bool operator>(const CBigNum& a, const CBigNum& b) { return (BN_cmp(a.m_bigNum, b.m_bigNum) > 0); }
+
+typedef boost::multiprecision::cpp_int BoostBigNum;
 
 #endif

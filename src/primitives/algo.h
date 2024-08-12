@@ -72,9 +72,9 @@ inline std::string ToString(const Algo algo)
 //      this will vary constantly (and more significantly long-term with hardware developement)
 //   As of June, 2018 these values are closely reflective of market values seen on
 //      nicehash.com and miningrigrentals.com
-inline unsigned int GetAlgoWeight(const Algo algo)
+inline uint32_t GetAlgoWeight(const Algo algo)
 {
-    unsigned int weight = 8000; // scrypt, lyra2rev2 and 17 share this value.
+    uint32_t weight = 8000; // scrypt, lyra2rev2 and 17 share this value.
     switch (algo) {
     case Algo::SHA256D:
         weight = 1;

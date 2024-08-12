@@ -1274,7 +1274,12 @@ else
   fi
 fi
 
+AC_CHECK_HEADER([openssl/bn.h],,AC_MSG_ERROR(openssl/bn.h header missing))
 AC_CHECK_LIB([crypto],      [main],, AC_MSG_ERROR(libcrypto missing))
+
+AC_CHECK_HEADER([boost/multiprecision/cpp_int.hpp],,AC_MSG_ERROR(boost multiprecision headers missing))
+AC_CHECK_LIB([sodium], [crypto_generichash_blake2b_update],, AC_MSG_ERROR(libsodium missing))
+CPPFLAGS="$CPPFLAGS -DSODIUM_STATIC -DOPENSSL_API_COMPAT=0x10101000L"
 
 if test "$enable_fuzz_binary" = "yes"; then
   AC_MSG_CHECKING([whether main function is needed for fuzz binary])

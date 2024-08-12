@@ -537,6 +537,12 @@ public:
     }
 };
 
+CBigNum CChainParams::ProofOfWorkLimit(Algo algo) const
+{
+    uint32_t algoWeight = GetAlgoWeight(algo);
+    return CBigNum(this->consensus.powLimit) * algoWeight;
+}
+
 std::unique_ptr<const CChainParams> CChainParams::SigNet(const SigNetOptions& options)
 {
     return std::make_unique<const SigNetParams>(options);
