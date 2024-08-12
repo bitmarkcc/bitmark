@@ -1274,6 +1274,8 @@ else
   fi
 fi
 
+AC_CHECK_LIB([crypto],      [main],, AC_MSG_ERROR(libcrypto missing))
+
 if test "$enable_fuzz_binary" = "yes"; then
   AC_MSG_CHECKING([whether main function is needed for fuzz binary])
   AX_CHECK_LINK_FLAG(

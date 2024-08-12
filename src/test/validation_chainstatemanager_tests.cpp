@@ -36,6 +36,7 @@ BOOST_FIXTURE_TEST_SUITE(validation_chainstatemanager_tests, TestingSetup)
 //! First create a legacy (IBD) chainstate, then create a snapshot chainstate.
 BOOST_FIXTURE_TEST_CASE(chainstatemanager, TestChain100Setup)
 {
+    printf("basic chainstatemanager tests\n");
     ChainstateManager& manager = *m_node.chainman;
     std::vector<Chainstate*> chainstates;
 
@@ -108,6 +109,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager, TestChain100Setup)
 //! Test rebalancing the caches associated with each chainstate.
 BOOST_FIXTURE_TEST_CASE(chainstatemanager_rebalance_caches, TestChain100Setup)
 {
+    printf("in rebalance_caches test\n");
     ChainstateManager& manager = *m_node.chainman;
 
     size_t max_cache = 10000;
@@ -377,8 +379,11 @@ struct SnapshotTestSetup : TestChain100Setup {
             SyncWithValidationInterfaceQueue();
             LOCK(::cs_main);
             chainman.ResetChainstates();
+	    printf("do boost_check_equal chainman.GetAll\n");
             BOOST_CHECK_EQUAL(chainman.GetAll().size(), 0);
+	    printf("did check_equal\n");
             m_node.notifications = std::make_unique<KernelNotifications>(*Assert(m_node.shutdown), m_node.exit_status);
+	    printf("did set m_node.notifiactions\n");
             const ChainstateManager::Options chainman_opts{
                 .chainparams = ::Params(),
                 .datadir = chainman.m_options.datadir,
@@ -391,9 +396,12 @@ struct SnapshotTestSetup : TestChain100Setup {
             };
             // For robustness, ensure the old manager is destroyed before creating a
             // new one.
+	    printf("did set opts\n");
             m_node.chainman.reset();
+	    printf("did reset\n");
             m_node.chainman = std::make_unique<ChainstateManager>(*Assert(m_node.shutdown), chainman_opts, blockman_opts);
         }
+	printf("do assert chainman\n");
         return *Assert(m_node.chainman);
     }
 };
@@ -401,7 +409,9 @@ struct SnapshotTestSetup : TestChain100Setup {
 //! Test basic snapshot activation.
 BOOST_FIXTURE_TEST_CASE(chainstatemanager_activate_snapshot, SnapshotTestSetup)
 {
+    printf("do this->SetupSnapshot\n");
     this->SetupSnapshot();
+    printf("did this->SetupSnapshot\n");
 }
 
 //! Test LoadBlockIndex behavior when multiple chainstates are in use.
@@ -416,6 +426,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_activate_snapshot, SnapshotTestSetup)
 //!
 BOOST_FIXTURE_TEST_CASE(chainstatemanager_loadblockindex, TestChain100Setup)
 {
+    printf("in chainstatemanager_loadblockindex test\n");
     ChainstateManager& chainman = *Assert(m_node.chainman);
     Chainstate& cs1 = chainman.ActiveChainstate();
 
@@ -551,11 +562,13 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_loadblockindex, TestChain100Setup)
     BOOST_CHECK_EQUAL(cs2.setBlockIndexCandidates.count(assumed_tip), 1);
     // Check that 11 blocks total are present.
     BOOST_CHECK_EQUAL(cs2.setBlockIndexCandidates.size(), num_indexes - last_assumed_valid_idx + 1);
+    printf("finished loadblockindex test\n");
 }
 
 //! Ensure that snapshot chainstates initialize properly when found on disk.
 BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_init, SnapshotTestSetup)
 {
+    printf("starting snapshot_init test\n");
     ChainstateManager& chainman = *Assert(m_node.chainman);
     Chainstate& bg_chainstate = chainman.ActiveChainstate();
 
@@ -625,6 +638,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_init, SnapshotTestSetup)
 
 BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_completion, SnapshotTestSetup)
 {
+    printf("starting snapshot_completion test\n");
     this->SetupSnapshot();
 
     ChainstateManager& chainman = *Assert(m_node.chainman);
@@ -708,6 +722,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_completion, SnapshotTestSetup
 
 BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_completion_hash_mismatch, SnapshotTestSetup)
 {
+    printf("in snapshot_completion_hash_mismatch\n");
     auto chainstates = this->SetupSnapshot();
     Chainstate& validation_chainstate = *std::get<0>(chainstates);
     ChainstateManager& chainman = *Assert(m_node.chainman);

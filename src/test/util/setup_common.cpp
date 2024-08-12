@@ -232,13 +232,17 @@ void ChainTestingSetup::LoadVerifyActivateChainstate()
     options.check_blocks = m_args.GetIntArg("-checkblocks", DEFAULT_CHECKBLOCKS);
     options.check_level = m_args.GetIntArg("-checklevel", DEFAULT_CHECKLEVEL);
     options.require_full_verification = m_args.IsArgSet("-checkblocks") || m_args.IsArgSet("-checklevel");
+    printf("do loadchainstate\n");
     auto [status, error] = LoadChainstate(chainman, m_cache_sizes, options);
+    printf("did loadchainstate\n");
     assert(status == node::ChainstateLoadStatus::SUCCESS);
+    printf("asserted status\n");
 
     std::tie(status, error) = VerifyLoadedChainstate(chainman, options);
     assert(status == node::ChainstateLoadStatus::SUCCESS);
 
     BlockValidationState state;
+    printf("ChainTestingSetup:: do activatebestchain\n");
     if (!chainman.ActiveChainstate().ActivateBestChain(state)) {
         throw std::runtime_error(strprintf("ActivateBestChain failed. (%s)", state.ToString()));
     }
@@ -296,9 +300,10 @@ TestChain100Setup::TestChain100Setup(
 
     {
         LOCK(::cs_main);
+	//printf("TestChain100Setup activechain tip blockhash = %s\n",m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString().c_str());
         assert(
             m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString() ==
-            "571d80a9967ae599cec0448b0b0ba1cfb606f584d8069bd7166b86854ba7a191");
+            "a8104321e39cb3fe7dd86b5437f99f512cf903b1d8639a4ba88b62a4736523a9");
     }
 }
 
@@ -326,7 +331,7 @@ CBlock TestChain100Setup::CreateBlock(
     }
     RegenerateCommitments(block, *Assert(m_node.chainman));
 
-    while (!CheckProofOfWork(block.GetHash(), block.nBits, m_node.chainman->GetConsensus())) ++block.nNonce;
+    while (!CheckProofOfWork(block.GetPoWHash(), block.nBits, m_node.chainman->GetConsensus())) ++block.nNonce;
 
     return block;
 }

@@ -226,4 +226,6 @@ inline uint160 RIPEMD160(Span<const unsigned char> data)
     return result;
 }
 
+void hash_scrypt(const char* input, char* output);
+
 #endif // BITCOIN_HASH_H

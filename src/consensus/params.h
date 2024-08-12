@@ -74,6 +74,7 @@ struct BIP9Deployment {
 struct Params {
     uint256 hashGenesisBlock;
     int nSubsidyHalvingInterval;
+    int SubsidyInterimInterval() const { return nSubsidyHalvingInterval / 2; }
     /**
      * Hashes of blocks that
      * - are known to be consensus valid, and
@@ -97,6 +98,7 @@ struct Params {
     /** Don't warn about unknown BIP 9 activations below this height.
      * This prevents us from warning about the CSV and segwit activations. */
     int MinBIP9WarningHeight;
+
     /**
      * Minimum blocks including miner confirmation of the total of 2016 blocks in a retargeting period,
      * (nPowTargetTimespan / nPowTargetSpacing) which is also used for BIP9 deployments.
@@ -111,6 +113,11 @@ struct Params {
     bool fPowNoRetargeting;
     int64_t nPowTargetSpacing;
     int64_t nPowTargetTimespan;
+    int64_t DGWtimespan;
+
+    unsigned int EquihashN() const { return 200; }
+    unsigned int EquihashK() const { return 9; }
+
     std::chrono::seconds PowTargetSpacing() const
     {
         return std::chrono::seconds{nPowTargetSpacing};
@@ -120,6 +127,9 @@ struct Params {
     uint256 nMinimumChainWork;
     /** By default assume that the signatures in ancestors of this block are valid */
     uint256 defaultAssumeValid;
+
+    bool fStrictChainId;
+    int16_t nAuxpowChainId;
 
     /**
      * If true, witness commitments contain a payload equal to a Bitcoin Script solution

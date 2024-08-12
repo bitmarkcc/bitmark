@@ -19,6 +19,7 @@ std::vector<std::pair<uint256, CTransactionRef>> extra_txn;
 BOOST_FIXTURE_TEST_SUITE(blockencodings_tests, RegTestingSetup)
 
 static CBlock BuildBlockTestCase() {
+    printf("in buildblocktestcase()\n");
     CBlock block;
     CMutableTransaction tx;
     tx.vin.resize(1);
@@ -46,7 +47,8 @@ static CBlock BuildBlockTestCase() {
     bool mutated;
     block.hashMerkleRoot = BlockMerkleRoot(block, &mutated);
     assert(!mutated);
-    while (!CheckProofOfWork(block.GetHash(), block.nBits, Params().GetConsensus())) ++block.nNonce;
+    printf("do checkproofofwork\n");
+    while (!CheckProofOfWork(block.GetPoWHash(), block.nBits, Params().GetConsensus())) ++block.nNonce;
     return block;
 }
 
@@ -56,9 +58,12 @@ constexpr long SHARED_TX_OFFSET{4};
 
 BOOST_AUTO_TEST_CASE(SimpleRoundTripTest)
 {
+    printf("starting simpleroundtriptest\n");
     CTxMemPool& pool = *Assert(m_node.mempool);
+    printf("create entry\n");
     TestMemPoolEntryHelper entry;
     CBlock block(BuildBlockTestCase());
+    printf("did buildblocktestcase()\n");
 
     LOCK2(cs_main, pool.cs);
     pool.addUnchecked(entry.FromTx(block.vtx[2]));
@@ -277,7 +282,7 @@ BOOST_AUTO_TEST_CASE(EmptyBlockRoundTripTest)
     bool mutated;
     block.hashMerkleRoot = BlockMerkleRoot(block, &mutated);
     assert(!mutated);
-    while (!CheckProofOfWork(block.GetHash(), block.nBits, Params().GetConsensus())) ++block.nNonce;
+    while (!CheckProofOfWork(block.GetPoWHash(), block.nBits, Params().GetConsensus())) ++block.nNonce;
 
     // Test simple header round-trip with only coinbase
     {

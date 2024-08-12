@@ -6,6 +6,7 @@
 #include <span.h>
 #include <crypto/common.h>
 #include <crypto/hmac_sha512.h>
+#include <crypto/scrypt.h>
 
 #include <bit>
 #include <string>
@@ -89,4 +90,9 @@ HashWriter TaggedHash(const std::string& tag)
     CSHA256().Write((const unsigned char*)tag.data(), tag.size()).Finalize(taghash.begin());
     writer << taghash << taghash;
     return writer;
+}
+
+void hash_scrypt(const char* input, char* output)
+{
+    scrypt_1024_1_1_256(input, output);
 }

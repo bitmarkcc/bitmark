@@ -63,7 +63,12 @@ static ChainstateLoadResult CompleteChainstateInitialization(
     // Note that it also sets fReindex global based on the disk flag!
     // From here on, fReindex and options.reindex values may be different!
     if (!chainman.LoadBlockIndex()) {
-        if (chainman.m_interrupt) return {ChainstateLoadStatus::INTERRUPTED, {}};
+	printf("!chainman.LoadBlockIndex()\n");
+        if (chainman.m_interrupt) {
+	    printf("chainman.m_interrupt\n");
+	    return {ChainstateLoadStatus::INTERRUPTED, {}};
+	}
+	printf("Error loading block index (not an interrupt)\n");
         return {ChainstateLoadStatus::FAILURE, _("Error loading block database")};
     }
 
@@ -71,6 +76,7 @@ static ChainstateLoadResult CompleteChainstateInitialization(
             !chainman.m_blockman.LookupBlockIndex(chainman.GetConsensus().hashGenesisBlock)) {
         // If the loaded chain has a wrong genesis, bail out immediately
         // (we're likely using a testnet datadir, or the other way around).
+	printf("incorrect or no genesis block found\n");
         return {ChainstateLoadStatus::FAILURE_INCOMPATIBLE_DB, _("Incorrect or no genesis block found. Wrong datadir for network?")};
     }
 
@@ -163,18 +169,18 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
                                     const ChainstateLoadOptions& options)
 {
     if (!chainman.AssumedValidBlock().IsNull()) {
-        LogPrintf("Assuming ancestors of block %s have valid signatures.\n", chainman.AssumedValidBlock().GetHex());
+        printf("Assuming ancestors of block %s have valid signatures.\n", chainman.AssumedValidBlock().GetHex().c_str());
     } else {
-        LogPrintf("Validating signatures for all blocks.\n");
+        printf("Validating signatures for all blocks.\n");
     }
-    LogPrintf("Setting nMinimumChainWork=%s\n", chainman.MinimumChainWork().GetHex());
+    printf("Setting nMinimumChainWork=%s\n", chainman.MinimumChainWork().GetHex().c_str());
     if (chainman.MinimumChainWork() < UintToArith256(chainman.GetConsensus().nMinimumChainWork)) {
-        LogPrintf("Warning: nMinimumChainWork set below default value of %s\n", chainman.GetConsensus().nMinimumChainWork.GetHex());
+        printf("Warning: nMinimumChainWork set below default value of %s\n", chainman.GetConsensus().nMinimumChainWork.GetHex().c_str());
     }
     if (chainman.m_blockman.GetPruneTarget() == BlockManager::PRUNE_TARGET_MANUAL) {
-        LogPrintf("Block pruning enabled.  Use RPC call pruneblockchain(height) to manually prune block and undo files.\n");
+        printf("Block pruning enabled.  Use RPC call pruneblockchain(height) to manually prune block and undo files.\n");
     } else if (chainman.m_blockman.GetPruneTarget()) {
-        LogPrintf("Prune configured to target %u MiB on disk for block and undo files.\n", chainman.m_blockman.GetPruneTarget() / 1024 / 1024);
+        printf("Prune configured to target %lu MiB on disk for block and undo files.\n", chainman.m_blockman.GetPruneTarget() / 1024 / 1024);
     }
 
     LOCK(cs_main);
@@ -189,14 +195,18 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
     bool has_snapshot = chainman.DetectSnapshotChainstate();
 
     if (has_snapshot && (options.reindex || options.reindex_chainstate)) {
-        LogPrintf("[snapshot] deleting snapshot chainstate due to reindexing\n");
+        printf("[snapshot] deleting snapshot chainstate due to reindexing\n");
         if (!chainman.DeleteSnapshotChainstate()) {
+	    printf("failure 1\n");
             return {ChainstateLoadStatus::FAILURE_FATAL, Untranslated("Couldn't remove snapshot chainstate.")};
         }
     }
 
+    printf("do completechainstateinitialization\n");
+
     auto [init_status, init_error] = CompleteChainstateInitialization(chainman, cache_sizes, options);
     if (init_status != ChainstateLoadStatus::SUCCESS) {
+	printf("init status not success\n");
         return {init_status, init_error};
     }
 
@@ -215,6 +225,7 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
     } else if (snapshot_completion == SnapshotCompletionResult::SUCCESS) {
         LogPrintf("[snapshot] cleaning up unneeded background chainstate, then reinitializing\n");
         if (!chainman.ValidatedSnapshotCleanup()) {
+	    printf("!validatedsnapshotcleanup\n");
             return {ChainstateLoadStatus::FAILURE_FATAL, Untranslated("Background chainstate cleanup failed unexpectedly.")};
         }
 
@@ -236,6 +247,7 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
             return {init_status, init_error};
         }
     } else {
+	printf("failure 2\n");
         return {ChainstateLoadStatus::FAILURE, _(
            "UTXO snapshot failed to validate. "
            "Restart to resume normal initial block download, or try loading a different snapshot.")};

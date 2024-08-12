@@ -102,6 +102,7 @@ CreateAndActivateUTXOSnapshot(
             }
         }
         BlockValidationState state;
+	printf("do activatebestchain\n");
         if (!node.chainman->ActiveChainstate().ActivateBestChain(state)) {
             throw std::runtime_error(strprintf("ActivateBestChain failed. (%s)", state.ToString()));
         }
