@@ -303,7 +303,7 @@ TestChain100Setup::TestChain100Setup(
 	printf("TestChain100Setup activechain tip blockhash = %s\n",m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString().c_str());
         assert(
             m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString() ==
-            "e9c88fd8c04c86d5dc5a5f3fc6e27c524b01fe94c02664ac71ef72d4e8e7fa12");
+            "0d47973c0e3784306afd224d888d35027cc109bb56b11d07548dcd7fed59e341");
     }
 }
 
@@ -347,6 +347,7 @@ CBlock TestChain100Setup::CreateAndProcessBlock(
 
     CBlock block = this->CreateBlock(txns, scriptPubKey, *chainstate);
     std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(block);
+    printf("do processnewblock\n");
     Assert(m_node.chainman)->ProcessNewBlock(shared_pblock, true, true, nullptr);
 
     return block;

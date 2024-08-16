@@ -16,7 +16,7 @@ BOOST_AUTO_TEST_CASE(disconnectpool_memory_limits)
     // transactions would realistically be in a block together, they just need distinct txids and
     // uniform size for this test to work.
     std::vector<CTransactionRef> block_vtx(m_coinbase_txns);
-    BOOST_CHECK_EQUAL(block_vtx.size(), 100);
+    BOOST_CHECK_EQUAL(block_vtx.size(), 720);
 
     // Roughly estimate sizes to sanity check that DisconnectedBlockTransactions::DynamicMemoryUsage
     // is within an expected range.
@@ -25,8 +25,8 @@ BOOST_AUTO_TEST_CASE(disconnectpool_memory_limits)
     std::unordered_map<uint256, CTransaction*, SaltedTxidHasher> temp_map;
     temp_map.reserve(1);
     const size_t MAP_1{memusage::DynamicUsage(temp_map)};
-    temp_map.reserve(100);
-    const size_t MAP_100{memusage::DynamicUsage(temp_map)};
+    temp_map.reserve(720);
+    const size_t MAP_720{memusage::DynamicUsage(temp_map)};
 
     const size_t TX_USAGE{RecursiveDynamicUsage(block_vtx.front())};
     for (const auto& tx : block_vtx)
@@ -63,11 +63,11 @@ BOOST_AUTO_TEST_CASE(disconnectpool_memory_limits)
     // Record usage so we can check size limiting in the next test.
     size_t usage_full{0};
     {
-        const size_t USAGE_100_OVERESTIMATE{MAP_100 + ENTRY_USAGE_ESTIMATE * 100};
-        DisconnectedBlockTransactions disconnectpool{USAGE_100_OVERESTIMATE};
+        const size_t USAGE_720_OVERESTIMATE{MAP_720 + ENTRY_USAGE_ESTIMATE * 720};
+        DisconnectedBlockTransactions disconnectpool{USAGE_720_OVERESTIMATE};
         auto evicted_txns{disconnectpool.AddTransactionsFromBlock(block_vtx)};
         BOOST_CHECK_EQUAL(evicted_txns.size(), 0);
-        BOOST_CHECK(disconnectpool.DynamicMemoryUsage() <= USAGE_100_OVERESTIMATE);
+        BOOST_CHECK(disconnectpool.DynamicMemoryUsage() <= USAGE_720_OVERESTIMATE);
 
         usage_full = disconnectpool.DynamicMemoryUsage();
 
@@ -76,10 +76,10 @@ BOOST_AUTO_TEST_CASE(disconnectpool_memory_limits)
 
     // DisconnectedBlockTransactions that's just a little too small for all of the transactions.
     {
-        const size_t MAX_MEMUSAGE_99{usage_full - sizeof(void*)};
-        DisconnectedBlockTransactions disconnectpool{MAX_MEMUSAGE_99};
+        const size_t MAX_MEMUSAGE_719{usage_full - sizeof(void*)};
+        DisconnectedBlockTransactions disconnectpool{MAX_MEMUSAGE_719};
         auto evicted_txns{disconnectpool.AddTransactionsFromBlock(block_vtx)};
-        BOOST_CHECK(disconnectpool.DynamicMemoryUsage() <= MAX_MEMUSAGE_99);
+        BOOST_CHECK(disconnectpool.DynamicMemoryUsage() <= MAX_MEMUSAGE_719);
 
         // Only 1 transaction needed to be evicted
         BOOST_CHECK_EQUAL(1, evicted_txns.size());

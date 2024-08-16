@@ -16,7 +16,7 @@
 
 struct Dersig100Setup : public TestChain100Setup {
     Dersig100Setup()
-        : TestChain100Setup{ChainType::REGTEST, {"-testactivationheight=dersig@102"}} {}
+        : TestChain100Setup{ChainType::REGTEST, {"-testactivationheight=dersig@722"}} {}
 };
 
 bool CheckInputScripts(const CTransaction& tx, TxValidationState& state,
@@ -234,8 +234,10 @@ BOOST_FIXTURE_TEST_CASE(checkinputs_test, Dersig100Setup)
     // enabled yet), even though there's no cache entry.
     CBlock block;
 
+    printf("checkinputs_test: do createandprocessblock\n");
     block = CreateAndProcessBlock({spend_tx}, p2pk_scriptPubKey);
     LOCK(cs_main);
+    printf("block hash = %s, tip block hash = %s, coinstip block hash = %s\n",block.GetHash().ToString().c_str(),m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString().c_str(),m_node.chainman->ActiveChainstate().CoinsTip().GetBestBlock().ToString().c_str());
     BOOST_CHECK(m_node.chainman->ActiveChain().Tip()->GetBlockHash() == block.GetHash());
     BOOST_CHECK(m_node.chainman->ActiveChainstate().CoinsTip().GetBestBlock() == block.GetHash());
 

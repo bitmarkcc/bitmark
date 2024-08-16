@@ -4294,12 +4294,17 @@ bool ChainstateManager::ProcessNewBlock(const std::shared_ptr<const CBlock>& blo
         // malleability that cause CheckBlock() to fail; see e.g. CVE-2012-2459 and
         // https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-February/016697.html.  Because CheckBlock() is
         // not very expensive, the anti-DoS benefits of caching failure (of a definitely-invalid block) are not substantial.
+	printf("do checkblock\n");
         bool ret = CheckBlock(*block, state, GetConsensus());
         if (ret) {
             // Store to disk
             ret = AcceptBlock(block, state, &pindex, force_processing, nullptr, new_block, min_pow_checked);
         }
+	else {
+	    printf("checkblock failed\n");
+	}
         if (!ret) {
+	    printf("AcceptBlock failed\n");
             GetMainSignals().BlockChecked(*block, state);
             return error("%s: AcceptBlock FAILED (%s)", __func__, state.ToString());
         }
@@ -4307,16 +4312,21 @@ bool ChainstateManager::ProcessNewBlock(const std::shared_ptr<const CBlock>& blo
 
     NotifyHeaderTip(*this);
 
+    printf("do activatebestchain\n");
     BlockValidationState state; // Only used to report errors, not invalidity - ignore it
     if (!ActiveChainstate().ActivateBestChain(state, block)) {
+	printf("ActivateBestChain failed\n");
         return error("%s: ActivateBestChain failed (%s)", __func__, state.ToString());
     }
+    printf("did activatebestchain\n");
 
     Chainstate* bg_chain{WITH_LOCK(cs_main, return BackgroundSyncInProgress() ? m_ibd_chainstate.get() : nullptr)};
     BlockValidationState bg_state;
     if (bg_chain && !bg_chain->ActivateBestChain(bg_state, block)) {
+	printf("background activatebestchain failed\n");
         return error("%s: [background] ActivateBestChain failed (%s)", __func__, bg_state.ToString());
      }
+    printf("did background activatebestchain\n");
 
     return true;
 }
