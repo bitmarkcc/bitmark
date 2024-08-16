@@ -151,7 +151,7 @@ BOOST_AUTO_TEST_CASE(stale_tip_peer_management)
 
     const auto time_init{GetTime<std::chrono::seconds>()};
     SetMockTime(time_init);
-    const auto time_later{time_init + 3 * std::chrono::seconds{m_node.chainman->GetConsensus().nPowTargetSpacing} + 1s};
+    const auto time_later{time_init + 3 * std::chrono::seconds{600} + 1s}; // 600s = 10 min as in BTC todo: check if we need the BTM target time
     connman->Init(options);
     std::vector<CNode *> vNodes;
 

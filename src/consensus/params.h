@@ -74,7 +74,8 @@ struct BIP9Deployment {
 struct Params {
     uint256 hashGenesisBlock;
     int nSubsidyHalvingInterval;
-    int SubsidyInterimInterval() const { return nSubsidyHalvingInterval / 2; }
+    int nSubsidyHalvingIntervalBTM;
+    int SubsidyInterimIntervalBTM() const { return nSubsidyHalvingIntervalBTM / 2; }
     /**
      * Hashes of blocks that
      * - are known to be consensus valid, and
@@ -113,7 +114,6 @@ struct Params {
     bool fPowNoRetargeting;
     int64_t nPowTargetSpacing;
     int64_t nPowTargetTimespan;
-    int64_t DGWtimespan;
 
     unsigned int EquihashN() const { return 200; }
     unsigned int EquihashK() const { return 9; }
@@ -123,6 +123,7 @@ struct Params {
         return std::chrono::seconds{nPowTargetSpacing};
     }
     int64_t DifficultyAdjustmentInterval() const { return nPowTargetTimespan / nPowTargetSpacing; }
+
     /** The best chain should have at least this much work */
     uint256 nMinimumChainWork;
     /** By default assume that the signatures in ancestors of this block are valid */

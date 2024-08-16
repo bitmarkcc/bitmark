@@ -564,16 +564,42 @@ crypto_libbitcoin_crypto_base_la_SOURCES = \
   crypto/chacha20poly1305.h \
   crypto/chacha20poly1305.cpp \
   crypto/common.h \
+  crypto/ar2/argon2.c \
+  crypto/ar2/core.c \
+  crypto/ar2/encoding.c \
+  crypto/ar2/genkat.c \
+  crypto/ar2/ref.c \
+  crypto/ar2/thread.c \
+  crypto/ar2/blake2/blake2b.c \
+  crypto/bmw/BlueMidnightWish.c \
+  crypto/cryptonight/common/c_keccak.c \
+  crypto/cryptonight/crypto/aesb.c \
+  crypto/cryptonight/crypto/blake256.c \
+  crypto/cryptonight/crypto/cn-groestl.c \
+  crypto/cryptonight/crypto/cn-jh.c \
+  crypto/cryptonight/crypto/cn-skein.c \
+  crypto/cryptonight/crypto/hash.c \
+  crypto/cryptonight/crypto/hash-extra-blake.c \
+  crypto/cryptonight/crypto/hash-extra-groestl.c \
+  crypto/cryptonight/crypto/hash-extra-jh.c \
+  crypto/cryptonight/crypto/hash-extra-skein.c \
+  crypto/cryptonight/crypto/oaes_lib.c \
+  crypto/cryptonight/crypto/slow-hash.c \
+  crypto/equihash/equihash.cpp \
+  crypto/equihash/equihash.tcc \
   crypto/hkdf_sha256_32.cpp \
   crypto/hkdf_sha256_32.h \
   crypto/hmac_sha256.cpp \
   crypto/hmac_sha256.h \
   crypto/hmac_sha512.cpp \
   crypto/hmac_sha512.h \
-  crypto/poly1305.h \
-  crypto/poly1305.cpp \
+  crypto/lyra2/Lyra2.c \
+  crypto/lyra2/Lyra2RE.c \
+  crypto/lyra2/Sponge.c \
   crypto/muhash.h \
   crypto/muhash.cpp \
+  crypto/poly1305.h \
+  crypto/poly1305.cpp \
   crypto/ripemd160.cpp \
   crypto/ripemd160.h \
   crypto/scrypt.cpp \
@@ -588,7 +614,27 @@ crypto_libbitcoin_crypto_base_la_SOURCES = \
   crypto/sha512.cpp \
   crypto/sha512.h \
   crypto/siphash.cpp \
-  crypto/siphash.h
+  crypto/siphash.h \
+  crypto/sph/blake.c \
+  crypto/sph/bmw.c \
+  crypto/sph/cubehash.c \
+  crypto/sph/echo.c \
+  crypto/sph/fugue.c \
+  crypto/sph/groestl.c \
+  crypto/sph/hamsi.c \
+  crypto/sph/haval.c \
+  crypto/sph/jh.c \
+  crypto/sph/keccak.c \
+  crypto/sph/luffa.c \
+  crypto/sph/shabal.c \
+  crypto/sph/shavite.c \
+  crypto/sph/simd.c \
+  crypto/sph/skein.c \
+  crypto/sph/sph_sha2big.c \
+  crypto/sph/whirlpool.c \
+  crypto/yescrypt/sha256_Y.c \
+  crypto/yescrypt/yescrypt-best.c \
+  crypto/yescrypt/yescryptcommon.c
 
 # See explanation for -static in crypto_libbitcoin_crypto_base_la's LDFLAGS and
 # CXXFLAGS above
@@ -644,6 +690,8 @@ libbitcoin_consensus_a_SOURCES = \
   prevector.h \
   primitives/block.cpp \
   primitives/block.h \
+  primitives/pureheader.cpp \
+  primitives/pureheader.h \
   primitives/transaction.cpp \
   primitives/transaction.h \
   pubkey.cpp \

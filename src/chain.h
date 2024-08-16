@@ -266,6 +266,11 @@ public:
 	return GetBlockHeader().GetPoWHash();
     }
 
+    Algo GetAlgo() const
+    {
+	return GetBlockHeader().GetAlgo();
+    }
+
     /**
      * Check whether this block's and all previous blocks' transactions have been
      * downloaded (and stored to disk) at some point.

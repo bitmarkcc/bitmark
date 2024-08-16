@@ -81,7 +81,8 @@ public:
         m_chain_type = ChainType::MAIN;
         consensus.signet_blocks = false;
         consensus.signet_challenge.clear();
-        consensus.nSubsidyHalvingInterval = 210000;
+        consensus.nSubsidyHalvingInterval = 210000; // Not used for BTM
+	consensus.nSubsidyHalvingIntervalBTM = 788000;
         consensus.script_flag_exceptions.emplace( // BIP16 exception
             uint256S("0x00000000000002dc756eebf4f49723ed8d30cc28a5f108eb94b1ba88ac4f9c22"), SCRIPT_VERIFY_NONE);
         consensus.script_flag_exceptions.emplace( // Taproot exception
@@ -94,9 +95,8 @@ public:
         consensus.SegwitHeight = std::numeric_limits<int>::max();
         consensus.MinBIP9WarningHeight = std::numeric_limits<int>::max(); // segwit activation height + miner confirmation window
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-        consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
-        consensus.nPowTargetSpacing = 10 * 60;
-        consensus.DGWtimespan = 16 * 60;             // 16 minutes	
+        consensus.nPowTargetTimespan = 24 * 60 * 60; // one day
+        consensus.nPowTargetSpacing = 2 * 60; // two minutes
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1944; // 90% of 2160
@@ -155,12 +155,12 @@ public:
         vSeeds.emplace_back("dnsseed.bitmark.cc");      // NJ joe
         vSeeds.emplace_back("btm.zmark.org");           // NJ vinny j0
 
+	// Deal with the Bitmark versions later in the RPC
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,0);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,5);
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,128);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x88, 0xB2, 0x1E};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
-
         bech32_hrp = "bc";
 
         vFixedSeeds = std::vector<uint8_t>(std::begin(chainparams_seed_main), std::end(chainparams_seed_main));
@@ -422,6 +422,7 @@ public:
         consensus.signet_blocks = false;
         consensus.signet_challenge.clear();
         consensus.nSubsidyHalvingInterval = 150;
+	consensus.nSubsidyHalvingIntervalBTM = 300;
         consensus.BIP34Height = 1; // Always active unless overridden
         consensus.BIP34Hash = uint256();
         consensus.BIP65Height = 1;  // Always active unless overridden
@@ -430,8 +431,8 @@ public:
         consensus.SegwitHeight = 0; // Always active unless overridden
         consensus.MinBIP9WarningHeight = 0;
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-        consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
-        consensus.nPowTargetSpacing = 10 * 60;
+        consensus.nPowTargetTimespan = 24 * 60 * 60; // one day
+        consensus.nPowTargetSpacing = 2 * 60;
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = true;
         consensus.nRuleChangeActivationThreshold = 108; // 75% for testchains
@@ -485,12 +486,12 @@ public:
             consensus.vDeployments[deployment_pos].min_activation_height = version_bits_params.min_activation_height;
         }
 
-        genesis = CreateGenesisBlock(1296688602, 3, 0x207fffff, 1, 50 * COIN);
+        genesis = CreateGenesisBlockBTM(1296688602, 2, 0x207fffff, 1, 20 * COIN);
         consensus.hashGenesisBlock = genesis.GetHash();
 	//printf("genesis hash = %s powhash = %s mroothash = %s\n",consensus.hashGenesisBlock.ToString().c_str(),genesis.GetPoWHash().ToString().c_str(),genesis.hashMerkleRoot.ToString().c_str());
 	//exit(0);
-        assert(consensus.hashGenesisBlock == uint256S("0x5b7a4494ac602f4ddfbd5fbd180a5d670978b765d487c3680a50f5c03572f600"));
-        assert(genesis.hashMerkleRoot == uint256S("0x4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"));
+        assert(consensus.hashGenesisBlock == uint256S("0x652261176efcd186e22ed8017f97993561d6409e789d596e0a0c1154de41d911"));
+        assert(genesis.hashMerkleRoot == uint256S("0xd4715adf41222fae3d4bf41af30c675bc27228233d0f3cfd4ae0ae1d3e760ba8"));
 
         vFixedSeeds.clear(); //!< Regtest mode doesn't have any fixed seeds.
         vSeeds.clear();
@@ -501,16 +502,17 @@ public:
 
         checkpointData = {
             {
-                {0, uint256S("0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206")},
+                {0, uint256S("652261176efcd186e22ed8017f97993561d6409e789d596e0a0c1154de41d911")},
             }
         };
 
         m_assumeutxo_data = {
             {
                 .height = 110,
-                .hash_serialized = AssumeutxoHash{uint256S("0x6657b736d4fe4db0cbc796789e812d5dba7f5c143764b1b6905612f1830609d1")},
+                .hash_serialized = AssumeutxoHash{uint256S("0xa92d119df0dd4dcb24af2ad99dce37e319b283403f623807389ff85cfb01b452")},
                 .nChainTx = 111,
-                .blockhash = uint256S("0x78f8e1158c87fa532d18da4b111a05bad283b693027f9275e15876c498539b17")
+                //.blockhash = uint256S("0xad54ec97281f7cbb86b13056e37e76356f59b3bc60a5222afa7cd6960c06cca7")
+		.blockhash = uint256S("0xf6969762b8c8e8eb35a1b5853f6e2a96ef9c77722b2c45798c96727947ed6916")
             },
             {
                 // For use by test/functional/feature_assumeutxo.py

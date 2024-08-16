@@ -1636,6 +1636,16 @@ fi
 
 AM_CONDITIONAL([BUILD_BITCOIN_KERNEL_LIB], [test "$build_experimental_kernel_lib" != "no" && ( test "$build_experimental_kernel_lib" = "yes" || test "$build_bitcoin_chainstate" = "yes" )])
 
+case $host in
+     i?86-*)
+     CFLAGS="$CFLAGS -msse -msse2"
+     CXXFLAGS="$CXXFLAGS -msse -msse2"
+     ;;
+     x86_64-*)
+     CFLAGS="$CFLAGS -maes"
+     ;;
+esac							  
+
 AC_MSG_RESULT($build_bitcoin_libs)
 
 AC_LANG_POP

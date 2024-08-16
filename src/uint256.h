@@ -110,6 +110,8 @@ public:
     constexpr explicit uint256(Span<const unsigned char> vch) : base_blob<256>(vch) {}
     static const uint256 ZERO;
     static const uint256 ONE;
+
+    friend class uint512;
 };
 
 /* uint256 from const char *.
@@ -132,5 +134,29 @@ inline uint256 uint256S(const std::string& str)
     rv.SetHex(str);
     return rv;
 }
+
+/** 512-bit opaque blob.
+ * @note This type is called uint512 for historical reasons only. It is an
+ * opaque blob of 512 bits and has no integer operations. Use arith_uint512 if
+ * those are required.
+ */
+class uint512 : public base_blob<512>
+{
+public:
+    constexpr uint512() = default;
+    constexpr explicit uint512(uint8_t v) : base_blob<512>(v) {}
+    constexpr explicit uint512(Span<const unsigned char> vch) : base_blob<512>(vch) {}
+    static const uint512 ZERO;
+    static const uint512 ONE;
+
+    uint256 trim256() const
+    {
+        uint256 ret;
+        for (unsigned int i = 0; i < uint256::WIDTH; i++) {
+            ret.m_data[i] = m_data[i];
+        }
+        return ret;
+    }
+};
 
 #endif // BITCOIN_UINT256_H

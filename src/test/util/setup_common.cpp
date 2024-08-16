@@ -300,10 +300,10 @@ TestChain100Setup::TestChain100Setup(
 
     {
         LOCK(::cs_main);
-	//printf("TestChain100Setup activechain tip blockhash = %s\n",m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString().c_str());
+	printf("TestChain100Setup activechain tip blockhash = %s\n",m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString().c_str());
         assert(
             m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString() ==
-            "a8104321e39cb3fe7dd86b5437f99f512cf903b1d8639a4ba88b62a4736523a9");
+            "e9c88fd8c04c86d5dc5a5f3fc6e27c524b01fe94c02664ac71ef72d4e8e7fa12");
     }
 }
 
@@ -331,7 +331,7 @@ CBlock TestChain100Setup::CreateBlock(
     }
     RegenerateCommitments(block, *Assert(m_node.chainman));
 
-    while (!CheckProofOfWork(block.GetPoWHash(), block.nBits, m_node.chainman->GetConsensus())) ++block.nNonce;
+    while (!CheckProofOfWork(block.GetPoWHash(), block.nBits, m_node.chainman->GetConsensus(), block.GetAlgo())) ++block.nNonce;
 
     return block;
 }

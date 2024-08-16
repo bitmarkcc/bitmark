@@ -23,25 +23,29 @@ BOOST_FIXTURE_TEST_SUITE(validation_tests, TestingSetup)
 
 static void TestBlockSubsidyHalvings(const Consensus::Params& consensusParams)
 {
-    int maxHalvings = 64;
-    CAmount nInitialSubsidy = 50 * COIN;
+    int maxHalvings = 18;
+    CAmount nInitialSubsidy = 20 * COIN;
 
     CAmount nPreviousSubsidy = nInitialSubsidy * 2; // for height == 0
     BOOST_CHECK_EQUAL(nPreviousSubsidy, nInitialSubsidy * 2);
     for (int nHalvings = 0; nHalvings < maxHalvings; nHalvings++) {
-        int nHeight = nHalvings * consensusParams.nSubsidyHalvingInterval;
+        int nHeight = nHalvings * consensusParams.nSubsidyHalvingIntervalBTM;
         CAmount nSubsidy = GetBlockSubsidy(nHeight, consensusParams);
         BOOST_CHECK(nSubsidy <= nInitialSubsidy);
-        BOOST_CHECK_EQUAL(nSubsidy, nPreviousSubsidy / 2);
+	printf("nHalvings = %d nSubsidy = %lld, nPreviousSubsidy/2 = %lld\n",nHalvings,nSubsidy,nPreviousSubsidy/2);
+	if (nHalvings == 10 || nHalvings == 12 || nHalvings == 15 || nHalvings == 16)
+	    BOOST_CHECK_EQUAL(nSubsidy,nPreviousSubsidy / 2 - 1);
+	else 
+	    BOOST_CHECK_EQUAL(nSubsidy, nPreviousSubsidy / 2);
         nPreviousSubsidy = nSubsidy;
     }
-    BOOST_CHECK_EQUAL(GetBlockSubsidy(maxHalvings * consensusParams.nSubsidyHalvingInterval, consensusParams), 0);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(maxHalvings * consensusParams.nSubsidyHalvingIntervalBTM, consensusParams), 0);
 }
 
 static void TestBlockSubsidyHalvings(int nSubsidyHalvingInterval)
 {
     Consensus::Params consensusParams;
-    consensusParams.nSubsidyHalvingInterval = nSubsidyHalvingInterval;
+    consensusParams.nSubsidyHalvingIntervalBTM = nSubsidyHalvingInterval;
     TestBlockSubsidyHalvings(consensusParams);
 }
 
@@ -57,13 +61,13 @@ BOOST_AUTO_TEST_CASE(subsidy_limit_test)
 {
     const auto chainParams = CreateChainParams(*m_node.args, ChainType::MAIN);
     CAmount nSum = 0;
-    for (int nHeight = 0; nHeight < 14000000; nHeight += 1000) {
+    for (int nHeight = 0; nHeight < 15000000; nHeight += 1000) {
         CAmount nSubsidy = GetBlockSubsidy(nHeight, chainParams->GetConsensus());
-        BOOST_CHECK(nSubsidy <= 50 * COIN);
+        BOOST_CHECK(nSubsidy <= 20 * COIN);
         nSum += nSubsidy * 1000;
         BOOST_CHECK(MoneyRange(nSum));
     }
-    BOOST_CHECK_EQUAL(nSum, CAmount{2099999997690000});
+    BOOST_CHECK_EQUAL(nSum, CAmount{2757989473108000});
 }
 
 BOOST_AUTO_TEST_CASE(signet_parse_tests)
@@ -142,11 +146,11 @@ BOOST_AUTO_TEST_CASE(test_assumeutxo)
     }
 
     const auto out110 = *params->AssumeutxoForHeight(110);
-    BOOST_CHECK_EQUAL(out110.hash_serialized.ToString(), "6657b736d4fe4db0cbc796789e812d5dba7f5c143764b1b6905612f1830609d1");
+    BOOST_CHECK_EQUAL(out110.hash_serialized.ToString(), "a92d119df0dd4dcb24af2ad99dce37e319b283403f623807389ff85cfb01b452");
     BOOST_CHECK_EQUAL(out110.nChainTx, 111U);
 
-    const auto out110_2 = *params->AssumeutxoForBlockhash(uint256S("0x78f8e1158c87fa532d18da4b111a05bad283b693027f9275e15876c498539b17"));
-    BOOST_CHECK_EQUAL(out110_2.hash_serialized.ToString(), "6657b736d4fe4db0cbc796789e812d5dba7f5c143764b1b6905612f1830609d1");
+    const auto out110_2 = *params->AssumeutxoForBlockhash(uint256S("0xf6969762b8c8e8eb35a1b5853f6e2a96ef9c77722b2c45798c96727947ed6916"));
+    BOOST_CHECK_EQUAL(out110_2.hash_serialized.ToString(), "a92d119df0dd4dcb24af2ad99dce37e319b283403f623807389ff85cfb01b452");
     BOOST_CHECK_EQUAL(out110_2.nChainTx, 111U);
 }
 
