@@ -105,7 +105,7 @@ BOOST_AUTO_TEST_CASE(CheckProofOfWork_test_too_easy_target)
     uint256 hash;
     unsigned int nBits;
     arith_uint256 nBits_arith = UintToArith256(consensus.powLimit);
-    nBits_arith *= 2;
+    nBits_arith *= 2*8000; // 8000 is weight of SCRYPT algo
     nBits = nBits_arith.GetCompact();
     hash.SetHex("0x1");
     BOOST_CHECK(!CheckProofOfWork(hash, nBits, consensus, Algo::SCRYPT));

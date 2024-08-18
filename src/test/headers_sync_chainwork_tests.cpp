@@ -73,7 +73,7 @@ BOOST_AUTO_TEST_CASE(headers_sync_state)
     std::unique_ptr<HeadersSyncState> hss;
 
     const int target_blocks = 15000;
-    arith_uint256 chain_work = target_blocks*2;
+    arith_uint256 chain_work = target_blocks*2*8000; // 8000 is weight of SCRYPT algo
 
     // Generate headers for two different chains (using differing merkle roots
     // to ensure the headers are different).

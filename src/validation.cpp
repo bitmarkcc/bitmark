@@ -3859,7 +3859,7 @@ std::vector<unsigned char> ChainstateManager::GenerateCoinbaseCommitment(CBlock&
 bool HasValidProofOfWork(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams)
 {
     return std::all_of(headers.cbegin(), headers.cend(),
-		       [&](const auto& header) { return CheckProofOfWork(header.GetPoWHash(), header.nBits, consensusParams, header.GetAlgo());});
+		       [&](const auto& header) { return CheckProofOfWork(header, consensusParams);});
 }
 
 bool IsBlockMutated(const CBlock& block, bool check_witness_root)

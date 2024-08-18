@@ -17,9 +17,195 @@
 #include <serialize.h>
 #include <util/bignum.h>
 
+unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, Algo algo)
+{
+    /* current difficulty formula, DASH - DarkGravity v3, written by Evan Duffield - evan@dashpay.io */
+    const CBlockIndex* BlockLastSolved = pindexLast;
+    const CBlockIndex* BlockReading = pindexLast;
+    int64_t nActualTimespan = 0;
+    int64_t LastBlockTime = 0;
+    int64_t PastBlocksMin = 25;
+    int64_t PastBlocksMax = 25; // We have same max and min, just using same variables from old code
+    int64_t CountBlocks = 0;
+    CBigNum PastDifficultyAverage;
+    CBigNum PastDifficultyAveragePrev;
+    CBigNum LastDifficultyAlgo;
+    int64_t time_since_last_algo = -1;
+    int64_t LastBlockTimeOtherAlgos = 0;
+    unsigned int algoWeight = GetAlgoWeight(algo);
+
+    int lastInRow = 0;          // starting from last block from algo to first occurence of another algo
+    bool lastInRowDone = false; // once another algo is found, stop the count
+
+    int nInRow = 0;          // consecutive sequence of blocks from algo within the 25 block period
+    bool nInRowDone = false; // if an island of 9 or more is found, then stop the count
+
+    if (BlockLastSolved == NULL || BlockLastSolved->nHeight == 0 || BlockLastSolved->nHeight < PastBlocksMin) {
+        return Params().ProofOfWorkLimit(algo).GetCompact();
+    }
+
+    for (int i = 0; BlockReading; i++) {
+        if (!BlockReading->OnFork()) { // last block before fork
+            if (LastBlockTime > 0) {
+                nActualTimespan = (LastBlockTime - BlockReading->GetBlockTime());
+            }
+            if (LastBlockTimeOtherAlgos > 0 && time_since_last_algo == -1) {
+                time_since_last_algo = LastBlockTimeOtherAlgos - BlockReading->GetBlockTime();
+            }
+            CountBlocks++;
+            if (nInRow < 9) {
+                nInRow = 0;
+            } else {
+                nInRowDone = true;
+            }
+            break;
+        }
+
+        if (!LastBlockTimeOtherAlgos) {
+            LastBlockTimeOtherAlgos = BlockReading->GetMedianTimePast();
+        }
+
+        Algo block_algo = BlockReading->GetAlgo();
+        if (block_algo != algo) { // Only consider blocks from same algo
+            BlockReading = BlockReading->pprev;
+            if (CountBlocks) lastInRowDone = true;
+            if (nInRow < 9) {
+                nInRow = 0;
+            } else {
+                nInRowDone = true;
+            }
+            continue;
+        }
+        if (!CountBlocks) LastDifficultyAlgo.SetCompact(BlockReading->nBits);
+
+        CountBlocks++;
+        if (!nInRowDone) nInRow++;
+        if (!lastInRowDone) lastInRow++;
+
+        if (CountBlocks <= PastBlocksMin) {
+            if (CountBlocks == 1) {
+                PastDifficultyAverage.SetCompact(BlockReading->nBits);
+                if (LastBlockTimeOtherAlgos > 0) time_since_last_algo = LastBlockTimeOtherAlgos - BlockReading->GetMedianTimePast();
+                LastBlockTime = BlockReading->GetMedianTimePast();
+                LogDebug(BCLog::VALIDATION, "block time final = %d\n", LastBlockTime);
+            } else {
+                PastDifficultyAverage = ((PastDifficultyAveragePrev * (CountBlocks - 1)) + (CBigNum().SetCompact(BlockReading->nBits))) / CountBlocks;
+            }
+            PastDifficultyAveragePrev = PastDifficultyAverage;
+        }
+
+        if (BlockReading->pprev == NULL) {
+            assert(BlockReading);
+            if (LastBlockTime > 0) {
+                nActualTimespan = (LastBlockTime - BlockReading->GetMedianTimePast());
+            }
+            break;
+        }
+        if (CountBlocks >= PastBlocksMax) {
+            if (LastBlockTime > 0) {
+                LogDebug(BCLog::VALIDATION, "block time initial %d\n", BlockReading->GetMedianTimePast());
+                nActualTimespan = (LastBlockTime - BlockReading->GetMedianTimePast());
+            }
+            break;
+        }
+
+        BlockReading = BlockReading->pprev;
+    }
+
+    int pastInRow = 0; // if not done counting, count the past blocks in row with algo starting at the boundary and going back
+    if ((nInRow && !nInRowDone || lastInRow && !lastInRowDone) && BlockReading) {
+        LogDebug(BCLog::VALIDATION, "nInRow = %d and not done\n", nInRow);
+        const CBlockIndex* BlockPast = BlockReading->pprev;
+        while (BlockPast) {
+            if (GetAlgo(BlockPast->nVersion) != algo || !BlockPast->OnFork()) {
+                break;
+            }
+            pastInRow++;
+            BlockPast = BlockPast->pprev;
+        }
+        if (!lastInRowDone) lastInRow += pastInRow;
+    }
+
+    CBigNum bnNew;
+    int lastInRowMod = lastInRow % 9;
+    LogDebug(BCLog::VALIDATION, "nInRow = %d lastInRow=%d\n", nInRow, lastInRow);
+    bool justHadSurge = nInRow >= 9 || nInRow && pastInRow && (nInRow + pastInRow) >= 9 && pastInRow % 9 != 0;
+    if (justHadSurge || time_since_last_algo > 9600) {
+        LogDebug(BCLog::VALIDATION, "bnNew = LastDifficultyAlgo\n");
+        bnNew = LastDifficultyAlgo;
+    } else {
+        bnNew = PastDifficultyAverage;
+    }
+    int64_t _nTargetTimespan = (CountBlocks - 1) * 960; // 16 min target
+
+    int64_t smultiplier = 1;
+    bool smultiply = false;
+    if (time_since_last_algo > 9600) { // 160 min for special retarget
+        smultiplier = time_since_last_algo / 9600;
+        LogDebug(BCLog::VALIDATION,"special retarget for algo %d with time_since_last_algo = %d (height %d), smultiplier %d\n", algo, time_since_last_algo, pindexLast->nHeight, smultiplier);
+        nActualTimespan = 10 * smultiplier * _nTargetTimespan;
+        smultiply = true;
+    }
+
+    if (lastInRow >= 9 && !lastInRowMod)
+        LogDebug(BCLog::VALIDATION, "activate surge protector\n");
+
+    if (nActualTimespan < _nTargetTimespan / 3 || lastInRow >= 9 && !lastInRowMod)
+        nActualTimespan = _nTargetTimespan / 3;
+    if (nActualTimespan > _nTargetTimespan * 3)
+        nActualTimespan = smultiplier * _nTargetTimespan * 3;
+
+    if (CountBlocks >= PastBlocksMin) {
+        if (lastInRow >= 9 && !lastInRowMod) {
+            bnNew /= 3;
+        } else if (!justHadSurge) {
+            bnNew *= nActualTimespan;
+            bnNew /= _nTargetTimespan;
+        }
+    } else if (CountBlocks == 1) { // first block of algo for fork
+        LogDebug(BCLog::VALIDATION, "CountBlocks = %d\n", CountBlocks);
+        LogDebug(BCLog::VALIDATION, "setting nBits to keep continuity of scrypt chain\n");
+        LogDebug(BCLog::VALIDATION, "scaling wrt block at height %u algo %d\n", BlockReading->nHeight, algo);
+
+        unsigned int weightScrypt = GetAlgoWeight(Algo::SCRYPT);
+        if (algo == Algo::SCRYPT || algo == Algo::SHA256D) {
+            bnNew.SetCompact(BlockReading->nBits); // preserve continuity of chain diff for scrypt and sha256d
+            bnNew *= algoWeight;
+            bnNew /= (8 * weightScrypt);
+        } else {
+            if (Params().GetConsensus().fPowAllowMinDifficultyBlocks) {
+                bnNew.SetCompact(BlockReading->nBits);
+            } else {
+                bnNew.SetCompact(0x1d00ffff); // for newer algos, use min diff times 128, weighted
+            }
+            bnNew *= algoWeight;
+            bnNew /= 128;
+        }
+        if (smultiply) bnNew *= smultiplier * 3;
+    } else {
+        if (smultiply) bnNew *= smultiplier * 3;
+        if (lastInRow >= 9 && !lastInRowMod) bnNew /= 3;
+    }
+
+    if (bnNew > Params().ProofOfWorkLimit(algo)) {
+        bnNew = Params().ProofOfWorkLimit(algo);
+    }
+
+    LogDebug(BCLog::VALIDATION, "DarkGravityWave RETARGET algo %d\n", algo);
+    LogDebug(BCLog::VALIDATION, "_nTargetTimespan = %d    nActualTimespan = %d\n", _nTargetTimespan, nActualTimespan);
+    LogDebug(BCLog::VALIDATION, "Before: %08x  %lu\n", pindexLast->nBits, CBigNum().SetCompact(pindexLast->nBits).getuint256().ToString());
+    LogDebug(BCLog::VALIDATION, "BlockReading: %08x %lu\n", BlockReading->nBits, CBigNum().SetCompact(BlockReading->nBits).getuint256().ToString());
+    LogDebug(BCLog::VALIDATION, "Avg from past %d: %08x %lu\n", CountBlocks, PastDifficultyAverage.GetCompact(), PastDifficultyAverage.getuint256().ToString());
+    LogDebug(BCLog::VALIDATION, "After:  %08x  %lu\n", bnNew.GetCompact(), bnNew.getuint256().ToString());
+
+    return bnNew.GetCompact();
+}
+
 unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHeader* pblock, const Consensus::Params& params, Algo algo)
 {
-
+    if (pindexLast->IsSuperMajority(4,75,100) && !Params().IsRegTest())
+	return DarkGravityWave(pindexLast,algo); 
+    
     assert(pindexLast != nullptr);
     unsigned int nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
 
@@ -51,9 +237,6 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     const CBlockIndex* pindexFirst = pindexLast->GetAncestor(nHeightFirst);
     assert(pindexFirst);
     return CalculateNextWorkRequired(pindexLast, pindexFirst->GetBlockTime(), params);
-
-    // Post 8mPoW fork // todo
-    //return DarkGravityWave(pindexLast, algo);
 }
 
 unsigned int CalculateNextWorkRequired(const CBlockIndex* pindexLast, int64_t nFirstBlockTime, const Consensus::Params& params)
@@ -93,9 +276,9 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
     if (params.fPowAllowMinDifficultyBlocks) return true;
 
     // asume true after for since lack of CBlockIndex at this function, we can't calculate if diff transition is permitted.
-    /*    if (height > 450866) {
-        return true;
-	}*/ // todo: check
+    if (height >= 450947) { // fork height
+	return true;
+    }
 
     if (height % params.DifficultyAdjustmentInterval() == 0) {
         int64_t smallest_timespan = params.nPowTargetTimespan/4;
@@ -196,13 +379,13 @@ bool CheckEquihashSolution(const CPureBlockHeader* pblock)
 
 bool CheckProofOfWork(const CBlockHeader& block, const Consensus::Params& params)
 {
-    /*if (block.IsAuxpow()) {
-        return CheckAuxPowProofOfWork(block);
+    if (block.IsAuxpow()) {
+        return CheckAuxPowProofOfWork(block,params);
     }
 
     if (block.GetAlgo() == Algo::EQUIHASH && !CheckEquihashSolution(&block)) {
         return false;
-	}*/ // tmp: put it back
+    }
 
     return CheckProofOfWork(block.GetPoWHash(), block.nBits, params, block.GetAlgo());
 }
@@ -215,8 +398,7 @@ bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&
 
     bnTarget.SetCompact(nBits, &fNegative, &fOverflow);
 
-    // Check range (todo: multiply by algo weight)
-    if (fNegative || bnTarget == 0 || fOverflow || bnTarget > UintToArith256(params.powLimit))
+    if (fNegative || bnTarget == 0 || fOverflow || bnTarget > UintToArith256(params.powLimit)*GetAlgoWeight(algo))
         return false;
 
     // Check proof of work matches claimed amount
