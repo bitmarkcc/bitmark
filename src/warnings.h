@@ -12,7 +12,8 @@ struct bilingual_str;
 
 void SetMiscWarning(const bilingual_str& warning);
 void SetfLargeWorkInvalidChainFound(bool flag);
-/** Format a string that describes several potential problems detected by the core.
+void SetfBlockTooFarInFuture(bool flag);
+    /** Format a string that describes several potential problems detected by the core.
  * @param[in] verbose bool
  * - if true, get all warnings separated by <hr />
  * - if false, get the most important warning

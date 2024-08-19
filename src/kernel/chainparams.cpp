@@ -89,7 +89,7 @@ public:
             uint256S("0x0000000000000000000f14c35b2d841e986ab5441de8c585d5ffe55ea1e395ad"), SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS);
         consensus.BIP34Height = 1;
         consensus.BIP34Hash = uint256S("eb114fd075298dd4f113a3af621c812d3f2b1ffda1f20002dbd52179bf62d0a9");
-        consensus.BIP65Height = 414629;
+        consensus.BIP65Height = 446614;
         consensus.BIP66Height = 450947;
         consensus.CSVHeight = std::numeric_limits<int>::max();
         consensus.SegwitHeight = std::numeric_limits<int>::max();

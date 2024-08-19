@@ -18,6 +18,7 @@
 
 static GlobalMutex g_warnings_mutex;
 static bilingual_str g_misc_warnings GUARDED_BY(g_warnings_mutex);
+static bool fBlockTooFarInFuture GUARDED_BY(g_warnings_mutex);
 static bool fLargeWorkInvalidChainFound GUARDED_BY(g_warnings_mutex) = false;
 
 void SetMiscWarning(const bilingual_str& warning)
@@ -30,6 +31,12 @@ void SetfLargeWorkInvalidChainFound(bool flag)
 {
     LOCK(g_warnings_mutex);
     fLargeWorkInvalidChainFound = flag;
+}
+
+void SetfBlockTooFarInFuture(bool flag)
+{
+    LOCK(g_warnings_mutex);
+    fBlockTooFarInFuture = flag;
 }
 
 bilingual_str GetWarnings(bool verbose)
@@ -53,6 +60,11 @@ bilingual_str GetWarnings(bool verbose)
 
     if (fLargeWorkInvalidChainFound) {
         warnings_concise = _("Warning: We do not appear to fully agree with our peers! You may need to upgrade, or other nodes may need to upgrade.");
+        warnings_verbose.emplace_back(warnings_concise);
+    }
+
+    if (fBlockTooFarInFuture) {
+        warnings_concise = _("Warning: A block's timestamp in the past 720 blocks was too far in the future. Please check your clock and be careful of network forks.");
         warnings_verbose.emplace_back(warnings_concise);
     }
 
