@@ -1603,6 +1603,10 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, int algo) {
     if (bnNew > Params().ProofOfWorkLimit()*algoWeight){
       bnNew = Params().ProofOfWorkLimit()*algoWeight;
     }
+
+    CBigNum bnHardLimit = CBigNum(~uint256(0)); // Relevant for testnet
+    if (bnNew > bnHardLimit)
+      bnNew = bnHardLimit;
     
     if (fDebug) {
       LogPrintf("DarkGravityWave RETARGET algo %d\n",algo);
