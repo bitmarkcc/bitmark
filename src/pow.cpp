@@ -173,7 +173,7 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, Algo algo)
             bnNew *= algoWeight;
             bnNew /= (8 * weightScrypt);
         } else {
-            if (Params().GetConsensus().fPowAllowMinDifficultyBlocks) {
+            if (Params().IsTestChain()) {
                 bnNew.SetCompact(BlockReading->nBits);
             } else {
                 bnNew.SetCompact(0x1d00ffff); // for newer algos, use min diff times 128, weighted
@@ -190,6 +190,10 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, Algo algo)
     if (bnNew > Params().ProofOfWorkLimit(algo)) {
         bnNew = Params().ProofOfWorkLimit(algo);
     }
+
+    CBigNum bnHardLimit = CBigNum(uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")); // relevant for testnet
+    if (bnNew > bnHardLimit)
+	bnNew = bnHardLimit;
 
     LogDebug(BCLog::VALIDATION, "DarkGravityWave RETARGET algo %d\n", algo);
     LogDebug(BCLog::VALIDATION, "_nTargetTimespan = %d    nActualTimespan = %d\n", _nTargetTimespan, nActualTimespan);
@@ -228,6 +232,9 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
                 return pindex->nBits;
             }
         }
+	if (Params().IsTestChain() && pindexLast->nHeight==0) {
+	    return nProofOfWorkLimit;
+	}
         return pindexLast->nBits;
     }
 
@@ -276,7 +283,7 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
     if (params.fPowAllowMinDifficultyBlocks) return true;
 
     // asume true after for since lack of CBlockIndex at this function, we can't calculate if diff transition is permitted.
-    if (height >= 450947) { // fork height
+    if (height >= 450947 || Params().IsTestChain() && (height == 1 || height>=376)) { // fork height
 	return true;
     }
 
@@ -394,15 +401,19 @@ bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&
 {
     bool fNegative;
     bool fOverflow;
-    arith_uint256 bnTarget;
+    CBigNum bnTarget;
 
-    bnTarget.SetCompact(nBits, &fNegative, &fOverflow);
+    bnTarget.SetCompact(nBits);
 
-    if (fNegative || bnTarget == 0 || fOverflow || bnTarget > UintToArith256(params.powLimit)*GetAlgoWeight(algo))
-        return false;
+    if (bnTarget <= 0 || bnTarget > CBigNum(params.powLimit)*GetAlgoWeight(algo)) {
+	if (bnTarget<0) LogPrintf("bnTarget<0\n");
+	if (bnTarget==0) LogPrintf("bnTarget==0\n");
+	if (bnTarget>CBigNum(params.powLimit)*GetAlgoWeight(algo)) LogPrintf("high bnTarget, bnTarget\n");
+	return false;
+    }
 
     // Check proof of work matches claimed amount
-    if (UintToArith256(hash) > bnTarget) {
+    if (CBigNum(hash) > bnTarget) {
         return false;
     }
 

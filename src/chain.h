@@ -539,11 +539,14 @@ public:
         }
 
         if (IsAuxpow(obj.nVersion) && onFork) {
+	    printf("at nHeight = %d IsAuxpow\n",obj.nHeight);
             if (ser_action.ForRead()) {
+		printf("ser_action.ForRead()\n");
                 obj.pauxpow.reset(new CAuxPow());
             }
 
             assert(obj.pauxpow);
+	    printf("did assert obj.pauxpow\n");
             obj.pauxpow->parentBlock.isParent = true;
             Algo algo = obj.GetAlgo();
             obj.pauxpow->parentBlock.algoParent = algo;

@@ -36,6 +36,7 @@ public:
         READWRITE(AsBase<CPureBlockHeader>(obj));
 
         if (obj.IsAuxpow()) {
+	    printf("CBlockHeader deserialize obj.IsAuxpow (hash %s)\n",obj.GetHash().ToString().c_str());
             if (ser_action.ForRead()) {
                 obj.auxpow.reset(new CAuxPow());
             }
