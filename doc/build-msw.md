@@ -106,7 +106,7 @@ Cross-compiling on Ubuntu with mxe:
 	cd protobuf
 	git checkout v3.9.0
 	./autogen.sh
-	./configure --prefix=/usr/local
+	./configure --prefix=/usr/local --enable-shared=no
 	make
 	sudo make install
 
