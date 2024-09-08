@@ -1439,7 +1439,6 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		      {
                         // Insert change txn at random position:
                         vector<CTxOut>::iterator position = wtxNew.vout.begin()+GetRandInt(wtxNew.vout.size()+1);
-			LogPrintf("insert change txn at position %d\n",position-wtxNew.vout.begin());
                         wtxNew.vout.insert(position, newTxOut);
                     }
                 }
@@ -1456,6 +1455,7 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		bool haveH = false;
 		bool haveL = false;
 		bool haveD = false;
+		bool haveK = false;
 
 		std::vector<uchar> pubkeyH;
 		unsigned int lenHashHex = mark.hashHex.size();
@@ -1598,11 +1598,27 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		  haveD = true;
 		}
 
+		std::vector<uchar> pubkeyK;
+		unsigned int lenKeyHex = mark.keyHex.size();
+		if (lenKeyHex==32) {
+		  pubkeyK.push_back(2); // (I think) prefix 02 is assumed for nostr
+		  for (int i=0; i<lenKeyHex; i++) {
+		    pubkeyK.push_back(mark.keyHex[i]);
+		  }
+		  while (pubkeyK.size()<33) {
+		    pubkeyH.push_back(0);
+		  }
+		  haveK = true;
+		}
+
 		CPubKey hashKey;
 		CPubKey linkKey;
 		CPubKey descKey;
 		if (haveH) {
 		  hashKey = CPubKey(pubkeyH);
+		}
+		else if (haveK) {
+		  hashKey = CPubKey(pubkeyK);
 		}
 		else {
 		  hashKey = spendKey;
@@ -1610,11 +1626,17 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		if (haveL) {
 		  linkKey = CPubKey(pubkeyL);
 		}
+		else if (haveK) {
+		  linkKey = CPubKey(pubkeyK);
+		}
 		else {
 		  linkKey = spendKey;
 		}
 		if (haveD) {
 		  descKey = CPubKey(pubkeyD);
+		}
+		else if (haveK) {
+		  descKey = CPubKey(pubkeyK);
 		}
 		else {
 		  descKey = spendKey;

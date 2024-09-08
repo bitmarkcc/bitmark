@@ -93,7 +93,6 @@ void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeH
       string d1name;
       char d1code = scriptPubKey[3+iPK*66];
       if (d1code == 'h') {
-	LogPrintf("d1name is hash\n");
 	d1name = "hash";
       }
       else if (d1code == 'l') {
@@ -103,7 +102,6 @@ void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeH
 	d1name = "desc";
       }
       while (ipk < 65) {
-	LogPrintf("get d11Code at %d\n",iPK*66+ipk+4);
  	uchar d11Code = scriptPubKey[iPK*66+ipk+4];
 	if (d11Code == 0) {
 	  ipk = 65;
@@ -117,18 +115,14 @@ void ScriptPubKeyToJSON(const CScript& scriptPubKey, Object& out, bool fIncludeH
 	if (rem == 0) {
 	  while (d11Code > 15)
 	    d11Code >>= 4;
-	  LogPrintf("case 1 d11Code = %c\n",d11Code);
 	  d11Len = scriptPubKey[4+ipk+66*iPK];
 	  ipk++;
-	  LogPrintf("case 1 d11Len = %d\n",d11Len);
 	  i = 4 + ipk + iPK*66;
 	}
 	else {
 	  while (d11Code > 15)
 	    d11Code >>= 4;
-	  LogPrintf("case 2 d11Code = %c\n",d11Code);
 	  d11Len = rem;
-	  LogPrintf("case 2 d11Len = %d\n",d11Len);
 	  i = 4 + ipk + iPK*66;
 	}
 	if (!d1name.compare("hash")) {

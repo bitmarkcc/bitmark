@@ -735,10 +735,9 @@ Value coins(const Array& params, bool fHelp)
 }
 
 Value mark(const Array& params, bool fHelp) {
-  LogPrintf("start mark\n");
   if (fHelp || params.size() < 1 || params.size() > 3 || params.size() == 2)
     throw runtime_error(
-			"mark (data link address amount)\n"
+			"mark (marking address amount)\n"
 			"\nArguments:\n"
 			"1. \"marking\" (object) A json object of the form\n"
 			"{\"hash\":{\"type\":\"sha256\", \"hex\":\"caf749f1107c9da3f15370f612524e233dfc6b0dd4ddc4c66879ffe1a49bd471\"},\n"
@@ -766,15 +765,12 @@ Value mark(const Array& params, bool fHelp) {
   const char * linkCertHashType = 0;
   const char * descText = 0;
   const char * descLang = 0;
+  const char * keyHex = 0;
   Object marking = params[0].get_obj();
 
-  LogPrintf("check the marking pairs\n");
-
   BOOST_FOREACH(const Pair& p, marking) {
-    LogPrintf("p.name = %s\n",p.name_.c_str());
     const Object& o = p.value_.get_obj();
     if (p.name_ == "hash") {
-      LogPrintf("check what hash has\n");
       hashType = find_value(o,"type").get_str().c_str();
       hashHex = find_value(o,"hex").get_str().c_str();
     }
@@ -790,6 +786,9 @@ Value mark(const Array& params, bool fHelp) {
     else if (p.name_ == "desc") {
       descLang = find_value(o,"lang").get_str().c_str();
       descText = find_value(o,"text").get_str().c_str();
+    }
+    else if (p.name_ == "key") {
+      keyHex = find_value(o,"hex").get_str().c_str();
     }
   }
 
@@ -835,10 +834,10 @@ Value mark(const Array& params, bool fHelp) {
     LogPrintf("linkProtocol %s linkHost %s linkPort %s linkPath %s linkCertHashHex %s linkCertHashType %s\n",linkProtocol,linkHost,linkPort,linkPath,linkCertHashHex,linkCertHashType);
   if (descText && descLang)
     LogPrintf("descText %s descLang %s\n",descText,descLang);
+  if (keyHex)
+    LogPrintf("keyHex %s\n",keyHex);
 
   // check format of data
-
-  printf("check data format\n");
   
   if (hashType && !IsBase38(hashType))
     throw runtime_error("hash type must be base38");
@@ -846,33 +845,35 @@ Value mark(const Array& params, bool fHelp) {
   if (hashHex && !IsHex(string(hashHex)))
     throw runtime_error("hash hex must be of hex format");
 
-  printf("check linkprotocol\n");
   if (linkProtocol && !IsBase38(linkProtocol))
     throw runtime_error("link protocol must be base38");
-  printf("check linkhost\n");
+
   if (linkHost && !IsBase38(linkHost))
     throw runtime_error("link host must be base38");
-  printf("check linkPort\n");
+
   if (linkPort && !IsBase38(linkPort))
     throw runtime_error("link port must be base38");
-  printf("check linkPath a\n");
+
   if (linkPath && !IsBase38(linkPath))
     throw runtime_error("link path must be base38");
-  printf("a\n");
+
   if (linkCertHashType && !IsBase38(linkCertHashType))
     throw runtime_error("link cert hash type must be base38");
-  printf("b\n");
+
   if (linkCertHashHex && !IsHex(string(linkCertHashHex)))
     throw runtime_error("link cert hash hex must be of hex format");
-  printf("c\n");
+
   if (descLang && !IsBase38(descLang))
     throw runtime_error("desc lang must be base38");
-  printf("d\n");
+
   if (descText && !IsBase38(descText))
     throw runtime_error("desc text must be base38");
+
+  if (hashHex && !IsHex(string(keyHex)))
+    throw runtime_error("key hex must be of hex format");
   
   Mark mark;
-  printf("1a\n");
+
   std::vector<uchar> vHashType;
   if (hashType && !DecodeBase38(hashType,vHashType))
     throw runtime_error("Can't decode hash type");
@@ -892,8 +893,7 @@ Value mark(const Array& params, bool fHelp) {
   if (!DecodeBase38(dHashType,advHashType))
      throw runtime_error("Can't decode hash type");
      mark.hashType = vHashType;*/
-  printf("1b\n");
-  LogPrintf("do vHashHex\n");  
+
   std::vector<uchar> vHashHex;
   if (hashHex) {
     vHashHex = ParseHex(hashHex);
@@ -901,11 +901,7 @@ Value mark(const Array& params, bool fHelp) {
   if (hashHex && vHashHex.size() < 32)
     throw runtime_error("Hash must be at least 32 bytes");
   mark.hashHex = vHashHex;
-  LogPrintf("vHashHex = \n");
-  for (int i=0; i<vHashHex.size(); i++) {
-    LogPrintf("%c",vHashHex[i]);
-  }
-  LogPrintf("\n");
+
   std::vector<uchar> vLinkProtocol;
   if (linkProtocol && !DecodeBase38(linkProtocol,vLinkProtocol))
     throw runtime_error("Can't decode link protocol");
@@ -942,10 +938,14 @@ Value mark(const Array& params, bool fHelp) {
   if (descText && !DecodeBase38(descText,vDescText))
     throw runtime_error("Can't decode desc text");
   mark.descText = vDescText;
- 
 
-  printf("send to wallet\n");
-  
+  std::vector<uchar> vKeyHex;
+  if (keyHex) {
+    vKeyHex = ParseHex(keyHex);
+  }
+  if (keyHex && vKeyHex.size() < 32)
+    throw runtime_error("Key must be at least 32 bytes");
+  mark.keyHex = vKeyHex;
 
   if (params.size()==3) {
     address = CBitmarkAddress(params[2].get_str());
@@ -956,12 +956,8 @@ Value mark(const Array& params, bool fHelp) {
     string strError = pwalletMain->SendMoneyToDestination(address.Get(),nAmount,wtx,mark);
   }
   else {
-    printf("send to no destination\n");
     EnsureWalletIsUnlocked();
-    LogPrintf("sendmoneytonodestination\n");
     string strError = pwalletMain->SendMoneyToNoDestination(wtx,mark);
   }
   return wtx.GetHash().GetHex();
-
-  return "done";
 }

@@ -1037,8 +1037,6 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
                         CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nHashType, flags);
 			}*/
 
-		    if (!fSuccess) LogPrintf("bad sig 1\n");
-
                     popstack(stack);
                     popstack(stack);
                     stack.push_back(fSuccess ? vchTrue : vchFalse);
@@ -1103,7 +1101,6 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, co
 			
                         /*bool fOk = IsCanonicalSignature(vchSig, flags) && IsCanonicalPubKey(vchPubKey, flags) &&
 			  CheckSig(vchSig, vchPubKey, scriptCode, txTo, nIn, nHashType, flags);*/
-			if (!fOk) LogPrintf("bad sig 2\n");
 
                         if (fOk) {
                             isig++;
@@ -1442,14 +1439,11 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
                 typeRet = tplate.first;
                 if (typeRet == TX_MULTISIG)
                 {
-		  LogPrintf("typeret = tx_multisig\n");
                     // Additional checks for TX_MULTISIG:
                     unsigned char m = vSolutionsRet.front()[0];
                     unsigned char n = vSolutionsRet.back()[0];
-		    LogPrintf("have m and n\n");
                     if (m < 1 || n < 1 || m > n || vSolutionsRet.size()-2 != n)
                         return false;
-		    LogPrintf("good m n\n");
                 }
                 return true;
             }
@@ -1463,15 +1457,12 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, vector<vector<unsi
             {
                 while (vch1.size() >= 33 && vch1.size() <= 65)
                 {
-		  LogPrintf("have a pubkey\n");
                     vSolutionsRet.push_back(vch1);
                     if (!script1.GetOp(pc1, opcode1, vch1))
                         break;
-		    LogPrintf("getop is good\n");
                 }
                 if (!script2.GetOp(pc2, opcode2, vch2))
                     break;
-		LogPrintf("script2 getop is good\n");
                 // Normal situation is to fall through
                 // to other if/else statements
             }
@@ -1618,7 +1609,6 @@ bool IsStandard(const CScript& scriptPubKey, txnouttype& whichType)
 {
     vector<valtype> vSolutions;
     if (!Solver(scriptPubKey, whichType, vSolutions)) {
-      LogPrintf("solver returned false\n");
         return false;
     }
 
@@ -1968,9 +1958,6 @@ static CScript CombineMultisig(CScript scriptPubKey, const CTransaction& txTo, u
                 sigs[pubkey] = sig;
                 break;
             }
-	    else {
-	      LogPrintf("bad sig 3\n");
-	    }
         }
     }
     // Now build a merged CScript:

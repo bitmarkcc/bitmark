@@ -64,6 +64,7 @@ struct Mark {
   std::vector<uchar> linkCertHashHex;  
   std::vector<uchar> descLang;
   std::vector<uchar> descText;
+  std::vector<uchar> keyHex;
 };
 
 /** A key pool entry */
