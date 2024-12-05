@@ -1261,7 +1261,7 @@ int64_t GetBlockValue(CBlockIndex* pindex, int64_t nFees, bool noScale)
       }
     }
     else {
-      scalingFactor = 0;
+      scalingFactor = BoostBigNum(0);
     }
 
     int64_t baseSubsidy = 0;
@@ -1269,7 +1269,7 @@ int64_t GetBlockValue(CBlockIndex* pindex, int64_t nFees, bool noScale)
     if (RegTest()) {
       baseSubsidy = 1500000000;
       //LogPrintf("getblockvalue with scalingFactor %u\n",scalingFactor);
-      if (!scalingFactor) return nFees + baseSubsidy;
+      if (!scalingFactor.convert_to<uint32_t>()) return nFees + baseSubsidy;
       return nFees + baseSubsidy - ((BoostBigNum(baseSubsidy)*BoostBigNum(100000000))/scalingFactor).convert_to<uint32_t>()/2;
     }
 
@@ -1387,7 +1387,7 @@ int64_t GetBlockValue(CBlockIndex* pindex, int64_t nFees, bool noScale)
     // 		   Seventy three million, one hundred and eight thousand   Bitmark-Satoshis.
 
     if (fDebug) LogPrintf("scalingFactor = %u\n",scalingFactor.convert_to<uint32_t>());
-    if (!scalingFactor) return nFees + baseSubsidy;
+    if (!scalingFactor.convert_to<uint32_t>()) return nFees + baseSubsidy;
     return nFees + baseSubsidy - ((BoostBigNum(baseSubsidy)*BoostBigNum(100000000))/scalingFactor).convert_to<uint32_t>() / 2;
 }
 
