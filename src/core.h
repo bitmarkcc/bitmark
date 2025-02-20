@@ -872,7 +872,7 @@ public:
 	pauxpow.reset();
         nHeight = 0;
         nMoneySupply = 0;
-	subsidyScalingFactor = 0;
+	subsidyScalingFactor = BoostBigNum(0);
         nFile = 0;
         nDataPos = 0;
         nUndoPos = 0;

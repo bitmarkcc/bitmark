@@ -226,17 +226,22 @@ double GetMoneySupply (const CBlockIndex* blockindex, int algo) {
       else
 	blockindex = chainActive.Tip();
     }
+  const CBlockIndex* blockindexOrig = blockindex;
   if (blockindex->nHeight == 0) {
-    if (algo==-1) return 2.5;
+    if (algo>=0) return 2.5;
     return 20.;
   }
   if (algo>=0) {
     int algo_tip = -1;
     if (onFork(blockindex)) {
-      algo_tip = GetAlgo(blockindex->nVersion);
+	algo_tip = GetAlgo(blockindex->nVersion);
+	if (algo_tip != algo)
+	  blockindex = get_pprev_algo(blockindex,algo);
     }
-    if (algo_tip != algo) {
-      blockindex = get_pprev_algo(blockindex,algo);
+    if (!blockindex) {
+      blockindex = blockindexOrig;
+      while (blockindex && blockindex->onFork())
+	blockindex = blockindex->pprev;
     }
   }
   else {
@@ -245,11 +250,7 @@ double GetMoneySupply (const CBlockIndex* blockindex, int algo) {
     }
     return GetMoneySupply(blockindex,0)+GetMoneySupply(blockindex,1)+GetMoneySupply(blockindex,2)+GetMoneySupply(blockindex,3)+GetMoneySupply(blockindex,4)+GetMoneySupply(blockindex,5)+GetMoneySupply(blockindex,6)+GetMoneySupply(blockindex,7);
   }
-  if (!blockindex) {
-    blockindex = chainActive.Tip();
-    while (blockindex && onFork(blockindex)) {
-      blockindex = blockindex->pprev;
-    }
+  if (!onFork(blockindex)) {
     return ((double)GetMoneySupply(blockindex,-1))/8.;
   }
   if (blockindex->nMoneySupply == 0) return 2.5;

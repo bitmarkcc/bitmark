@@ -532,10 +532,8 @@ Value getmoneysupply(const Array& params, bool fHelp) {
     algo = params[0].get_int();
     if (params.size()>1) {
       int height = params[1].get_int();
-      blockindex = chainActive.Tip();
-      while (blockindex && blockindex->nHeight > height) {
-	blockindex = blockindex->pprev;
-      }
+      if (height >= 0)
+	blockindex = chainActive[height];
     }
   }
 
