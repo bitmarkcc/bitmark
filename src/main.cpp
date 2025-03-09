@@ -2348,7 +2348,6 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
 	pindex->nMoneySupply = 2000000000;
       }
     }
-    //LogPrintf("Total coins emitted: %" PRId64 "\n", pindex->nMoneySupply);
 
     // Write undo information to disk
     if (pindex->GetUndoPos().IsNull() || (pindex->nStatus & BLOCK_VALID_MASK) < BLOCK_VALID_SCRIPTS)
@@ -2384,7 +2383,9 @@ bool ConnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex, C
     // Watch for transactions paying to me
     for (unsigned int i = 0; i < block.vtx.size(); i++)
         g_signals.SyncTransaction(block.GetTxHash(i), block.vtx[i], &block);
-
+    
+    LogPrintf("ConnectBlock height %d time %s subsidy %lld algo %d\n",pindex->nHeight,pindex->GetBlockTime(),block.vtx[0].GetValueOut()-nFees,GetAlgo(pindex->nVersion));
+    
     return true;
 }
 
@@ -2411,7 +2412,6 @@ bool static WriteChainState(CValidationState &state) {
 // Update chainActive and related internal data structures.
 void static UpdateTip(CBlockIndex *pindexNew) {
     chainActive.SetTip(pindexNew);
-    //LogPrintf("updatetip pindexNew nHeight %d\n",pindexNew->nHeight);
 
     // Update best block in wallet (so we can detect restored wallets)
     bool fIsInitialDownload = IsInitialBlockDownload();
@@ -2421,7 +2421,7 @@ void static UpdateTip(CBlockIndex *pindexNew) {
     // New best block
     nTimeBestReceived = GetTime();
     mempool.AddTransactionsUpdated(1);
-    LogPrintf("UpdateTip: new best=%s  height=%d  log2_work=%.8g  tx=%lu  date=%d progress=%f nbits=%u algo=%d subsidy=%lld\n",chainActive.Tip()->GetBlockHash().ToString(), chainActive.Height(), log(chainActive.Tip()->nChainWork.getdouble())/log(2.0), (unsigned long)chainActive.Tip()->nChainTx, chainActive.Tip()->GetBlockTime(),Checkpoints::GuessVerificationProgress(chainActive.Tip()), chainActive.Tip()->nBits,GetAlgo(chainActive.Tip()->nVersion), chainActive.Tip()->nMoneySupply-chainActive.Tip()->pprev->nMoneySupply);
+    LogPrintf("UpdateTip: new best=%s  height=%d  log2_work=%.8g  tx=%lu  date=%d progress=%f nbits=%u algo=%d\n",chainActive.Tip()->GetBlockHash().ToString(), chainActive.Height(), log(chainActive.Tip()->nChainWork.getdouble())/log(2.0), (unsigned long)chainActive.Tip()->nChainTx, chainActive.Tip()->GetBlockTime(),Checkpoints::GuessVerificationProgress(chainActive.Tip()), chainActive.Tip()->nBits,GetAlgo(chainActive.Tip()->nVersion));
     //char * blocktime = (char *)malloc(50);
     //sprintf(blocktime,"%d %d\n",chainActive.Tip()->nTime,GetAlgo(chainActive.Tip()->nVersion));
     //LogPrintTest(blocktime,"timingtest.log");
