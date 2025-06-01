@@ -869,7 +869,7 @@ Value mark(const Array& params, bool fHelp) {
   if (descText && !IsBase38(descText))
     throw runtime_error("desc text must be base38");
 
-  if (hashHex && !IsHex(string(keyHex)))
+  if (keyHex && !IsHex(string(keyHex)))
     throw runtime_error("key hex must be of hex format");
   
   Mark mark;
