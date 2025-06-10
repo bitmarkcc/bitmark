@@ -1539,26 +1539,30 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend,
 		    pubkeyL.push_back(mark.linkPath[i]);
 		    }*/
 		  int lenLinkCertHashType = mark.linkCertHashType.size();
-		  if (lenLinkCertHashType > 15) {
-		    pubkeyL.push_back(0x50);
-		    pubkeyL.push_back(lenLinkCertHashType);
-		  }
-		  else {
-		    pubkeyL.push_back(0x50+lenLinkCertHashType);
-		  }
-		  for (int i=0; i<lenLinkCertHashType; i++) {
-		    pubkeyL.push_back(mark.linkCertHashType[i]);
+		  if (lenLinkCertHashType > 0) {
+		    if (lenLinkCertHashType > 15) {
+		      pubkeyL.push_back(0x50);
+		      pubkeyL.push_back(lenLinkCertHashType);
+		    }
+		    else {
+		      pubkeyL.push_back(0x50+lenLinkCertHashType);
+		    }
+		    for (int i=0; i<lenLinkCertHashType; i++) {
+		      pubkeyL.push_back(mark.linkCertHashType[i]);
+		    }
 		  }
 		  int lenLinkCertHashHex = mark.linkCertHashHex.size();
-		  if (lenLinkCertHashHex > 15) {
-		    pubkeyL.push_back(0x60);
-		    pubkeyL.push_back(lenLinkCertHashHex);
-		  }
-		  else {
-		    pubkeyL.push_back(0x60+lenLinkCertHashHex);
-		  }
-		  for (int i=0; i<lenLinkCertHashHex; i++) {
-		    pubkeyL.push_back(mark.linkCertHashHex[i]);
+		  if (lenLinkCertHashHex > 0) {
+		    if (lenLinkCertHashHex > 15) {
+		      pubkeyL.push_back(0x60);
+		      pubkeyL.push_back(lenLinkCertHashHex);
+		    }
+		    else {
+		      pubkeyL.push_back(0x60+lenLinkCertHashHex);
+		    }
+		    for (int i=0; i<lenLinkCertHashHex; i++) {
+		      pubkeyL.push_back(mark.linkCertHashHex[i]);
+		    }
 		  }
 		  while (pubkeyL.size()<65) {
 		    pubkeyL.push_back(0);

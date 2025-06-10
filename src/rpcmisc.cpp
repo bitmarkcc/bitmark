@@ -860,7 +860,7 @@ Value mark(const Array& params, bool fHelp) {
   if (linkCertHashType && !IsBase38(linkCertHashType))
     throw runtime_error("link cert hash type must be base38");
 
-  if (linkCertHashHex && !IsHex(string(linkCertHashHex)))
+  if (linkCertHashHex && !IsHex(string(linkCertHashHex)) && strlen(linkCertHashHex))
     throw runtime_error("link cert hash hex must be of hex format");
 
   if (descLang && !IsBase38(descLang))
@@ -898,8 +898,8 @@ Value mark(const Array& params, bool fHelp) {
   if (hashHex) {
     vHashHex = ParseHex(hashHex);
   }
-  if (hashHex && vHashHex.size() < 32)
-    throw runtime_error("Hash must be at least 32 bytes");
+  if (hashHex && vHashHex.size() < 20)
+    throw runtime_error("Hash must be at least 20 bytes");
   mark.hashHex = vHashHex;
 
   std::vector<uchar> vLinkProtocol;
@@ -925,7 +925,7 @@ Value mark(const Array& params, bool fHelp) {
   std::vector<uchar> vLinkCertHashHex;
   if (linkCertHashHex)
     vLinkCertHashHex = ParseHex(linkCertHashHex);
-  if (linkCertHashHex && vLinkCertHashHex.size() < 32)
+  if (linkCertHashHex && vLinkCertHashHex.size() < 32 && vLinkCertHashHex.size() > 0)
     throw runtime_error("Link Cert Hash must be at least 32 bytes");
   mark.linkCertHashHex = vLinkCertHashHex;
 
