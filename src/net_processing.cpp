@@ -1683,10 +1683,10 @@ ServiceFlags PeerManagerImpl::GetDesirableServiceFlags(ServiceFlags services) co
     if (services & NODE_NETWORK_LIMITED) {
         // Limited peers are desirable when we are close to the tip.
         if (ApproximateBestBlockDepth() < NODE_NETWORK_LIMITED_ALLOW_CONN_BLOCKS) {
-            return ServiceFlags(NODE_NETWORK_LIMITED | NODE_WITNESS);
+	  return ServiceFlags(NODE_NETWORK_LIMITED/* | NODE_WITNESS*/);
         }
     }
-    return ServiceFlags(NODE_NETWORK | NODE_WITNESS);
+    return ServiceFlags(NODE_NETWORK/*| NODE_WITNESS*/);
 }
 
 PeerRef PeerManagerImpl::GetPeerRef(NodeId id) const

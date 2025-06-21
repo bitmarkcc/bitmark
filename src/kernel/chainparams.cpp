@@ -161,6 +161,7 @@ public:
         vSeeds.emplace_back("btmk.zmark.org");          // CA zappa
         vSeeds.emplace_back("dnsseed.bitmark.cc");      // NJ joe
         vSeeds.emplace_back("btm.zmark.org");           // NJ vinny j0
+	vSeeds.emplace_back("seed.bitmark.cc");         // linkmark
 
 	// Deal with the Bitmark versions later in the RPC
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,0);
