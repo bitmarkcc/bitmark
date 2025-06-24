@@ -1704,33 +1704,28 @@ int64_t get_mpow_ms_correction(const CBlockIndex* p)
     return 0;
 }
 
-bool update_ssf(int nVersion)
+BoostBigNum get_ssf(const CBlockIndex* pindex)
 {
-    return nVersion & BLOCK_VERSION_UPDATE_SSF;
-}
-
-CBigNum get_ssf(const CBlockIndex* pindex)
-{
-    CBigNum scalingFactor = CBigNum(0); // ensures that it has no effect
+    BoostBigNum scalingFactor = BoostBigNum(0); // ensures that it has no effect
     const CBlockIndex* pprev_algo = pindex;
-    CBigNum hashes_peak = CBigNum(0);
-    CBigNum hashes_cur = CBigNum(0);
+    BoostBigNum hashes_peak = BoostBigNum(0);
+    BoostBigNum hashes_cur = BoostBigNum(0);
     for (int i = 0; i < 365; i++) { // use at most a year's worth of history
         // LogPrintf("i=%d\n",i);
         pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo);
         if (!pprev_algo) {
             break;
         }
-        CBigNum hashes = pprev_algo->GetBlockWork();
+        BoostBigNum hashes = pprev_algo->GetBlockWorkBoost();
         unsigned int time_f = pprev_algo->GetMedianTimePast();
         unsigned int time_i = 0;
         for (int j = 0; j < nSSF - 1; j++) { // nSSF blocks = 24 hours, using only blocks from the same algo as the target block
             pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo);
             if (!pprev_algo) {
-                hashes = CBigNum(0);
+                hashes = BoostBigNum(0);
                 break;
             }
-            hashes += pprev_algo->GetBlockWork();
+            hashes += pprev_algo->GetBlockWorkBoost();
             time_i = pprev_algo->GetMedianTimePast();
         }
         CBlockIndex* pprev_algo_time = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo);
@@ -1756,8 +1751,12 @@ CBigNum get_ssf(const CBlockIndex* pindex)
         if (hashes > hashes_peak) hashes_peak = hashes;
         if (i == 0) hashes_cur = hashes;
     }
-    if (hashes_peak > CBigNum(0) && hashes_cur != hashes_peak) {
-	scalingFactor = CBigNum(((100000000 * hashes_peak) / (hashes_peak - hashes_cur)).getuint());
+    if (hashes_peak > BoostBigNum(0) && hashes_cur != hashes_peak) {
+	BoostBigNum scalingFactorPrecise = (100000000*hashes_peak)/(hashes_peak-hashes_cur);
+	if (scalingFactorPrecise > std::numeric_limits<uint64_t>::max())
+	    scalingFactorPrecise = std::numeric_limits<uint64_t>::max();
+	uint32_t uintScalingFactor = (uint32_t)(scalingFactorPrecise.convert_to<uint64_t>());
+	scalingFactor = BoostBigNum(uintScalingFactor);
     }
     // LogPrintf("return scaling factor %lu\n",scalingFactor);
     return scalingFactor;
@@ -1814,10 +1813,10 @@ CAmount GetBlockSubsidy(const CBlockIndex* pindex, const Consensus::Params& para
         emitted = NUM_ALGOS * get_mpow_ms_correction(pindex);
     }
 
-    CBigNum scalingFactor = CBigNum(0);
+    BoostBigNum scalingFactor = BoostBigNum(0);
     if (onForkNow && scale) {
         scalingFactor = pindex->subsidyScalingFactor;
-        if (!scalingFactor.getuint()) { // find the key block and recalculate
+        if (!scalingFactor.convert_to<uint32_t>()) { // find the key block and recalculate
             const CBlockIndex* pprev_algo = pindex;
             do {
                 if (update_ssf(pprev_algo->nVersion)) {
@@ -1829,7 +1828,7 @@ CAmount GetBlockSubsidy(const CBlockIndex* pindex, const Consensus::Params& para
             } while (pprev_algo);
         }
     } else {
-        scalingFactor = 0;
+        scalingFactor = BoostBigNum(0);
     }
 
     int64_t baseSubsidy = 0;
@@ -1914,8 +1913,10 @@ CAmount GetBlockSubsidy(const CBlockIndex* pindex, const Consensus::Params& para
     //          Twenty seven million, five hundred seventy nine thousand, eight hundred ninety four   Bitmarks (MARKS) and
     // 		   Seventy three million, one hundred and eight thousand   Bitmark-Satoshis.
 
-    if (!scalingFactor) return baseSubsidy;
-    return baseSubsidy - ((CBigNum(baseSubsidy) * CBigNum(100000000)) / scalingFactor).getuint() / 2;
+    //if (!scalingFactor) return baseSubsidy;
+    //return baseSubsidy - ((CBigNum(baseSubsidy) * CBigNum(100000000)) / scalingFactor).getuint() / 2;
+    if (!scalingFactor.convert_to<uint32_t>()) return baseSubsidy;
+    return baseSubsidy - ((BoostBigNum(baseSubsidy)*BoostBigNum(100000000))/scalingFactor).convert_to<uint32_t>() / 2;
 }
 
 CoinsViews::CoinsViews(DBParams db_params, CoinsViewOptions options)

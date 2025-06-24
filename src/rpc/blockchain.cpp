@@ -26,9 +26,12 @@
 #include <net_processing.h>
 #include <node/blockstorage.h>
 #include <node/context.h>
+#include <node/miner.h>
 #include <node/transaction.h>
 #include <node/utxo_snapshot.h>
+#include <pow.h>
 #include <primitives/transaction.h>
+#include <primitives/pureheader.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
 #include <rpc/util.h>
@@ -60,6 +63,7 @@ using kernel::CoinStatsHashType;
 using node::BlockManager;
 using node::NodeContext;
 using node::SnapshotMetadata;
+using node::CBlockTemplate;
 
 struct CUpdatedBlock
 {
@@ -73,11 +77,38 @@ static CUpdatedBlock latestblock GUARDED_BY(cs_blockchange);
 
 /* Calculate the difficulty for a given block index.
  */
-double GetDifficulty(const CBlockIndex& blockindex)
+double GetDifficulty(const CBlockIndex& blockindex, const Consensus::Params& params, Algo algo, bool weighted, bool next)
 {
-    int nShift = (blockindex.nBits >> 24) & 0xff;
+    const CBlockIndex* pindex = &blockindex;
+    if (algo == Algo::UNKNOWN) {
+	algo = pindex->GetAlgo();
+    }
+    unsigned int nBits = pindex->nBits;
+    unsigned int algoWeight = 1;
+
+    bool blockOnFork = false;
+    if (pindex->nHeight>0) {
+	if (pindex->OnFork()) blockOnFork = true;
+    }	
+    
+    if (weighted) algoWeight = GetAlgoWeight(algo);
+    if (next) {
+	CBlock block;	
+	nBits = GetNextWorkRequired(pindex,&block,params,algo);
+    }
+    else if (pindex->nHeight>0) {
+	if (blockOnFork) {
+	    Algo algoTip = pindex->GetAlgo();
+	    if (algoTip != algo) {
+		pindex = CBlockIndex::GetPrevAlgoBlockIndex(pindex,algo);
+	    }
+	}
+	nBits = pindex->nBits;
+    }
+    
+    int nShift = (nBits >> 24) & 0xff;
     double dDiff =
-        (double)0x0000ffff / (double)(blockindex.nBits & 0x00ffffff);
+        (double)0x0000ffff / (double)(nBits & 0x00ffffff);
 
     while (nShift < 29)
     {
@@ -90,7 +121,227 @@ double GetDifficulty(const CBlockIndex& blockindex)
         nShift--;
     }
 
+    if (blockOnFork) return dDiff*algoWeight;
     return dDiff;
+}
+
+UniValue GetBlockReward(CBlockIndex& index, const Consensus::Params& params, Algo algo, bool scale)
+{
+    if (algo == Algo::UNKNOWN) {
+	algo = index.GetAlgo();
+    }
+    std::unique_ptr<CBlockTemplate> pblocktemplate(new CBlockTemplate());
+    if(!pblocktemplate.get())
+	return 0.;
+    CBlock* pblock = &pblocktemplate->block;
+    pblock->nVersion = 4;
+    pblock->SetAlgo(algo);
+    CBlockIndex indexDummy(*pblock);
+    indexDummy.pprev = &index;
+    indexDummy.nHeight = index.nHeight + 1;
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("block reward",((double)GetBlockSubsidy(&indexDummy,params,scale))/100000000.);
+    return result;
+}
+
+double GetBlockSpacing(const CBlockIndex& index, Algo algo, int averagingInterval)
+{
+    if (averagingInterval <= 1) return 0.;
+    const CBlockIndex* blockReading = &index;
+    int64_t countBlocks = 0;
+    int64_t nActualTimespan = 0;
+    int64_t lastBlockTime = 0;
+    for (unsigned int i = 1; blockReading && blockReading->nHeight > 0; i++) {
+	if (countBlocks >= averagingInterval) break;
+	Algo blockAlgo = Algo::UNKNOWN;
+	if (blockReading->OnFork()) blockAlgo = blockReading->GetAlgo();
+	if (algo != Algo::UNKNOWN && blockAlgo != algo) {
+	    blockReading = blockReading->pprev;
+	    continue;
+	}
+	countBlocks++;
+	if (lastBlockTime > 0)
+	    nActualTimespan = lastBlockTime - blockReading->GetMedianTimePast();
+	else
+	    lastBlockTime = blockReading->GetMedianTimePast();
+	blockReading = blockReading->pprev;
+    }
+    return ((double)nActualTimespan)/((double)averagingInterval)/60.;
+}
+
+double GetMoneySupply(const CBlockIndex& index, Algo algo)
+{
+    const CBlockIndex* pindex = &index;
+    const CBlockIndex* pindexOrig = pindex;
+    
+    if (pindex->nHeight == 0) {
+	if (algo!=Algo::UNKNOWN) return 2.5;
+	return 20.;
+    }
+    if (algo!=Algo::UNKNOWN) {
+	Algo algoTip = Algo::UNKNOWN;
+	if (pindex->OnFork()) {
+	    algoTip = pindex->GetAlgo();
+	    if (algoTip != algo)
+		pindex = CBlockIndex::GetPrevAlgoBlockIndex(pindex,algo);
+	}
+	if (!pindex) {
+	    pindex = pindexOrig;
+	    while (pindex && pindex->OnFork())
+		pindex = pindex->pprev;
+	}
+    }
+    else {
+	if (!pindex->OnFork()) {
+	    return ((double)pindex->nMoneySupply)/100000000.;
+	}
+	return GetMoneySupply(*pindex,Algo::SCRYPT)+GetMoneySupply(*pindex,Algo::SHA256D)+GetMoneySupply(*pindex,Algo::YESCRYPT)+GetMoneySupply(*pindex,Algo::ARGON2)+GetMoneySupply(*pindex,Algo::X17)+GetMoneySupply(*pindex,Algo::LYRA2REv2)+GetMoneySupply(*pindex,Algo::EQUIHASH)+GetMoneySupply(*pindex,Algo::CRYPTONIGHT);
+    }
+    if (!pindex->OnFork()) {
+	return ((double)GetMoneySupply(*pindex,Algo::UNKNOWN))/8.;
+    }
+    if (pindex->nMoneySupply == 0) return 2.5;
+    return ((double)pindex->nMoneySupply)/100000000.;
+}
+
+double GetPeakHashrate (const CBlockIndex& index, Algo algo, bool giga) {
+
+    const CBlockIndex* pindex = &index;
+    Algo algoTip = pindex->GetAlgo();
+    if (algoTip != algo) {
+	pindex = CBlockIndex::GetPrevAlgoBlockIndex(pindex,algo);
+    }
+    if (!pindex) return 0.;
+    do {
+	if (update_ssf(pindex->nVersion)) {
+	    double hashesPeak = 0.;
+	    const CBlockIndex* pprevAlgo = CBlockIndex::GetPrevAlgoBlockIndex(pindex,Algo::UNKNOWN);
+	    for (int i=0; i<365; i++) {
+		if (!pprevAlgo) break;
+		int timeF = pprevAlgo->GetMedianTimePast();
+		BoostBigNum hashesBN = pprevAlgo->GetBlockWorkBoost();
+		int timeI = 0;
+		for (int j=0; j<nSSF-1; j++) {
+		    pprevAlgo = CBlockIndex::GetPrevAlgoBlockIndex(pprevAlgo,Algo::UNKNOWN);
+		    if (pprevAlgo) {
+			timeI = pprevAlgo->GetMedianTimePast();
+		    }
+		    else {
+			hashesBN = BoostBigNum(0);
+			break;
+		    }
+		    hashesBN += pprevAlgo->GetBlockWorkBoost();
+		}
+		const CBlockIndex * pprevAlgoTime = CBlockIndex::GetPrevAlgoBlockIndex(pprevAlgo,Algo::UNKNOWN);
+		if (pprevAlgoTime) {
+		    timeI = pprevAlgoTime->GetMedianTimePast();
+		}
+		else {
+		    const CBlockIndex* pindexTime = pprevAlgo;
+		    while (pindexTime && pindexTime->OnFork()) {
+			pindexTime = pindexTime->pprev;
+		    }
+		    if (pindexTime) {
+			timeI = pindexTime->GetBlockTime();
+		    }
+		}
+		pprevAlgo = pprevAlgoTime;
+		if (timeF>timeI)
+		    timeF -= timeI;
+		else
+		    return std::numeric_limits<double>::max();
+		unsigned int f1 = 1;
+		unsigned int f2 = 1;
+		if (giga) {
+		    f1 = 1000000;
+		    f2 = 1000;
+		}
+		double hashes = (((hashesBN/timeF)/f1)/f2).convert_to<double>();
+		if (hashes>hashesPeak) hashesPeak = hashes;
+	    }
+	    return hashesPeak;
+	    break;
+	}
+	pindex = CBlockIndex::GetPrevAlgoBlockIndex(pindex,Algo::UNKNOWN);
+    } while (pindex);
+    return 0.;
+}
+
+double GetCurrentHashrate (const CBlockIndex& index, Algo algo, bool giga) {
+    const CBlockIndex* pindex = &index;
+    Algo algoTip = pindex->GetAlgo();
+    if (algoTip != algo) {
+	pindex = CBlockIndex::GetPrevAlgoBlockIndex(pindex,algo);
+    }
+    if (!pindex) {
+	return 0.;
+    }
+    do {
+	if (update_ssf(pindex->nVersion)) {
+	    const CBlockIndex* pcurAlgo = CBlockIndex::GetPrevAlgoBlockIndex(pindex,Algo::UNKNOWN);
+	    if (!pcurAlgo) return 0.;
+	    int timeF = pcurAlgo->GetMedianTimePast();
+	    BoostBigNum hashesBN = pcurAlgo->GetBlockWorkBoost();
+	    int timeI = 0;
+	    const CBlockIndex* pprevAlgo = pcurAlgo;
+	    for (int j=0; j<nSSF-1; j++) {
+		pprevAlgo = CBlockIndex::GetPrevAlgoBlockIndex(pprevAlgo,Algo::UNKNOWN);
+		if (pprevAlgo) {
+		    timeI = pprevAlgo->GetMedianTimePast();
+		}
+		else {
+		    return 0.;
+		}
+		hashesBN += pprevAlgo->GetBlockWorkBoost();
+	    }
+	    const CBlockIndex* pprevAlgoTime = CBlockIndex::GetPrevAlgoBlockIndex(pprevAlgo,Algo::UNKNOWN);
+	    if (pprevAlgoTime) {
+		timeI = pprevAlgoTime->GetMedianTimePast();
+	    }
+	    else {
+		const CBlockIndex* blockindexTime = pprevAlgo;
+		while (blockindexTime && blockindexTime->OnFork()) {
+		    blockindexTime = blockindexTime->pprev;
+		}
+		if (blockindexTime) timeI = blockindexTime->GetBlockTime();
+	    }
+	    if (timeF>timeI)
+		timeF -= timeI;
+	    else
+		return std::numeric_limits<double>::max();
+	    unsigned int f1 = 1;
+	    unsigned int f2 = 1;
+	    if (giga) {
+		f1 = 1000000;
+		f2 = 1000;
+	    }
+	    return (((hashesBN/timeF)/f1)/f2).convert_to<double>();
+	}
+	pindex = CBlockIndex::GetPrevAlgoBlockIndex(pindex,Algo::UNKNOWN);
+    } while (pindex);
+    return 0.;
+}
+
+int GetNBlocksUpdateSSF (const CBlockIndex& index, Algo algo) {
+    const CBlockIndex* pindex = &index;
+    Algo algoTip = Algo::UNKNOWN;
+    if (pindex->OnFork()) {
+	algoTip = pindex->GetAlgo();
+    }
+    if (algo != Algo::UNKNOWN && algoTip != algo) {
+	pindex = CBlockIndex::GetPrevAlgoBlockIndex(pindex,algo);
+    }
+    if (!pindex) return 0;
+    if (pindex->nHeight == 0) return 0;
+    int n = nSSF;
+    do {
+	if (update_ssf(pindex->nVersion)) {
+	    break;
+	}
+	pindex = CBlockIndex::GetPrevAlgoBlockIndex(pindex,Algo::UNKNOWN);
+	n--;
+    } while (pindex);
+    return n;
 }
 
 static int ComputeNextBlockAndDepth(const CBlockIndex& tip, const CBlockIndex& blockindex, const CBlockIndex*& next)
@@ -404,22 +655,226 @@ static RPCHelpMan syncwithvalidationinterfacequeue()
 static RPCHelpMan getdifficulty()
 {
     return RPCHelpMan{"getdifficulty",
-                "\nReturns the proof-of-work difficulty as a multiple of the minimum difficulty.\n",
-                {},
+                "\nReturns the proof-of-work difficulty as a multiple of the minimum difficulty (weighted by algo weight)\n",
+                {
+		    {"algo", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the mining algo"},
+		    {"height", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the block height (tip by default)"},
+		    {"weighted", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "whether to weigh the difficulty according to the algo's weight (false by default)"},
+		    {"next", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "whether to get the next difficulty required (false by default)"}
+		},
                 RPCResult{
-                    RPCResult::Type::NUM, "", "the proof-of-work difficulty as a multiple of the minimum difficulty."},
+		    RPCResult::Type::NUM, "difficulty", "the proof-of-work difficulty"
+		},
                 RPCExamples{
                     HelpExampleCli("getdifficulty", "")
             + HelpExampleRpc("getdifficulty", "")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
+    Algo algo = Algo::UNKNOWN;
+    int height = -1;
+    bool weighted = false;
+    bool next = false;
+    CBlockIndex* pindex = 0;
+    if (request.params.size() > 0) {
+	algo = static_cast<Algo>(request.params[0].getInt<int>());
+	if (request.params.size() > 1) {
+	    height = request.params[1].getInt<int>();
+	    if (request.params.size() > 2) {
+		weighted = request.params[2].get_bool();
+		if (request.params.size() > 3) {
+		    next = request.params[3].get_bool();
+		}
+	    }
+	}
+    }
     ChainstateManager& chainman = EnsureAnyChainman(request.context);
     LOCK(cs_main);
-    return GetDifficulty(*CHECK_NONFATAL(chainman.ActiveChain().Tip()));
+    if (height >= 0)
+	pindex = chainman.ActiveChain()[height];
+    else
+	pindex = chainman.ActiveChain().Tip();
+    return GetDifficulty(*CHECK_NONFATAL(pindex),chainman.GetConsensus(),algo,weighted,next);
 },
     };
 }
+
+static RPCHelpMan getblockreward()
+{
+    return RPCHelpMan{"getblockreward",
+	"\nReturns the block reward, not including fees.\n",
+	{
+	    {"algo", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the mining algo"},
+	    {"height", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the block height (tip by default)"},
+	    {"scale", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "whether to scale with SSF (yes by default)"},
+	},
+	RPCResult{
+	    RPCResult::Type::OBJ, "", "", {
+		{RPCResult::Type::NUM, "block reward", "the block reward"},
+	    }
+	},
+	RPCExamples{
+	    HelpExampleCli("getblockreward", "")
+	    + HelpExampleRpc("getblockreward", "")
+	},
+	[&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+	{
+	    Algo algo = Algo::UNKNOWN;
+	    int height = -1;
+	    bool scale = true;
+	    CBlockIndex* pindex = 0;
+	    if (request.params.size() > 0) {
+		algo = static_cast<Algo>(request.params[0].getInt<int>());
+		if (request.params.size() > 1) {
+		    height = request.params[1].getInt<int>();
+		    if (request.params.size() > 2) {
+			scale = request.params[2].get_bool();
+		    }
+		}
+	    }
+	    ChainstateManager& chainman = EnsureAnyChainman(request.context);
+	    LOCK(cs_main);
+	    if (height >= 0)
+		pindex = chainman.ActiveChain()[height];
+	    else
+		pindex = chainman.ActiveChain().Tip();
+	    return GetBlockReward(*CHECK_NONFATAL(pindex),chainman.GetConsensus(),algo,scale);
+	},
+    };
+}
+
+static RPCHelpMan getblockspacing()
+{
+    return RPCHelpMan{"getblockspacing",
+	"\nReturns the average block spacing\n",
+	{
+	    {"algo", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the mining algo (SCRYPT default)"},
+	    {"interval", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the averaging interval (25 block default)"},
+	    {"height", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "the block height (tip by default)"},
+	},
+	RPCResult{
+	    RPCResult::Type::OBJ, "", "", {
+		{RPCResult::Type::NUM, "average block spacing", "the average block spacing"},
+	    }
+	},
+	RPCExamples{
+	    HelpExampleCli("getblockspacing", "")
+	    + HelpExampleRpc("getblockspacing", "")
+	},
+	[&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+	{
+	    Algo algo = Algo::UNKNOWN;
+	    int interval = 25;
+	    int height = -1;
+	    CBlockIndex* pindex = 0;
+	    ChainstateManager& chainman = EnsureAnyChainman(request.context);
+	    if (request.params.size() > 0) {
+		algo = static_cast<Algo>(request.params[0].getInt<int>());
+		if (request.params.size() > 1) {
+		    interval = request.params[1].getInt<int>();
+		    if (request.params.size() > 2) {
+			height = request.params[2].getInt<int>();
+		    }
+		}
+	    }
+	    LOCK(cs_main);
+	    if (height >= 0) pindex = chainman.ActiveChain()[height];
+	    if (!pindex) pindex = chainman.ActiveChain().Tip();
+	    UniValue result(UniValue::VOBJ);
+	    result.pushKV("average block spacing",GetBlockSpacing(*CHECK_NONFATAL(pindex),algo,interval));
+	    return result;
+	},
+    };
+}
+
+static RPCHelpMan getmoneysupply()
+{
+    return RPCHelpMan{"getmoneysupply",
+	"\nReturns the money supply (amount of coins emitted)\n",
+	{
+	    {"algo", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the mining algo (overall by default)"},
+	    {"height", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the block height (tip by default)"},
+	},
+	RPCResult{
+	    RPCResult::Type::OBJ, "", "", {
+		{RPCResult::Type::NUM, "money supply", "the money supply"},
+	    }
+	},
+	RPCExamples{
+	    HelpExampleCli("getmoneysupply", "")
+	    + HelpExampleRpc("getmoneysupply", "")
+	},
+	[&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+	{
+	    Algo algo = Algo::UNKNOWN;
+	    int height = -1;
+	    CBlockIndex* pindex = 0;
+	    ChainstateManager& chainman = EnsureAnyChainman(request.context);
+	    if (request.params.size() > 0) {
+		algo = static_cast<Algo>(request.params[0].getInt<int>());
+		if (request.params.size() > 1) {
+		    height = request.params[1].getInt<int>();
+		}
+	    }
+	    LOCK(cs_main);
+	    if (height >= 0) pindex = chainman.ActiveChain()[height];
+	    if (!pindex) pindex = chainman.ActiveChain().Tip();
+	    UniValue result(UniValue::VOBJ);
+	    result.pushKV("money supply",GetMoneySupply(*CHECK_NONFATAL(pindex),algo));
+	    return result;
+	},
+    };
+}
+
+static RPCHelpMan chaindynamics()
+{
+    return RPCHelpMan{"chaindynamics",
+	"\nReturns an object containing various state information\n",
+	{
+	    {"height", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the block height (tip by default)"},
+	    {"giga", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "whether to get the gigahashes (yes by default)"},
+	},
+	RPCResult{
+	    RPCResult::Type::OBJ, "", "", {
+		{RPCResult::Type::NUM, "difficulty <algo>", "the weighted/next difficulty"},
+		{RPCResult::Type::NUM, "peak hashrate <algo>", "the peak hashrate"},
+		{RPCResult::Type::NUM, "current hashrate <algo>", "the current hashrate"},
+		{RPCResult::Type::NUM, "average block spacing <algo>", "the average block spacing (25 block interval)"},
+		{RPCResult::Type::NUM, "nblocks update SSF <algo>", "the number of blocks for an SSF update"},
+	    }
+	},
+	RPCExamples{
+	    HelpExampleCli("chaindynamics", "")
+	    + HelpExampleRpc("chaindynamics", "")
+	},
+	[&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+	{
+	    int height = -1;
+	    bool giga = true;
+	    CBlockIndex* pindex = 0;
+	    ChainstateManager& chainman = EnsureAnyChainman(request.context);
+	    if (request.params.size() > 0) {
+		height = request.params[0].getInt<int>();
+		if (request.params.size() > 1)
+		    giga = request.params[1].get_bool();
+	    }
+	    LOCK(cs_main);
+	    if (height >= 0) pindex = chainman.ActiveChain()[height];
+	    if (!pindex) pindex = chainman.ActiveChain().Tip();
+	    UniValue result(UniValue::VOBJ);
+	    for (int i=0; i<NUM_ALGOS; i++) {
+		Algo algo = static_cast<Algo>(i);
+		result.pushKV("difficulty "+ToString(algo),GetDifficulty(*CHECK_NONFATAL(pindex),chainman.GetConsensus(),algo,true,true));
+		result.pushKV("peak hashrate "+ToString(algo),GetPeakHashrate(*CHECK_NONFATAL(pindex),algo,giga));
+		result.pushKV("current hashrate "+ToString(algo),GetCurrentHashrate(*CHECK_NONFATAL(pindex),algo,giga));
+		result.pushKV("average block spacing "+ToString(algo),GetBlockSpacing(*CHECK_NONFATAL(pindex),algo,25));
+		result.pushKV("nblocks update SSF "+ToString(algo),GetNBlocksUpdateSSF(*CHECK_NONFATAL(pindex),algo));
+	    }
+	    return result;
+	},
+    };
+}
+	    
 
 static RPCHelpMan getblockfrompeer()
 {
@@ -2860,6 +3315,10 @@ void RegisterBlockchainRPCCommands(CRPCTable& t)
         {"blockchain", &getblockheader},
         {"blockchain", &getchaintips},
         {"blockchain", &getdifficulty},
+	{"blockchain", &getblockreward},
+	{"blockchain", &getblockspacing},
+	{"blockchain", &getmoneysupply},
+	{"blockchain", &chaindynamics},
         {"blockchain", &getdeploymentinfo},
         {"blockchain", &gettxout},
         {"blockchain", &gettxoutsetinfo},

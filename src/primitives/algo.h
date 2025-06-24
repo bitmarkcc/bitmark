@@ -22,28 +22,28 @@ inline std::ostream& operator<<(std::ostream& os, const Algo val)
 {
     switch (val) {
     case Algo::SCRYPT:
-        os << "Scrypt";
+        os << "SCRYPT";
         break;
     case Algo::SHA256D:
-        os << "Sha256D";
+        os << "SHA256D";
         break;
     case Algo::YESCRYPT:
-        os << "Yescrypt";
+        os << "YESCRYPT";
         break;
     case Algo::ARGON2:
-        os << "Argon2";
+        os << "ARGON2";
         break;
     case Algo::X17:
         os << "X17";
         break;
     case Algo::LYRA2REv2:
-        os << "Lyra2Rev2";
+        os << "LYRA2REv2";
         break;
     case Algo::EQUIHASH:
-        os << "Equihash";
+        os << "EQUIHASH";
         break;
     case Algo::CRYPTONIGHT:
-        os << "Cryptonight";
+        os << "CRYPTONIGHT";
         break;
     case Algo::UNKNOWN:
     default:
@@ -69,12 +69,12 @@ inline std::string ToString(const Algo algo)
 //      because, for example a Cryptonight hash is much more computationally expensive
 //      than a SHA256d hash.
 //   Weights should ultimately reflect the market value of hashes by different algorithms;
-//      this will vary constantly (and more significantly long-term with hardware developement)
+//      this will vary constantly (and more significantly long-term with hardware development)
 //   As of June, 2018 these values are closely reflective of market values seen on
 //      nicehash.com and miningrigrentals.com
 inline uint32_t GetAlgoWeight(const Algo algo)
 {
-    uint32_t weight = 8000; // scrypt, lyra2rev2 and 17 share this value.
+    uint32_t weight = 8000; // scrypt, lyra2rev2 and x17 share this value.
     switch (algo) {
     case Algo::SHA256D:
         weight = 1;

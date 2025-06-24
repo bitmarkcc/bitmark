@@ -50,6 +50,8 @@ using node::NodeContext;
 using node::RegenerateCommitments;
 using node::UpdateTime;
 
+Algo miningAlgo = Algo::SCRYPT;
+
 /**
  * Return average network hashes per second based on the last 'lookup' blocks,
  * or from the last difficulty change if 'lookup' is -1.
@@ -454,6 +456,44 @@ static RPCHelpMan getmininginfo()
     };
 }
 
+static RPCHelpMan getminingalgo()
+{
+    return RPCHelpMan{"getminingalgo",
+	"\nReturns the number representing the mining algorithm.",
+	{},
+	RPCResult{
+	    RPCResult::Type::NUM, "", "the number representing the mining algorithm",
+	    },
+	RPCExamples{
+	    HelpExampleCli("getminingalgo", "")
+	    + HelpExampleRpc("getminingalgo", "")
+	},
+	[&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    return (int)miningAlgo;
+},
+    };
+}
+
+static RPCHelpMan setminingalgo()
+{
+    return RPCHelpMan{"setminingalgo",
+	"\nSets the number representing the mining algorithm.",
+	{
+	    {"algo", RPCArg::Type::NUM, RPCArg::Optional::NO, "the number representing the mining algorithm"},
+	},
+	RPCResult{RPCResult::Type::NONE, "", ""},
+	RPCExamples{
+	    HelpExampleCli("setminingalgo", "")
+	    + HelpExampleRpc("setminingalgo", "")
+	},
+	[&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+	{
+	    miningAlgo = static_cast<Algo>(request.params[0].getInt<int>());
+	    return UniValue::VNULL;
+	},
+    };
+}
 
 // NOTE: Unlike wallet RPC (which use BTC values), mining RPCs follow GBT (BIP 22) in using satoshi amounts
 static RPCHelpMan prioritisetransaction()
@@ -1100,6 +1140,8 @@ void RegisterMiningRPCCommands(CRPCTable& t)
     static const CRPCCommand commands[]{
         {"mining", &getnetworkhashps},
         {"mining", &getmininginfo},
+	{"mining", &getminingalgo},
+	{"mining", &setminingalgo},
         {"mining", &prioritisetransaction},
         {"mining", &getprioritisedtransactions},
         {"mining", &getblocktemplate},

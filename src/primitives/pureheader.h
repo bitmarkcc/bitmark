@@ -54,6 +54,11 @@ inline bool IsAuxpow(int nVersion)
     return nVersion & BLOCK_VERSION_AUXPOW;
 }
 
+inline bool update_ssf(int nVersion)
+{
+    return nVersion & BLOCK_VERSION_UPDATE_SSF;
+}
+
 class CPureBlockHeader
 { // Needed to resolve circular dependecies with CAuxPow in CBlockHeader
 public:

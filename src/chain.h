@@ -143,6 +143,8 @@ enum BlockStatus : uint32_t {
     BLOCK_ASSUMED_VALID      =   256,
 };
 
+BoostBigNum BoostBigNumFromCompact(unsigned int nCompact);
+
 /** The block chain is a tree shaped structure starting with the
  * genesis block at the root, with each block potentially having multiple
  * candidates to be the next block. A blockindex may have multiple pprev pointing
@@ -215,7 +217,7 @@ public:
     // track the amount of coins emitted since genesis block, allowing us to determine max block reward
     uint64_t nMoneySupply{0};
     // the scaling factor for the block
-    mutable CBigNum subsidyScalingFactor{0};
+    mutable BoostBigNum subsidyScalingFactor{0};
 
     //! (memory only) Sequential id assigned to distinguish order in which blocks are received.
     int32_t nSequenceId{0};
@@ -440,6 +442,17 @@ public:
         return (CBigNum(1) << 256) / (bnTarget / weight + 1);
     }
 
+    BoostBigNum GetBlockWorkBoost() const
+    {
+	BoostBigNum bnTarget = BoostBigNumFromCompact(nBits);
+
+	if (bnTarget <= 0)
+	    return 0;
+	unsigned int algo_weight = GetAlgoWeight(this->GetAlgo());
+	BoostBigNum weight (algo_weight);
+	return (BoostBigNum(1) << 256) / (bnTarget / weight + BoostBigNum(1));
+    }
+
     // Get Average Work of latest 50 Blocks
     CBigNum GetBlockWorkAv() const
     {
@@ -526,7 +539,7 @@ public:
         READWRITE(obj.hashMerkleRoot);
         bool onFork = true; // assume true for disk IO
         if (obj.GetAlgo() == Algo::EQUIHASH && onFork) {
-	    printf("readwrite hashReserved\n");
+	    //printf("readwrite hashReserved\n");
             READWRITE(obj.hashReserved);
         }
         READWRITE(obj.nTime);
@@ -539,14 +552,14 @@ public:
         }
 
         if (IsAuxpow(obj.nVersion) && onFork) {
-	    printf("at nHeight = %d IsAuxpow\n",obj.nHeight);
+	    //printf("at nHeight = %d IsAuxpow\n",obj.nHeight);
             if (ser_action.ForRead()) {
-		printf("ser_action.ForRead()\n");
+		//printf("ser_action.ForRead()\n");
                 obj.pauxpow.reset(new CAuxPow());
             }
 
             assert(obj.pauxpow);
-	    printf("did assert obj.pauxpow\n");
+	    //printf("did assert obj.pauxpow\n");
             obj.pauxpow->parentBlock.isParent = true;
             Algo algo = obj.GetAlgo();
             obj.pauxpow->parentBlock.algoParent = algo;

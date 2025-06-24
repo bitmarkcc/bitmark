@@ -304,6 +304,21 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "stop", 0, "wait" },
     { "addnode", 2, "v2transport" },
     { "addconnection", 2, "v2transport" },
+    { "getblockreward", 0, "algo"},
+    { "getblockreward", 1, "height"},
+    { "getblockreward", 2 , "scale"},
+    { "getblockspacing", 0, "algo"},
+    { "getblockspacing", 1, "interval"},
+    { "getblockspacing", 2, "height"},
+    { "getdifficulty", 0, "algo"},
+    { "getdifficulty", 1, "height"},
+    { "getdifficulty", 2, "weighted"},
+    { "getdifficulty", 3, "next"},
+    { "setminingalgo", 0, "algo"},
+    { "getmoneysupply", 0, "algo"},
+    { "getmoneysupply", 1, "height"},
+    { "chaindynamics", 0, "height"},
+    { "chaindynamics", 1, "giga"},
 };
 // clang-format on
 
