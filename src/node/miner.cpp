@@ -103,7 +103,7 @@ void BlockAssembler::resetBlock()
     nFees = 0;
 }
 
-    std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& scriptPubKeyIn, int32_t nVersionTx)
+    std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& scriptPubKeyIn, int32_t nVersionTx, Algo algo)
 {
     const auto time_start{SteadyClock::now()};
 
@@ -126,8 +126,16 @@ void BlockAssembler::resetBlock()
     assert(pindexPrev != nullptr);
     nHeight = pindexPrev->nHeight + 1;
 
+    if (algo == Algo::UNKNOWN)
+	algo = miningAlgo;
+
     //pblock->nVersion = m_chainstate.m_chainman.m_versionbitscache.ComputeBlockVersion(pindexPrev, chainparams.GetConsensus());
     pblock->nVersion = CPureBlockHeader::CURRENT_VERSION;
+    bool onMultiPoWFork = nHeight >= 200 && pindexPrev->IsSuperMajority(4, 75, 100);
+
+    if (onMultiPoWFork)
+	pblock->SetAlgo(algo);
+    
     // -regtest only: allow overriding block.nVersion with
     // -blockversion=N to test forking scenarios
     if (chainparams.MineBlocksOnDemand()) {
@@ -160,6 +168,29 @@ void BlockAssembler::resetBlock()
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
     pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
     pblocktemplate->vchCoinbaseCommitment = m_chainstate.m_chainman.GenerateCoinbaseCommitment(*pblock, pindexPrev);
+
+    if (onMultiPoWFork) {
+	CBlockIndex* pprevAlgo = pindexPrev;
+	if (pprevAlgo->GetAlgo()!=algo) {
+	    pprevAlgo = CBlockIndex::GetPrevAlgoBlockIndex(pindexPrev,algo);
+	}
+	if (!pprevAlgo) pblock->SetUpdateSSF();
+	else {
+	    bool update = true;
+	    for (int i=0; i<nSSF; i++) {
+		if (update_ssf(pprevAlgo->nVersion)) {
+		    if (i!=nSSF-1) {
+			update = false;
+		    }
+		    break;
+		}
+		pprevAlgo = CBlockIndex::GetPrevAlgoBlockIndex(pprevAlgo,Algo::UNKNOWN);
+		if (!pprevAlgo) break;
+	    }
+	    if (update) pblock->SetUpdateSSF();
+	}
+    }
+
     pblocktemplate->vTxFees[0] = -nFees;
 
     LogPrintf("CreateNewBlock(): block weight: %u txs: %u fees: %ld sigops %d\n", GetBlockWeight(*pblock), nBlockTx, nFees, nBlockSigOpsCost);
@@ -167,8 +198,14 @@ void BlockAssembler::resetBlock()
     // Fill in header
     pblock->hashPrevBlock  = pindexPrev->GetBlockHash();
     UpdateTime(pblock, chainparams.GetConsensus(), pindexPrev);
-    pblock->nBits          = GetNextWorkRequired(pindexPrev, pblock, chainparams.GetConsensus(), pblock->GetAlgo());
+    pblock->nBits          = GetNextWorkRequired(pindexPrev, pblock, chainparams.GetConsensus(), algo);
     pblock->nNonce         = 0;
+
+    if (algo == Algo::EQUIHASH) {
+	pblock->nNonce256.SetNull();
+	pblock->nSolution.clear();
+    }
+    
     pblocktemplate->vTxSigOpsCost[0] = WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx[0]);
 
     BlockValidationState state;

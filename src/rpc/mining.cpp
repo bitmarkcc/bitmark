@@ -51,6 +51,7 @@ using node::RegenerateCommitments;
 using node::UpdateTime;
 
 Algo miningAlgo = Algo::SCRYPT;
+Algo miningAlgoGBT = miningAlgo;
 
 /**
  * Return average network hashes per second based on the last 'lookup' blocks,
@@ -625,6 +626,7 @@ static RPCHelpMan getblocktemplate()
                 }},
                 {"longpollid", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "delay processing request until the result would vary significantly from the \"longpollid\" of a prior template"},
                 {"data", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "proposed block data to check, encoded in hexadecimal; valid only for mode=\"proposal\""},
+		{"algo", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "mining algo"},
             },
             },
         },
@@ -697,6 +699,8 @@ static RPCHelpMan getblocktemplate()
     ChainstateManager& chainman = EnsureChainman(node);
     LOCK(cs_main);
 
+    Algo miningAlgoChosen = miningAlgo;
+    
     std::string strMode = "template";
     UniValue lpval = NullUniValue;
     std::set<std::string> setClientRules;
@@ -716,6 +720,16 @@ static RPCHelpMan getblocktemplate()
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid mode");
         lpval = oparam.find_value("longpollid");
 
+	const UniValue& algoval = oparam.find_value("algo");
+	if (algoval.isNum())
+	    miningAlgoChosen = static_cast<Algo>(algoval.getInt<int>());
+	else if (algoval.isNull())
+	{
+	    /* Do nothing */
+	}
+	else
+	    throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid algo");
+	
         if (strMode == "proposal")
         {
             const UniValue& dataval = oparam.find_value("data");
@@ -834,7 +848,7 @@ static RPCHelpMan getblocktemplate()
     static CBlockIndex* pindexPrev;
     static int64_t time_start;
     static std::unique_ptr<CBlockTemplate> pblocktemplate;
-    if (pindexPrev != active_chain.Tip() ||
+    if (pindexPrev != active_chain.Tip() || miningAlgoChosen != miningAlgoGBT ||
         (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - time_start > 5))
     {
         // Clear pindexPrev so future calls make a new block, despite any failures from here on
@@ -847,12 +861,13 @@ static RPCHelpMan getblocktemplate()
 
         // Create new block
         CScript scriptDummy = CScript() << OP_TRUE;
-        pblocktemplate = BlockAssembler{active_chainstate, &mempool}.CreateNewBlock(scriptDummy,CTransaction::CURRENT_VERSION_BTM);
+        pblocktemplate = BlockAssembler{active_chainstate, &mempool}.CreateNewBlock(scriptDummy,CTransaction::CURRENT_VERSION_BTM, miningAlgoChosen);
         if (!pblocktemplate)
             throw JSONRPCError(RPC_OUT_OF_MEMORY, "Out of memory");
 
         // Need to update only after we know CreateNewBlock succeeded
         pindexPrev = pindexPrevNew;
+	miningAlgoGBT = miningAlgoChosen;
     }
     CHECK_NONFATAL(pindexPrev);
     CBlock* pblock = &pblocktemplate->block; // pointer for convenience
