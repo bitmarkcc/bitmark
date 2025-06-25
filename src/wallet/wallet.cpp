@@ -3111,6 +3111,10 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
         }
     }
 
+    if (args.IsArgSet("-txversion")) {
+	walletInstance->m_tx_version = args.GetIntArg("-txversion",CTransaction::CURRENT_VERSION);
+    }
+
     if (args.IsArgSet("-maxtxfee")) {
         std::optional<CAmount> max_fee = ParseMoney(args.GetArg("-maxtxfee", ""));
         if (!max_fee) {

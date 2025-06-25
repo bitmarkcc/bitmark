@@ -986,6 +986,8 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
     FastRandomContext rng_fast;
     CMutableTransaction txNew; // The resulting transaction that we make
 
+    txNew.nVersion = wallet.m_tx_version;
+    
     if (coin_control.m_version) {
         txNew.nVersion = coin_control.m_version.value();
     }
