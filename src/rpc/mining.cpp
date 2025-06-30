@@ -612,7 +612,7 @@ static RPCHelpMan getblocktemplate()
         "    https://github.com/bitcoin/bips/blob/master/bip-0009.mediawiki#getblocktemplate_changes\n"
         "    https://github.com/bitcoin/bips/blob/master/bip-0145.mediawiki\n",
         {
-            {"template_request", RPCArg::Type::OBJ, RPCArg::Optional::NO, "Format of the template",
+            {"template_request", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "Format of the template",
             {
                 {"mode", RPCArg::Type::STR, /* treat as named arg */ RPCArg::Optional::OMITTED, "This must be set to \"template\", \"proposal\" (see BIP 23), or omitted"},
                 {"capabilities", RPCArg::Type::ARR, /* treat as named arg */ RPCArg::Optional::OMITTED, "A list of strings",
@@ -626,7 +626,7 @@ static RPCHelpMan getblocktemplate()
                 }},
                 {"longpollid", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "delay processing request until the result would vary significantly from the \"longpollid\" of a prior template"},
                 {"data", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "proposed block data to check, encoded in hexadecimal; valid only for mode=\"proposal\""},
-		{"algo", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "mining algo"},
+		{"algo", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "mining algo"},
             },
             },
         },
@@ -840,9 +840,9 @@ static RPCHelpMan getblocktemplate()
     }
 
     // GBT must be called with 'segwit' set in the rules
-    if (setClientRules.count("segwit") != 1) {
+    /*if (setClientRules.count("segwit") != 1) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "getblocktemplate must be called with the segwit rule set (call with {\"rules\": [\"segwit\"]})");
-    }
+	}*/
 
     // Update block
     static CBlockIndex* pindexPrev;

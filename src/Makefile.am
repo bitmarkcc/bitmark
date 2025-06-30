@@ -123,6 +123,7 @@ BITCOIN_CORE_H = \
   addrman_impl.h \
   attributes.h \
   banman.h \
+  base38.h \
   base58.h \
   bech32.h \
   bip324.h \
@@ -717,6 +718,7 @@ libbitcoin_common_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(BOOST_CPPFLA
 libbitcoin_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libbitcoin_common_a_SOURCES = \
   addresstype.cpp \
+  base38.cpp \
   base58.cpp \
   bech32.cpp \
   chainparams.cpp \

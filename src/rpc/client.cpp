@@ -319,6 +319,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "getmoneysupply", 1, "height"},
     { "chaindynamics", 0, "height"},
     { "chaindynamics", 1, "giga"},
+    { "mark", 0, "marking"},
 };
 // clang-format on
 

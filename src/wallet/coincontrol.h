@@ -75,7 +75,7 @@ public:
     /** Retrieve the position of this input. */
     std::optional<unsigned int> GetPosition() const;
 };
-
+    
 /** Coin Control Features. */
 class CCoinControl
 {

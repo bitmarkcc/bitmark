@@ -9,6 +9,7 @@
 #include <attributes.h>
 #include <crypto/common.h>
 #include <prevector.h> // IWYU pragma: export
+#include <pubkey.h>
 #include <serialize.h>
 #include <uint256.h>
 #include <util/hash_type.h>
@@ -490,6 +491,14 @@ public:
         }
         insert(end(), b.begin(), b.end());
         return *this;
+    }
+
+    CScript& operator <<(const CPubKey& key) LIFETIMEBOUND
+    {
+	assert(key.size() < OP_PUSHDATA1);
+	insert(end(), (unsigned char)key.size());
+	insert(end(), key.begin(), key.end());
+	return *this;
     }
 
     bool GetOp(const_iterator& pc, opcodetype& opcodeRet, std::vector<unsigned char>& vchRet) const

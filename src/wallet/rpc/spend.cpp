@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <base38.h>
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <key_io.h>
@@ -314,6 +315,426 @@ RPCHelpMan sendtoaddress()
     };
 }
 
+typedef unsigned char uchar;
+
+struct Mark {
+    std::vector<uchar> hashType;
+    std::vector<uchar> hashHex;
+    std::vector<uchar> linkProtocol;
+    std::vector<uchar> linkHost;
+    std::vector<uchar> linkPort;
+    std::vector<uchar> linkPath;
+    std::vector<uchar> linkCertHashType;
+    std::vector<uchar> linkCertHashHex;
+    std::vector<uchar> descLang;
+    std::vector<uchar> descText;
+    std::vector<uchar> keyHex;
+    int64_t fee;
+};
+
+void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, std::vector<uchar>& pubkeyD, std::vector<uchar>& pubkeyK, Mark& mark) {
+
+    unsigned int lenHashHex = mark.hashHex.size();
+    if (lenHashHex) {
+	pubkeyH.push_back(6);
+	pubkeyH.push_back('h');
+	unsigned int lenHashType = mark.hashType.size();
+	if (lenHashType > 15) {
+	    pubkeyH.push_back(0x10);
+	    pubkeyH.push_back(lenHashType);
+	}
+	else {
+	    pubkeyH.push_back(0x10+lenHashType);
+	}
+	for (int i=0; i<lenHashType; i++) {
+	    pubkeyH.push_back(mark.hashType[i]);
+	}
+	if (lenHashHex > 15) {
+	    pubkeyH.push_back(0x20);
+	    pubkeyH.push_back(lenHashHex);
+	}
+	else {
+	    pubkeyH.push_back(0x20+lenHashHex);
+	}
+	for (int i=0; i<lenHashHex; i++) {
+	    pubkeyH.push_back(mark.hashHex[i]);
+	}
+	while (pubkeyH.size()<65) {
+	    pubkeyH.push_back(0);
+	}
+    }
+    
+    unsigned int lenLinkHost = mark.linkHost.size();
+    if (lenLinkHost) {
+	pubkeyL.push_back(6);
+	pubkeyL.push_back('l');
+	int lenLinkProtocol = mark.linkProtocol.size();
+	if (lenLinkProtocol > 15) {
+	    pubkeyL.push_back(0x10);
+	    pubkeyL.push_back(lenLinkProtocol);
+	}
+	else {
+	    pubkeyL.push_back(0x10+lenLinkProtocol);
+	}
+	for (int i=0; i<lenLinkProtocol; i++) {
+	    pubkeyL.push_back(mark.linkProtocol[i]);
+	}
+	if (lenLinkHost > 15) {
+	    pubkeyL.push_back(0x20);
+		    pubkeyL.push_back(lenLinkHost);
+	}
+	else {
+	    pubkeyL.push_back(0x20+lenLinkHost);
+	}
+	for (int i=0; i<lenLinkHost; i++) {
+	    pubkeyL.push_back(mark.linkHost[i]);
+	}
+	int lenLinkPort = mark.linkPort.size();
+	if (lenLinkPort > 15) {
+	    pubkeyL.push_back(0x30);
+	    pubkeyL.push_back(lenLinkPort);
+	}
+	else {
+	    pubkeyL.push_back(0x30+lenLinkPort);
+	}
+	for (int i=0; i<lenLinkPort; i++) {
+	    pubkeyL.push_back(mark.linkPort[i]);
+	}
+	/*int lenLinkPath = mark.linkPath.size();
+	  if (lenLinkPath > 15) {
+	  pubkeyL.push_back(0x40);
+	  pubkeyL.push_back(lenLinkPath);
+	  }
+	  else {
+	  pubkeyL.push_back(0x40+lenLinkPath);
+	  }
+	  for (int i=0; i<lenLinkPath; i++) {
+	  pubkeyL.push_back(mark.linkPath[i]);
+	  }*/
+	int lenLinkCertHashType = mark.linkCertHashType.size();
+	if (lenLinkCertHashType > 0) {
+	    if (lenLinkCertHashType > 15) {
+		pubkeyL.push_back(0x50);
+		pubkeyL.push_back(lenLinkCertHashType);
+	    }
+	    else {
+		pubkeyL.push_back(0x50+lenLinkCertHashType);
+	    }
+	    for (int i=0; i<lenLinkCertHashType; i++) {
+		pubkeyL.push_back(mark.linkCertHashType[i]);
+	    }
+		  }
+	int lenLinkCertHashHex = mark.linkCertHashHex.size();
+	if (lenLinkCertHashHex > 0) {
+	    if (lenLinkCertHashHex > 15) {
+		pubkeyL.push_back(0x60);
+		pubkeyL.push_back(lenLinkCertHashHex);
+	    }
+	    else {
+		pubkeyL.push_back(0x60+lenLinkCertHashHex);
+	    }
+	    for (int i=0; i<lenLinkCertHashHex; i++) {
+		pubkeyL.push_back(mark.linkCertHashHex[i]);
+	    }
+	}
+	while (pubkeyL.size()<65) {
+	    pubkeyL.push_back(0);
+	}
+    }
+
+    unsigned int lenDescText = mark.descText.size();
+    if (lenDescText) {
+	pubkeyD.push_back(6);
+	pubkeyD.push_back('d');
+	unsigned int lenDescLang = mark.descLang.size();
+	if (lenDescLang > 15) {
+	    pubkeyD.push_back(0x10);
+	    pubkeyD.push_back(lenDescLang);
+	}
+	else if (lenDescLang > 0) {
+	    pubkeyD.push_back(0x10+lenDescLang);
+	}
+	for (int i=0; i<lenDescLang; i++) {
+	    pubkeyD.push_back(mark.descLang[i]);
+	}
+	if (lenDescText > 15) {
+	    pubkeyD.push_back(0x20);
+	    pubkeyD.push_back(lenDescText);
+	}
+	else {
+	    pubkeyD.push_back(0x20+lenDescText);
+	}
+	for (int i=0; i<lenDescText; i++) {
+	    pubkeyD.push_back(mark.descText[i]);
+	}
+	while (pubkeyD.size()<65) {
+	    pubkeyD.push_back(0);
+	}
+    }
+
+    unsigned int lenKeyHex = mark.keyHex.size();
+    if (lenKeyHex==32) {
+	pubkeyK.push_back(2); // (I think) prefix 02 is assumed for nostr
+	for (int i=0; i<lenKeyHex; i++) {
+	    pubkeyK.push_back(mark.keyHex[i]);
+	}
+	while (pubkeyK.size()<33) {
+	    pubkeyH.push_back(0);
+	}
+    }
+}
+
+RPCHelpMan mark()
+{
+    return RPCHelpMan{"mark",
+                "\nMark some metadata (hash, link, description)",
+                {
+		    {"marking", RPCArg::Type::OBJ, RPCArg::Optional::NO, "marking object",
+		     {
+			 {"hash", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+			  {
+			      {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "type of hash"},
+			      {"hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "hex value of hash"},
+			  }
+			 },
+			 {"link", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+			  {
+			      {"protocol", RPCArg::Type::STR, RPCArg::Optional::NO, "protocol for link"},
+			      {"host", RPCArg::Type::STR, RPCArg::Optional::NO, "host name for link"},
+			      {"port", RPCArg::Type::STR, RPCArg::Optional::NO, "port for link"},
+			      {"path", RPCArg::Type::STR, RPCArg::Optional::NO, "path for link"},
+			      {"cert_hash", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+			       {
+				   {"type",RPCArg::Type::STR,RPCArg::Optional::NO,"the certificate hash type"},
+				   {"hex",RPCArg::Type::STR_HEX,RPCArg::Optional::NO,"the certificate hash hex"}
+			       }
+			      }
+			  }
+			 },
+			 {"desc", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+			  {
+			      {"lang", RPCArg::Type::STR, RPCArg::Optional::NO, "language for description"},
+			      {"text", RPCArg::Type::STR, RPCArg::Optional::NO, "text of description"}
+			  }
+			 }
+		     }
+		    }
+                },
+                RPCResult
+		{
+		    RPCResult::Type::STR_HEX, "txid", "The transaction id"
+		},
+                RPCExamples{
+                    HelpExampleCli("mark", "'{\"hash\": {\"type\": \"sha256\", \"hex\": \"51529b29e1b8afd2e6738dea5fbcffed0359e0c23995b2e61ce147877921d735\"}, \"desc\": {\"lang\": \"\", \"text\": \"my_description\"}}'")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+
+    std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!pwallet) return UniValue::VNULL;
+    pwallet->BlockUntilSyncedToCurrentChain();
+    LOCK(pwallet->cs_wallet);
+
+    //int64_t nAmount = 0;
+    //CBitmarkAddress address;
+    //CWalletTx wtx;
+    //Object hash;
+    //Object link;
+    //Object desc;
+    std::string hashHex;
+    std::string hashType;
+    std::string linkProtocol;
+    std::string linkHost;
+    std::string linkPort;
+    std::string linkPath;
+    std::string linkCertHashHex;
+    std::string linkCertHashType;
+    std::string descText;
+    std::string descLang;
+    std::string keyHex;
+    int64_t fee = -1;
+    const UniValue& marking = request.params[0].get_obj();
+    const UniValue& feeval = marking.find_value("fee");
+    if (feeval.isNum())
+	fee = feeval.getInt<int64_t>();
+    const UniValue& hashval = marking.find_value("hash");
+    if (hashval.isObject()) {
+	hashType = hashval.find_value("type").get_str();
+	hashHex = hashval.find_value("hex").get_str();
+    }
+    const UniValue& linkval = marking.find_value("link");
+    if (linkval.isObject()) {
+	linkProtocol = linkval.find_value("protocol").get_str();
+	linkHost = linkval.find_value("host").get_str();
+	linkPort = linkval.find_value("port").get_str();
+	linkPath = linkval.find_value("path").get_str();
+	const UniValue& certhashval = linkval.find_value("cert_hash");
+	if (certhashval.isObject()) {
+	    linkCertHashType = certhashval.find_value("type").get_str();
+	    linkCertHashHex = certhashval.find_value("hex").get_str();
+	}
+    }
+    const UniValue& descval = marking.find_value("desc");
+    if (descval.isObject()) {
+	descLang = descval.find_value("lang").get_str();
+	descText = descval.find_value("text").get_str();
+    }
+    const UniValue& keyval = marking.find_value("key");
+    if (keyval.isObject())
+	keyHex = keyval.find_value("hex").get_str();
+    
+    pwallet->WalletLogPrintf("fee %lld\n",fee);
+    pwallet->WalletLogPrintf("hashType %s hashHex %s \n",hashType,hashHex);
+    pwallet->WalletLogPrintf("linkProcotol %s linkHost %s linkPort %s linkPath %s linkCertHashType %s linkCertHashHex %s\n",linkProtocol,linkHost,linkPort,linkPath,linkCertHashType,linkCertHashHex);
+    pwallet->WalletLogPrintf("keyHex %s\n",keyHex);
+    
+    if (!IsBase38(hashType))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("hashType must be in base38"));
+    if (hashHex.size() && !IsHex(hashHex))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("hashHex must be in hex"));
+    if (!IsBase38(linkProtocol))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkProtocol must be in base38"));
+    if (!IsBase38(linkHost))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkHost must be in base38"));
+    if (!IsBase38(linkPort))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkPort must be in base38"));
+    if (!IsBase38(linkPath))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkPath must be in base38"));
+    if (!IsBase38(linkCertHashType))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkCertHashType must be in base38"));
+    if (linkCertHashHex.size() && !IsHex(linkCertHashHex))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkCertHashHex must be in hex"));
+    if (!IsBase38(descLang))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("descLang must be in base38"));
+    if (!IsBase38(descText))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("descText must be in base38"));
+
+    Mark mark;
+
+    std::vector<uchar> vHashType;
+    if (hashType.size() && !DecodeBase38(hashType,vHashType,128))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode hash type"));
+    mark.hashType = vHashType;
+
+    std::vector<uchar> vHashHex;
+    if (hashHex.size())
+	vHashHex = ParseHex(hashHex);
+    mark.hashHex = vHashHex;
+
+    std::vector<uchar> vLinkProtocol;
+    if (hashType.size() && !DecodeBase38(linkProtocol,vLinkProtocol,128))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode link protocol"));
+    mark.linkProtocol = vLinkProtocol;
+
+    std::vector<uchar> vLinkHost;
+    if (linkHost.size() && !DecodeBase38(linkHost,vLinkHost,128))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode link host"));
+    mark.linkHost = vLinkHost;
+    
+    std::vector<uchar> vLinkPort;
+    if (linkHost.size() && !DecodeBase38(linkPort,vLinkPort,128))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode link port"));
+    mark.linkPort = vLinkPort;
+
+    std::vector<uchar> vLinkPath;
+    if (linkPath.size() && !DecodeBase38(linkPath,vLinkPath,128))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode link path"));
+    mark.linkPath = vLinkPath;
+
+    std::vector<uchar> vLinkCertHashType;
+    if (linkHost.size() && !DecodeBase38(linkCertHashType,vLinkCertHashType,128))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode link cert hash type"));
+    mark.linkCertHashType = vLinkCertHashType;
+
+    std::vector<uchar> vLinkCertHashHex;
+    if (linkCertHashHex.size())
+	vLinkCertHashHex = ParseHex(linkCertHashHex);
+    mark.linkCertHashHex = vLinkCertHashHex;
+
+    std::vector<uchar> vDescLang;
+    if (descLang.size() && !DecodeBase38(descLang,vDescLang,128))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode desc lang"));
+    mark.descLang = vDescLang;
+
+    std::vector<uchar> vDescText;
+    if (descText.size() && !DecodeBase38(descText,vDescText,128))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode desc text"));
+    mark.descText = vDescText;
+
+    std::vector<uchar> vKeyHex;
+    if (keyHex.size())
+	vKeyHex = ParseHex(keyHex);
+    mark.keyHex = vKeyHex;
+
+    mark.fee = fee;
+
+    CCoinControl coin_control;
+    coin_control.m_change_type = OutputType::LEGACY;
+
+    std::vector<CRecipient> recipients;
+
+    CKey key;
+    key.MakeNewKey(false);
+    CPubKey spendKey = key.GetPubKey();
+    pwallet->WalletLogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),EncodeSecret(key));
+    std::vector<uchar> pubkeyH, pubkeyL, pubkeyD, pubkeyK;
+    MarkPubKeysHLDK(pubkeyH,pubkeyL,pubkeyD,pubkeyK,mark);
+    CPubKey hashKey;
+    CPubKey linkKey;
+    CPubKey descKey;
+    if (pubkeyH.size()) {
+	hashKey = CPubKey(pubkeyH);
+    }
+    else if (pubkeyK.size()) {
+	hashKey = CPubKey(pubkeyK);
+    }
+    else {
+	hashKey = spendKey;
+    }
+    if (pubkeyL.size()) {
+	linkKey = CPubKey(pubkeyL);
+    }
+    else if (pubkeyK.size()) {
+	linkKey = CPubKey(pubkeyK);
+    }
+    else {
+	linkKey = spendKey;
+    }
+    if (pubkeyD.size()) {
+	descKey = CPubKey(pubkeyD);
+    }
+    else if (pubkeyK.size()) {
+	descKey = CPubKey(pubkeyK);
+    }
+    else {
+	descKey = spendKey;
+    }    
+    CScript scriptHash;
+    if (pubkeyH.size() && pubkeyL.size()) {
+	scriptHash = CScript() << OP_1 << hashKey << linkKey << descKey << OP_3 << OP_CHECKMULTISIG;
+    }
+    else if (pubkeyH.size() && pubkeyD.size()) {
+	scriptHash = CScript() << OP_1 << hashKey << descKey << linkKey << OP_3 << OP_CHECKMULTISIG;
+    }
+    else if (pubkeyL.size() && pubkeyD.size()) {
+	scriptHash = CScript() << OP_1 << linkKey << descKey << hashKey << OP_3 << OP_CHECKMULTISIG;
+    }
+    
+    CTxDestination destination{CNoDestination{scriptHash}};
+    CAmount amount{10000};
+    CRecipient recipient{destination, amount, false};
+    recipients.push_back(recipient);
+    
+    mapValue_t mapValue;
+    const bool verbose = false;
+    
+    return SendMoney(*pwallet, coin_control, recipients, mapValue, verbose);
+    
+    //return UniValue::VNULL;
+},
+    };
+}
+	    			   
 RPCHelpMan sendmany()
 {
     return RPCHelpMan{"sendmany",

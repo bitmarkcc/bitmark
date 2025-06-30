@@ -1194,6 +1194,11 @@ std::string RPCArg::ToStringObj(const bool oneline) const
         }
         return res + "...]";
     case Type::OBJ:
+	res += "{";
+	for (const auto& i : m_inner) {
+	    res += i.ToString(oneline) + ",";
+	}
+	return res += "...}";
     case Type::OBJ_NAMED_PARAMS:
     case Type::OBJ_USER_KEYS:
         // Currently unused, so avoid writing dead code
