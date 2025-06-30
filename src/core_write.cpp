@@ -4,6 +4,7 @@
 
 #include <core_io.h>
 
+#include <base38.h>
 #include <common/system.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
@@ -147,9 +148,124 @@ std::string EncodeHexTx(const CTransaction& tx)
     return HexStr(ssTx);
 }
 
+bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue& marking)
+{
+    if (type == TxoutType::NULL_DATA) {
+	std::string data = HexStr(scriptPubKey);
+	marking.pushKV("data",data.substr(2));
+	return true;
+    }
+    else if (type == TxoutType::MULTISIG) {
+	int pk1len = scriptPubKey[1];
+	std::string d1name;
+	char d1code = scriptPubKey[3];
+	int iPK = 0;
+	while (iPK < 2) {
+	    int ipk = 0;
+	    int pk1len = scriptPubKey[1+iPK*66];
+	    std::string d1name;
+	    char d1code = scriptPubKey[3+iPK*66];
+	    if (d1code == 'h') {
+		d1name = "hash";
+	    }
+	    else if (d1code == 'l') {
+		d1name = "link";
+	    }
+	    else if (d1code == 'd') {
+		d1name = "desc";
+	    }
+	    while (ipk < 65) {
+		unsigned char d11Code = scriptPubKey[iPK*66+ipk+4];
+		if (d11Code == 0) {
+		    ipk = 65;
+		    continue;
+		}
+		ipk++;
+		unsigned char d11Len = 0;
+		int rem = d11Code % 16;
+		int i = 0;
+		std::string d11name;
+		if (rem == 0) {
+		    while (d11Code > 15)
+			d11Code >>= 4;
+		    d11Len = scriptPubKey[4+ipk+66*iPK];
+		    ipk++;
+		    i = 4 + ipk + iPK*66;
+		}
+		else {
+		    while (d11Code > 15)
+			d11Code >>= 4;
+		    d11Len = rem;
+		    i = 4 + ipk + iPK*66;
+		}
+		if (!d1name.compare("hash")) {
+		    if (d11Code == 1) {
+			d11name = "hash type";
+		    }
+		    else if (d11Code == 2) {
+			d11name = "hash hex";
+		    }
+		}
+		else if (!d1name.compare("link")) {
+		    if (d11Code == 1) {
+			d11name = "link protocol";
+		    }
+		    else if (d11Code == 2) {
+			d11name = "link host";
+		    }
+		    else if (d11Code == 3) {
+			d11name = "link port";
+		    }
+		    else if (d11Code == 4) {
+			d11name = "link path";
+		    }
+		    else if (d11Code == 5) {
+			d11name = "link cert hash type";
+		    }
+		    else if (d11Code == 6) {
+			d11name = "link cert hash hex";
+		    }
+		}
+		else if (!d1name.compare("desc")) {
+		    if (d11Code == 1) {
+			d11name = "desc language";
+		    }
+		    else if (d11Code == 2) {
+			d11name = "desc text";
+		    }	    
+		}
+		std::vector<unsigned char> d11value;
+		if (ipk+d11Len<65) {
+		    for (int j=i; j<i+d11Len; j++) {
+			d11value.push_back(scriptPubKey[j]);
+		    }
+		    ipk += d11Len;
+		    std::string sd11value;
+		    if (d11name.find("hex") == std::string::npos) {
+			sd11value = EncodeBase38(d11value);
+		    }
+		    else {
+			sd11value = HexStr(d11value);
+		    }
+		    marking.pushKV(d11name,sd11value);
+		}
+		else {
+		    ipk = 65;
+		}
+	    }
+	    iPK++;
+	}
+	marking.pushKV("weight",1);
+	return true;
+    }
+    return false;
+}
+
 void ScriptToUniv(const CScript& script, UniValue& out, bool include_hex, bool include_address, const SigningProvider* provider)
 {
+    bool include_marking = true; // todo (for now)
     CTxDestination address;
+    UniValue marking(UniValue::VOBJ);
 
     out.pushKV("asm", ScriptToAsmStr(script));
     if (include_address) {
@@ -166,6 +282,9 @@ void ScriptToUniv(const CScript& script, UniValue& out, bool include_hex, bool i
         out.pushKV("address", EncodeDestination(address));
     }
     out.pushKV("type", GetTxnOutputType(type));
+
+    if (include_marking && ExtractMarking(script, type, marking))
+	out.pushKV("marking", marking);
 }
 
 void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry, bool include_hex, const CTxUndo* txundo, TxVerbosity verbosity)

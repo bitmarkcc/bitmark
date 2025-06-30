@@ -343,7 +343,7 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	    pubkeyH.push_back(0x10);
 	    pubkeyH.push_back(lenHashType);
 	}
-	else {
+	else if (lenHashType) {
 	    pubkeyH.push_back(0x10+lenHashType);
 	}
 	for (int i=0; i<lenHashType; i++) {
@@ -364,16 +364,16 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	}
     }
     
-    unsigned int lenLinkHost = mark.linkHost.size();
+    size_t lenLinkHost = mark.linkHost.size();
     if (lenLinkHost) {
 	pubkeyL.push_back(6);
 	pubkeyL.push_back('l');
-	int lenLinkProtocol = mark.linkProtocol.size();
+	size_t lenLinkProtocol = mark.linkProtocol.size();
 	if (lenLinkProtocol > 15) {
 	    pubkeyL.push_back(0x10);
 	    pubkeyL.push_back(lenLinkProtocol);
 	}
-	else {
+	else if (lenLinkProtocol) {
 	    pubkeyL.push_back(0x10+lenLinkProtocol);
 	}
 	for (int i=0; i<lenLinkProtocol; i++) {
@@ -381,7 +381,7 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	}
 	if (lenLinkHost > 15) {
 	    pubkeyL.push_back(0x20);
-		    pubkeyL.push_back(lenLinkHost);
+	    pubkeyL.push_back(lenLinkHost);
 	}
 	else {
 	    pubkeyL.push_back(0x20+lenLinkHost);
@@ -389,30 +389,30 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	for (int i=0; i<lenLinkHost; i++) {
 	    pubkeyL.push_back(mark.linkHost[i]);
 	}
-	int lenLinkPort = mark.linkPort.size();
+	size_t lenLinkPort = mark.linkPort.size();
 	if (lenLinkPort > 15) {
 	    pubkeyL.push_back(0x30);
 	    pubkeyL.push_back(lenLinkPort);
 	}
-	else {
+	else if (lenLinkPort) {
 	    pubkeyL.push_back(0x30+lenLinkPort);
 	}
 	for (int i=0; i<lenLinkPort; i++) {
 	    pubkeyL.push_back(mark.linkPort[i]);
 	}
-	/*int lenLinkPath = mark.linkPath.size();
-	  if (lenLinkPath > 15) {
-	  pubkeyL.push_back(0x40);
-	  pubkeyL.push_back(lenLinkPath);
-	  }
-	  else {
-	  pubkeyL.push_back(0x40+lenLinkPath);
-	  }
-	  for (int i=0; i<lenLinkPath; i++) {
-	  pubkeyL.push_back(mark.linkPath[i]);
-	  }*/
-	int lenLinkCertHashType = mark.linkCertHashType.size();
-	if (lenLinkCertHashType > 0) {
+	size_t lenLinkPath = mark.linkPath.size();
+	if (lenLinkPath > 15) {
+	    pubkeyL.push_back(0x40);
+	    pubkeyL.push_back(lenLinkPath);
+	}
+	else if (lenLinkPath) {
+	    pubkeyL.push_back(0x40+lenLinkPath);
+	}
+	for (int i=0; i<lenLinkPath; i++) {
+	    pubkeyL.push_back(mark.linkPath[i]);
+	}
+	size_t lenLinkCertHashType = mark.linkCertHashType.size();
+	if (lenLinkCertHashType) {
 	    if (lenLinkCertHashType > 15) {
 		pubkeyL.push_back(0x50);
 		pubkeyL.push_back(lenLinkCertHashType);
@@ -423,9 +423,9 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	    for (int i=0; i<lenLinkCertHashType; i++) {
 		pubkeyL.push_back(mark.linkCertHashType[i]);
 	    }
-		  }
-	int lenLinkCertHashHex = mark.linkCertHashHex.size();
-	if (lenLinkCertHashHex > 0) {
+	}
+	size_t lenLinkCertHashHex = mark.linkCertHashHex.size();
+	if (lenLinkCertHashHex) {
 	    if (lenLinkCertHashHex > 15) {
 		pubkeyL.push_back(0x60);
 		pubkeyL.push_back(lenLinkCertHashHex);
@@ -442,16 +442,16 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	}
     }
 
-    unsigned int lenDescText = mark.descText.size();
+    size_t lenDescText = mark.descText.size();
     if (lenDescText) {
 	pubkeyD.push_back(6);
 	pubkeyD.push_back('d');
-	unsigned int lenDescLang = mark.descLang.size();
+	size_t lenDescLang = mark.descLang.size();
 	if (lenDescLang > 15) {
 	    pubkeyD.push_back(0x10);
 	    pubkeyD.push_back(lenDescLang);
 	}
-	else if (lenDescLang > 0) {
+	else if (lenDescLang) {
 	    pubkeyD.push_back(0x10+lenDescLang);
 	}
 	for (int i=0; i<lenDescLang; i++) {
@@ -471,7 +471,7 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	    pubkeyD.push_back(0);
 	}
     }
-
+    
     unsigned int lenKeyHex = mark.keyHex.size();
     if (lenKeyHex==32) {
 	pubkeyK.push_back(2); // (I think) prefix 02 is assumed for nostr
@@ -582,12 +582,7 @@ RPCHelpMan mark()
     const UniValue& keyval = marking.find_value("key");
     if (keyval.isObject())
 	keyHex = keyval.find_value("hex").get_str();
-    
-    pwallet->WalletLogPrintf("fee %lld\n",fee);
-    pwallet->WalletLogPrintf("hashType %s hashHex %s \n",hashType,hashHex);
-    pwallet->WalletLogPrintf("linkProcotol %s linkHost %s linkPort %s linkPath %s linkCertHashType %s linkCertHashHex %s\n",linkProtocol,linkHost,linkPort,linkPath,linkCertHashType,linkCertHashHex);
-    pwallet->WalletLogPrintf("keyHex %s\n",keyHex);
-    
+        
     if (!IsBase38(hashType))
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("hashType must be in base38"));
     if (hashHex.size() && !IsHex(hashHex))
@@ -622,7 +617,7 @@ RPCHelpMan mark()
     mark.hashHex = vHashHex;
 
     std::vector<uchar> vLinkProtocol;
-    if (hashType.size() && !DecodeBase38(linkProtocol,vLinkProtocol,128))
+    if (linkProtocol.size() && !DecodeBase38(linkProtocol,vLinkProtocol,128))
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode link protocol"));
     mark.linkProtocol = vLinkProtocol;
 
@@ -632,7 +627,7 @@ RPCHelpMan mark()
     mark.linkHost = vLinkHost;
     
     std::vector<uchar> vLinkPort;
-    if (linkHost.size() && !DecodeBase38(linkPort,vLinkPort,128))
+    if (linkPort.size() && !DecodeBase38(linkPort,vLinkPort,128))
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode link port"));
     mark.linkPort = vLinkPort;
 
@@ -642,7 +637,7 @@ RPCHelpMan mark()
     mark.linkPath = vLinkPath;
 
     std::vector<uchar> vLinkCertHashType;
-    if (linkHost.size() && !DecodeBase38(linkCertHashType,vLinkCertHashType,128))
+    if (linkCertHashType.size() && !DecodeBase38(linkCertHashType,vLinkCertHashType,128))
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode link cert hash type"));
     mark.linkCertHashType = vLinkCertHashType;
 
@@ -668,6 +663,12 @@ RPCHelpMan mark()
 
     mark.fee = fee;
 
+    pwallet->WalletLogPrintf("fee %lld\n",fee);
+    pwallet->WalletLogPrintf("hashType %s (%u) hashHex %s (%u)\n",hashType,mark.hashType.size(),hashHex,mark.hashHex.size());
+    pwallet->WalletLogPrintf("linkProtocol %s (%u) linkHost %s (%u) linkPort %s (%u) linkPath %s (%u) linkCertHashType %s (%u) linkCertHashHex %s (%u)\n",linkProtocol,mark.linkProtocol.size(),linkHost,mark.linkHost.size(),linkPort,mark.linkPort.size(),linkPath,mark.linkPath.size(),linkCertHashType,mark.linkCertHashType.size(),linkCertHashHex,mark.linkCertHashHex.size());
+    pwallet->WalletLogPrintf("descLang %s (%u) descText %s (%u)\n",descLang,mark.descLang.size(),descText,mark.descText.size());
+    pwallet->WalletLogPrintf("keyHex %s\n",keyHex);
+    
     CCoinControl coin_control;
     coin_control.m_change_type = OutputType::LEGACY;
 
