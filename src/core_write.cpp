@@ -255,7 +255,7 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 	    }
 	    iPK++;
 	}
-	marking.pushKV("weight",1);
+	//marking.pushKV("weight",1);
 	return true;
     }
     return false;
