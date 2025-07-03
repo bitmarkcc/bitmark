@@ -443,7 +443,7 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
     }
 
     size_t lenDescText = mark.descText.size();
-    if (lenDescText) {
+    if (lenDescText || pubkeyH.size() && !pubkeyL.size() || pubkeyL.size() && !pubkeyH.size()) {
 	pubkeyD.push_back(6);
 	pubkeyD.push_back('d');
 	size_t lenDescLang = mark.descLang.size();
@@ -461,7 +461,7 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	    pubkeyD.push_back(0x20);
 	    pubkeyD.push_back(lenDescText);
 	}
-	else {
+	else if (lenDescText) {
 	    pubkeyD.push_back(0x20+lenDescText);
 	}
 	for (int i=0; i<lenDescText; i++) {
@@ -711,15 +711,14 @@ RPCHelpMan mark()
 	descKey = spendKey;
     }    
     CScript scriptHash;
-    if (pubkeyH.size() && pubkeyL.size()) {
+    if (pubkeyH.size() && pubkeyL.size())
 	scriptHash = CScript() << OP_1 << hashKey << linkKey << descKey << OP_3 << OP_CHECKMULTISIG;
-    }
-    else if (pubkeyH.size() && pubkeyD.size()) {
+    else if (pubkeyH.size() && pubkeyD.size())
 	scriptHash = CScript() << OP_1 << hashKey << descKey << linkKey << OP_3 << OP_CHECKMULTISIG;
-    }
-    else if (pubkeyL.size() && pubkeyD.size()) {
+    else if (pubkeyL.size() && pubkeyD.size())
 	scriptHash = CScript() << OP_1 << linkKey << descKey << hashKey << OP_3 << OP_CHECKMULTISIG;
-    }
+    else
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Two types of metadata are needed to associate together"));
     
     CTxDestination destination{CNoDestination{scriptHash}};
     CAmount amount{10000};
