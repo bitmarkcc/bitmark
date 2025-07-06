@@ -9,6 +9,7 @@
 
 #include <chain.h>
 #include <chainparams.h>
+#include <common/args.h>
 #include <common/system.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
@@ -19,6 +20,7 @@
 #include <deploymentinfo.h>
 #include <deploymentstatus.h>
 #include <key_io.h>
+#include <logging.h>
 #include <net.h>
 #include <node/context.h>
 #include <node/miner.h>
@@ -52,6 +54,7 @@ using node::UpdateTime;
 
 Algo miningAlgo = Algo::SCRYPT;
 Algo miningAlgoGBT = miningAlgo;
+Algo miningAlgoGAB = miningAlgo;
 
 /**
  * Return average network hashes per second based on the last 'lookup' blocks,
@@ -1150,6 +1153,154 @@ static RPCHelpMan submitheader()
     };
 }
 
+static RPCHelpMan getauxblock()
+{
+    return RPCHelpMan{"getauxblock",
+	"\nCreate or submit a merged-mined block. If no arguments are given, a block is created using the default mining algo (miningAlgo). If 2 arguments are given, the block is submitted with those arguments. If 3 arguments are given, the first two are ignored and 3rd argument (mining algo) is used for create the block.",
+	{
+	    {"hash", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "hash of the block to submit"},
+	    {"auxpow", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "serialised auxpow found"},
+	    {"algo", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "mining algo for creating the block"},
+	},
+	{
+	    RPCResult{"for 0 or 1 arguments", RPCResult::Type::OBJ, "", "",
+		      {
+			  {RPCResult::Type::STR_HEX, "hash", "hash of the created block"},
+			  {RPCResult::Type::NUM, "chainid", "chain ID for this block"},
+			  {RPCResult::Type::STR_HEX, "previousblockhash", "hash of the previous block"},
+			  {RPCResult::Type::NUM, "coinbasevalue", "value of the block's coinbase"},
+			  {RPCResult::Type::STR, "address", "address for coinbase output"},
+			  {RPCResult::Type::STR, "bits", "compressed target of the block"},
+			  {RPCResult::Type::NUM, "height", "height of the block"},
+			  {RPCResult::Type::STR, "target", "target in reversed byte order"},
+			  {RPCResult::Type::NUM, "version", "block version number"},
+			  {RPCResult::Type::NUM, "curtime", "block timestamp"},
+			  {RPCResult::Type::STR, "scriptsig", "scriptSig for coinbase tx"},
+		      },		  
+	    },
+	    RPCResult{"if block was accepted", RPCResult::Type::NONE, "", ""},
+	    RPCResult{"otherwise", RPCResult::Type::STR, "rejected", ""},
+	},
+	RPCExamples{
+	    HelpExampleCli("getauxblock", "") +
+	    HelpExampleRpc("getauxblock", "")
+	},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+	{
+
+	    NodeContext& node = EnsureAnyNodeContext(request.context);
+	    ChainstateManager& chainman = EnsureChainman(node);
+	    Algo miningAlgoChosen = miningAlgo;
+	    
+	    LOCK(cs_main);
+
+	    Chainstate& active_chainstate = chainman.ActiveChainstate();
+	    CChain& active_chain = active_chainstate.m_chain;
+	    static std::map<uint256, CBlock*> mapNewBlock;
+	    
+	    if (request.params.size() == 0 || request.params.size() == 3) {
+		
+		if (request.params.size() == 3)
+		    miningAlgoChosen = static_cast<Algo>(request.params[2].getInt<int>());
+
+		static unsigned int nTransactionsUpdatedLast;
+		const CTxMemPool& mempool = EnsureMemPool(node);
+		
+		const Consensus::Params& consensusParams = chainman.GetParams().GetConsensus();
+		
+		// Update block
+		static CBlockIndex* pindexPrev;
+		static int64_t time_start;
+		static std::unique_ptr<CBlockTemplate> pblocktemplate;
+		const std::string addr_in = gArgs.GetArg("-miningaddress", "");
+		
+		if (pindexPrev != active_chain.Tip() || miningAlgoChosen != miningAlgoGAB ||
+		    (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - time_start > 5))
+		    {
+			if (pindexPrev != active_chain.Tip())
+			    mapNewBlock.clear();
+			
+			// Clear pindexPrev so future calls make a new block, despite any failures from here on
+			pindexPrev = nullptr;
+		    
+			// Store the pindexBest used before CreateNewBlock, to avoid races
+			nTransactionsUpdatedLast = mempool.GetTransactionsUpdated();
+			CBlockIndex* pindexPrevNew = active_chain.Tip();
+			time_start = GetTime();
+
+			CTxDestination dest = DecodeDestination(addr_in);
+			CScript scriptPubKey = GetScriptForDestination(dest);
+			// Create new block
+			//CScript scriptDummy = CScript() << OP_TRUE;
+			pblocktemplate = BlockAssembler{active_chainstate, &mempool}.CreateNewBlock(scriptPubKey,CTransaction::CURRENT_VERSION_BTM, miningAlgoChosen, true);
+			if (!pblocktemplate)
+			    throw JSONRPCError(RPC_OUT_OF_MEMORY, "Out of memory");
+		    
+			// Need to update only after we know CreateNewBlock succeeded
+			pindexPrev = pindexPrevNew;
+			CBlock* pblock = &pblocktemplate->block;
+			pblock->SetAuxpow(true);
+			pblock->SetChainId(consensusParams.nAuxpowChainId);
+			//mapNewBlock[pblock->GetHash()] = pblock;
+			miningAlgoGAB = miningAlgoChosen;
+		    }
+		CHECK_NONFATAL(pindexPrev);
+		CBlock* pblock = &pblocktemplate->block;
+
+		UpdateTime(pblock, consensusParams, pindexPrev);
+		pblock->nNonce = 0;
+
+		mapNewBlock[pblock->GetHash()] = pblock;
+
+		UniValue result(UniValue::VOBJ);
+		result.pushKV("hash",pblock->GetHash().GetHex());
+		result.pushKV("chainid",pblock->GetChainId());
+		result.pushKV("previousblockhash",pblock->hashPrevBlock.GetHex());
+		result.pushKV("coinbasevalue",pblock->vtx[0]->vout[0].nValue);
+		result.pushKV("address",addr_in);
+		result.pushKV("bits",strprintf("%08x",pblock->nBits));
+		result.pushKV("height",pindexPrev->nHeight+1);
+		arith_uint256 hashTarget = arith_uint256().SetCompact(pblock->nBits);
+		result.pushKV("target",hashTarget.GetHex());
+		result.pushKV("version",pblock->nVersion);
+		result.pushKV("curtime",pblock->nTime);
+		result.pushKV("scriptsig",HexStr(pblock->vtx[0]->vin[0].scriptSig));
+		return result;
+	    }
+
+	    uint256 hash;
+	    hash.SetHex(request.params[0].get_str());
+	    const std::map<uint256, CBlock*>::iterator mit = mapNewBlock.find(hash);
+	    if (mit == mapNewBlock.end())
+		throw JSONRPCError(RPC_INVALID_PARAMETER,strprintf("block hash unknown. Size of map %u\n",mapNewBlock.size()));
+	    CBlock& block = *mit->second;
+	    std::shared_ptr<CBlock> blockptr = std::make_shared<CBlock>(block);
+	    
+	    const std::vector<unsigned char> vchAuxpow = ParseHex(request.params[1].get_str());
+	    DataStream ss(vchAuxpow);
+	    CAuxPow pow;
+	    if (block.GetAlgo() == Algo::EQUIHASH || block.GetAlgo() == Algo::CRYPTONIGHT)
+		pow.vector_format = true;
+	    if (block.GetAlgo() == Algo::CRYPTONIGHT) {
+		pow.parentBlock.vector_format = true;
+		pow.keccak_hash = true;
+	    }
+	    pow.parentBlock.algoParent = block.GetAlgo();
+	    pow.parentBlock.isParent = true;
+	    ss >> TX_NO_WITNESS(pow);
+	    block.SetAuxpow(new CAuxPow(pow));
+	    assert(block.GetHash() == hash);
+
+	    bool new_block;
+	    bool accepted = chainman.ProcessNewBlock(blockptr, /*force_processing=*/true, /*min_pow_checked=*/true, /*new_block=*/&new_block);
+	    if (!accepted)
+		return "rejected";
+	    
+	    return UniValue::VNULL;
+	},
+    };
+}
+
 void RegisterMiningRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -1162,6 +1313,7 @@ void RegisterMiningRPCCommands(CRPCTable& t)
         {"mining", &getblocktemplate},
         {"mining", &submitblock},
         {"mining", &submitheader},
+	{"mining", &getauxblock},
 
         {"hidden", &generatetoaddress},
         {"hidden", &generatetodescriptor},

@@ -320,6 +320,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "chaindynamics", 0, "height"},
     { "chaindynamics", 1, "giga"},
     { "mark", 0, "marking"},
+    { "getauxblock", 2, "algo"},
 };
 // clang-format on
 
