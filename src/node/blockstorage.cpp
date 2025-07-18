@@ -235,7 +235,7 @@ CBlockIndex* BlockManager::AddToBlockIndex(const CBlockHeader& block, CBlockInde
     pindexNew->nTimeMax = (pindexNew->pprev ? std::max(pindexNew->pprev->nTimeMax, pindexNew->nTime) : pindexNew->nTime);
     pindexNew->nChainWork = (pindexNew->pprev ? pindexNew->pprev->nChainWork : 0) + GetBlockProof(*pindexNew);
     if (block.IsAuxpow()) {
-	printf("block.IsAuxpow() hash %s\n",block.GetHash().ToString().c_str());
+	//printf("block.IsAuxpow() hash %s\n",block.GetHash().ToString().c_str());
         pindexNew->pauxpow = block.auxpow;
         assert(NULL != pindexNew->pauxpow.get());
     }
