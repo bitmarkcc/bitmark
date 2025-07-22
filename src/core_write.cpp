@@ -5,6 +5,7 @@
 #include <core_io.h>
 
 #include <base38.h>
+#include <base82.h>
 #include <common/system.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
@@ -241,7 +242,10 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 		    }
 		    ipk += d11Len;
 		    std::string sd11value;
-		    if (d11name.find("hex") == std::string::npos) {
+		    if (d11name.find("link path") != std::string::npos) {
+			sd11value = EncodeBase82(d11value);
+		    }
+		    else if (d11name.find("hex") == std::string::npos) {
 			sd11value = EncodeBase38(d11value);
 		    }
 		    else {

@@ -125,6 +125,7 @@ BITCOIN_CORE_H = \
   banman.h \
   base38.h \
   base58.h \
+  base82.h \
   bech32.h \
   bip324.h \
   blockencodings.h \
@@ -720,6 +721,7 @@ libbitcoin_common_a_SOURCES = \
   addresstype.cpp \
   base38.cpp \
   base58.cpp \
+  base82.cpp \
   bech32.cpp \
   chainparams.cpp \
   coins.cpp \

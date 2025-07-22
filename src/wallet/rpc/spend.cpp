@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <base38.h>
+#include <base82.h>
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <key_io.h>
@@ -593,8 +594,8 @@ RPCHelpMan mark()
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkHost must be in base38"));
     if (!IsBase38(linkPort))
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkPort must be in base38"));
-    if (!IsBase38(linkPath))
-	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkPath must be in base38"));
+    if (!IsBase82(linkPath))
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkPath must be in base82"));
     if (!IsBase38(linkCertHashType))
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("linkCertHashType must be in base38"));
     if (linkCertHashHex.size() && !IsHex(linkCertHashHex))
@@ -632,7 +633,7 @@ RPCHelpMan mark()
     mark.linkPort = vLinkPort;
 
     std::vector<uchar> vLinkPath;
-    if (linkPath.size() && !DecodeBase38(linkPath,vLinkPath,128))
+    if (linkPath.size() && !DecodeBase82(linkPath,vLinkPath,128))
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("can't decode link path"));
     mark.linkPath = vLinkPath;
 

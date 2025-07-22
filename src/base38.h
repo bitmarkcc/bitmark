@@ -14,7 +14,7 @@
 bool IsBase38(const std::string str);
 
 /**
- * Encode a byte span as a base58-encoded string
+ * Encode a byte span as a base38-encoded string
  */
 std::string EncodeBase38(Span<const unsigned char> input);
 
@@ -30,7 +30,7 @@ std::string EncodeBase38(Span<const unsigned char> input);
 std::string EncodeBase38Check(Span<const unsigned char> input);
 
 /**
- * Decode a base58-encoded string (str) that includes a checksum into a byte
+ * Decode a base38-encoded string (str) that includes a checksum into a byte
  * vector (vchRet), return true if decoding is successful
  */
 [[nodiscard]] bool DecodeBase38Check(const std::string& str, std::vector<unsigned char>& vchRet, int max_ret_len);
