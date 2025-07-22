@@ -674,7 +674,7 @@ smix1(uint8_t * B, size_t r, uint32_t N, yescrypt_flags_t flags,
     salsa20_blk_t * V, uint32_t NROM, const yescrypt_shared_t * shared,
     salsa20_blk_t * XY, void * S)
 {
-	const salsa20_blk_t * VROM = shared->shared1.aligned;
+    const salsa20_blk_t * VROM = (salsa20_blk_t*)shared->shared1.aligned;
 	uint32_t VROM_mask = shared->mask1;
 	size_t s = 2 * r;
 	salsa20_blk_t * X = V, * Y;
@@ -892,7 +892,7 @@ smix2(uint8_t * B, size_t r, uint32_t N, uint64_t Nloop,
     yescrypt_flags_t flags, salsa20_blk_t * V, uint32_t NROM,
     const yescrypt_shared_t * shared, salsa20_blk_t * XY, void * S)
 {
-	const salsa20_blk_t * VROM = shared->shared1.aligned;
+    const salsa20_blk_t * VROM = (salsa20_blk_t*)shared->shared1.aligned;
 	uint32_t VROM_mask = shared->mask1;
 	size_t s = 2 * r;
 	salsa20_blk_t * X = XY, * Y = &XY[s];
