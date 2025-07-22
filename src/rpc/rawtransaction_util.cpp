@@ -146,6 +146,7 @@ void AddOutputs(CMutableTransaction& rawTx, const UniValue& outputs_in)
 CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniValue& outputs_in, const UniValue& locktime, std::optional<bool> rbf)
 {
     CMutableTransaction rawTx;
+    rawTx.nVersion = 1; // todo make this more general for the future where tx version may be larger
 
     if (!locktime.isNull()) {
         int64_t nLockTime = locktime.getInt<int64_t>();

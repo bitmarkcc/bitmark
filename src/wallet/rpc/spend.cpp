@@ -474,7 +474,7 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
     }
     
     unsigned int lenKeyHex = mark.keyHex.size();
-    if (lenKeyHex==32) {
+    if (lenKeyHex==32) { // nostr public key
 	pubkeyK.push_back(2); // (I think) prefix 02 is assumed for nostr
 	for (int i=0; i<lenKeyHex; i++) {
 	    pubkeyK.push_back(mark.keyHex[i]);
@@ -482,6 +482,10 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	while (pubkeyK.size()<33) {
 	    pubkeyH.push_back(0);
 	}
+    }
+    else if (lenKeyHex==33) { // compressed public key
+      for (int i=0; i<lenKeyHex; i++)
+	pubkeyK.push_back(mark.keyHex[i]);
     }
 }
 
@@ -678,9 +682,10 @@ RPCHelpMan mark()
     CKey key;
     key.MakeNewKey(false);
     CPubKey spendKey = key.GetPubKey();
-    pwallet->WalletLogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),EncodeSecret(key));
     std::vector<uchar> pubkeyH, pubkeyL, pubkeyD, pubkeyK;
     MarkPubKeysHLDK(pubkeyH,pubkeyL,pubkeyD,pubkeyK,mark);
+    if (!pubkeyK.size())
+      pwallet->WalletLogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),EncodeSecret(key));
     CPubKey hashKey;
     CPubKey linkKey;
     CPubKey descKey;
