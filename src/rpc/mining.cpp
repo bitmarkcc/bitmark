@@ -1239,6 +1239,7 @@ static RPCHelpMan getauxblock()
 			// Need to update only after we know CreateNewBlock succeeded
 			pindexPrev = pindexPrevNew;
 			CBlock* pblock = &pblocktemplate->block;
+			pblock->hashMerkleRoot = BlockMerkleRoot(pblocktemplate->block);
 			pblock->SetAuxpow(true);
 			pblock->SetChainId(consensusParams.nAuxpowChainId);
 			//mapNewBlock[pblock->GetHash()] = pblock;
@@ -1279,16 +1280,17 @@ static RPCHelpMan getauxblock()
 	    const std::vector<unsigned char> vchAuxpow = ParseHex(request.params[1].get_str());
 	    DataStream ss(vchAuxpow);
 	    CAuxPow pow;
-	    if (block.GetAlgo() == Algo::EQUIHASH || block.GetAlgo() == Algo::CRYPTONIGHT)
+	    if (blockptr->GetAlgo() == Algo::EQUIHASH || blockptr->GetAlgo() == Algo::CRYPTONIGHT)
 		pow.vector_format = true;
-	    if (block.GetAlgo() == Algo::CRYPTONIGHT) {
+	    if (blockptr->GetAlgo() == Algo::CRYPTONIGHT) {
 		pow.parentBlock.vector_format = true;
 		pow.keccak_hash = true;
 	    }
-	    pow.parentBlock.algoParent = block.GetAlgo();
+	    pow.parentBlock.algoParent = blockptr->GetAlgo();
 	    pow.parentBlock.isParent = true;
 	    ss >> TX_NO_WITNESS(pow);
-	    block.SetAuxpow(new CAuxPow(pow));
+	    blockptr->auxpow = std::make_shared<CAuxPow>(pow);
+	    blockptr->SetAuxpow(true);
 	    assert(block.GetHash() == hash);
 
 	    bool new_block;
