@@ -1276,6 +1276,12 @@ fi
 
 AC_CHECK_HEADER([openssl/bn.h],,AC_MSG_ERROR(openssl/bn.h header missing))
 AC_CHECK_LIB([crypto],      [main],, AC_MSG_ERROR(libcrypto missing))
+case $host in
+  *mingw*)
+    AC_CHECK_LIB([crypt32], [CertFindCertificateInStore],,AC_MSG_ERROR(libcrypt32 missing))
+  ;;
+esac
+  
 
 AC_CHECK_HEADER([boost/multiprecision/cpp_int.hpp],,AC_MSG_ERROR(boost multiprecision headers missing))
 AC_CHECK_LIB([sodium], [crypto_generichash_blake2b_update],, AC_MSG_ERROR(libsodium missing))
