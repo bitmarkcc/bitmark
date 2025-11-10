@@ -366,7 +366,8 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
     }
     
     size_t lenLinkHost = mark.linkHost.size();
-    if (lenLinkHost) {
+    size_t lenLinkCertHashHex = mark.linkCertHashHex.size();
+    if (lenLinkHost || lenLinkCertHashHex) {
 	pubkeyL.push_back(6);
 	pubkeyL.push_back('l');
 	size_t lenLinkProtocol = mark.linkProtocol.size();
@@ -384,7 +385,7 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	    pubkeyL.push_back(0x20);
 	    pubkeyL.push_back(lenLinkHost);
 	}
-	else {
+	else if (lenLinkHost) {
 	    pubkeyL.push_back(0x20+lenLinkHost);
 	}
 	for (int i=0; i<lenLinkHost; i++) {
@@ -425,7 +426,6 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 		pubkeyL.push_back(mark.linkCertHashType[i]);
 	    }
 	}
-	size_t lenLinkCertHashHex = mark.linkCertHashHex.size();
 	if (lenLinkCertHashHex) {
 	    if (lenLinkCertHashHex > 15) {
 		pubkeyL.push_back(0x60);
@@ -684,6 +684,8 @@ RPCHelpMan mark()
     CPubKey spendKey = key.GetPubKey();
     std::vector<uchar> pubkeyH, pubkeyL, pubkeyD, pubkeyK;
     MarkPubKeysHLDK(pubkeyH,pubkeyL,pubkeyD,pubkeyK,mark);
+    if (pubkeyH.size()>65 || pubkeyL.size()>65 || pubkeyD.size()>65)
+	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("each pubkey size must be at most 65 bytes"));
     if (!pubkeyK.size())
       pwallet->WalletLogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),EncodeSecret(key));
     CPubKey hashKey;
