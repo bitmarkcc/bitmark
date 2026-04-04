@@ -750,7 +750,7 @@ static RPCHelpMan getblockspacing()
 	{
 	    {"algo", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the mining algo (SCRYPT default)"},
 	    {"interval", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the averaging interval (25 block default)"},
-	    {"height", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "the block height (tip by default)"},
+	    {"height", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the block height (tip by default)"},
 	},
 	RPCResult{
 	    RPCResult::Type::OBJ, "", "", {
