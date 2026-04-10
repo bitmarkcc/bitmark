@@ -62,7 +62,7 @@ Algo miningAlgoGAB = miningAlgo;
  * If 'height' is -1, compute the estimate from current chain tip.
  * If 'height' is a valid block height, compute the estimate at the time when a given block was found.
  */
-static UniValue GetNetworkHashPS(int lookup, int height, const CChain& active_chain) {
+static UniValue GetNetworkHashPS(int lookup, int height, const CChain& active_chain, Algo algo) {
     if (lookup < -1 || lookup == 0) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid nblocks. Must be a positive number or -1.");
     }
@@ -89,23 +89,35 @@ static UniValue GetNetworkHashPS(int lookup, int height, const CChain& active_ch
         lookup = pb->nHeight;
 
     const CBlockIndex* pb0 = pb;
+    Algo algoTip = pb0->GetAlgo();
+    if (algoTip != algo)
+	pb0 = CBlockIndex::GetPrevAlgoBlockIndex(pb0,algo);
+    if (!pb0) return 0;
     int64_t minTime = pb0->GetBlockTime();
     int64_t maxTime = minTime;
+    CBigNum hashes_bn = pb0->GetBlockWork();
     for (int i = 0; i < lookup; i++) {
         pb0 = pb0->pprev;
+	if (!pb0) break;
+	if (pb0->GetAlgo() != algo) {
+	    lookup++;
+	    continue;
+	}
         int64_t time = pb0->GetBlockTime();
         minTime = std::min(time, minTime);
         maxTime = std::max(time, maxTime);
+	hashes_bn += pb0->GetBlockWork();
     }
 
     // In case there's a situation where minTime == maxTime, we don't want a divide by zero exception.
     if (minTime == maxTime)
         return 0;
 
-    arith_uint256 workDiff = pb->nChainWork - pb0->nChainWork;
+    //arith_uint256 workDiff = pb->nChainWork - pb0->nChainWork;
     int64_t timeDiff = maxTime - minTime;
 
-    return workDiff.getdouble() / timeDiff;
+    //return workDiff.getdouble() / timeDiff;
+    return ((hashes_bn.getuint256().getdouble())/((double)timeDiff));
 }
 
 static RPCHelpMan getnetworkhashps()
@@ -117,6 +129,7 @@ static RPCHelpMan getnetworkhashps()
                 {
                     {"nblocks", RPCArg::Type::NUM, RPCArg::Default{120}, "The number of previous blocks to calculate estimate from, or -1 for blocks since last difficulty change."},
                     {"height", RPCArg::Type::NUM, RPCArg::Default{-1}, "To estimate at the time of the given height."},
+		    {"algo", RPCArg::Type::NUM, RPCArg::Default{(int)miningAlgo}, "Mining algo"}
                 },
                 RPCResult{
                     RPCResult::Type::NUM, "", "Hashes per second estimated"},
@@ -128,7 +141,7 @@ static RPCHelpMan getnetworkhashps()
 {
     ChainstateManager& chainman = EnsureAnyChainman(request.context);
     LOCK(cs_main);
-    return GetNetworkHashPS(self.Arg<int>(0), self.Arg<int>(1), chainman.ActiveChain());
+    return GetNetworkHashPS(self.Arg<int>(0), self.Arg<int>(1), chainman.ActiveChain(), static_cast<Algo>(self.Arg<int>(2)));
 },
     };
 }
