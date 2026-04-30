@@ -699,10 +699,9 @@ template<unsigned int N, unsigned int K>
 bool Equihash<N,K>::IsValidSolution(const eh_HashState& base_state, std::vector<unsigned char> soln)
 {
     if (soln.size() != SolutionWidth) {
+	LogPrint(BCLog::VALIDATION,"equihash bad solution size: %lu\n",soln.size());
         return false;
     }
-
-    //LogPrintf("good solution size\n");
 
     std::vector<FullStepRow<FinalFullWidth>> X;
     X.reserve(1 << K);
@@ -719,16 +718,16 @@ bool Equihash<N,K>::IsValidSolution(const eh_HashState& base_state, std::vector<
         std::vector<FullStepRow<FinalFullWidth>> Xc;
         for (int i = 0; i < X.size(); i += 2) {
             if (!HasCollision(X[i], X[i+1], CollisionByteLength)) {
-	      //LogPrintf("!hascollision %d\n",i);
-                return false;
+		LogPrintf(BCLog::VALIDATION,"equihash !hascollision %d\n",i);
+               return false;
             }
             if (X[i+1].IndicesBefore(X[i], hashLen, lenIndices)) {
-	      //LogPrintf("indicesbefore %d\n",i);
-                return false;
+		LogPrintf(BCLog::VALIDATION,"equihash indicesbefore %d\n",i);
+               return false;
             }
             if (!DistinctIndices(X[i], X[i+1], hashLen, lenIndices)) {
-	      //LogPrintf("!distinctindices %d\n",i);
-                return false;
+		LogPrintf(BCLog::VALIDATION,"equihash !distinctindices %d\n",i);
+               return false;
             }
             Xc.emplace_back(X[i], X[i+1], hashLen, lenIndices, CollisionByteLength);
         }

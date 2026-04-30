@@ -69,7 +69,7 @@ struct CompressedHeader {
         ret.nNonce = nNonce;
 
         ret.nNonce256 = nNonce256;
-        ret.nSolution =nSolution;
+        ret.nSolution = nSolution;
         ret.hashReserved = hashReserved;
         ret.isParent = isParent;
         ret.algoParent = algoParent;
