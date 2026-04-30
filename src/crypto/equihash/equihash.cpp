@@ -718,15 +718,15 @@ bool Equihash<N,K>::IsValidSolution(const eh_HashState& base_state, std::vector<
         std::vector<FullStepRow<FinalFullWidth>> Xc;
         for (int i = 0; i < X.size(); i += 2) {
             if (!HasCollision(X[i], X[i+1], CollisionByteLength)) {
-		LogPrintf(BCLog::VALIDATION,"equihash !hascollision %d\n",i);
+		LogPrint(BCLog::VALIDATION,"equihash !hascollision %d\n",i);
                return false;
             }
             if (X[i+1].IndicesBefore(X[i], hashLen, lenIndices)) {
-		LogPrintf(BCLog::VALIDATION,"equihash indicesbefore %d\n",i);
+		LogPrint(BCLog::VALIDATION,"equihash indicesbefore %d\n",i);
                return false;
             }
             if (!DistinctIndices(X[i], X[i+1], hashLen, lenIndices)) {
-		LogPrintf(BCLog::VALIDATION,"equihash !distinctindices %d\n",i);
+		LogPrint(BCLog::VALIDATION,"equihash !distinctindices %d\n",i);
                return false;
             }
             Xc.emplace_back(X[i], X[i+1], hashLen, lenIndices, CollisionByteLength);
