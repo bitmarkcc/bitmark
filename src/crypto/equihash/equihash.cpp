@@ -17,6 +17,7 @@
 //#endif
 
 #include "equihash.h"
+#include <logging.h>
 
 #include <algorithm>
 #include <iostream>
