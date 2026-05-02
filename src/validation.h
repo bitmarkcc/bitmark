@@ -363,6 +363,32 @@ static_assert(std::is_nothrow_move_assignable_v<CScriptCheck>);
 static_assert(std::is_nothrow_move_constructible_v<CScriptCheck>);
 static_assert(std::is_nothrow_destructible_v<CScriptCheck>);
 
+/**
+ * Closure representing one header proof-of-work verification.
+ * Used with CCheckQueue to parallelize header PoW validation during sync.
+ */
+class CHeaderPoWCheck
+{
+private:
+    CBlockHeader m_header;
+    const Consensus::Params* m_params;
+
+public:
+    CHeaderPoWCheck(const CBlockHeader& header, const Consensus::Params& params)
+        : m_header(header), m_params(&params) {}
+
+    CHeaderPoWCheck(const CHeaderPoWCheck&) = delete;
+    CHeaderPoWCheck& operator=(const CHeaderPoWCheck&) = delete;
+    CHeaderPoWCheck(CHeaderPoWCheck&&) = default;
+    CHeaderPoWCheck& operator=(CHeaderPoWCheck&&) = default;
+
+    bool operator()();
+};
+
+static_assert(std::is_nothrow_move_assignable_v<CHeaderPoWCheck>);
+static_assert(std::is_nothrow_move_constructible_v<CHeaderPoWCheck>);
+static_assert(std::is_nothrow_destructible_v<CHeaderPoWCheck>);
+
 /** Initializes the script-execution cache */
 [[nodiscard]] bool InitScriptExecutionCache(size_t max_size_bytes);
 
@@ -380,8 +406,10 @@ bool TestBlockValidity(BlockValidationState& state,
                        bool fCheckPOW = true,
                        bool fCheckMerkleRoot = true) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
-/** Check with the proof of work on each blockheader matches the value in nBits */
-bool HasValidProofOfWork(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams);
+/** Check that the proof of work on each blockheader matches the value in nBits.
+ *  If a CCheckQueue is provided, header PoW checks are dispatched in parallel. */
+bool HasValidProofOfWork(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams,
+                         CCheckQueue<CHeaderPoWCheck>* pqueue = nullptr);
 
 /** Check if a block has been mutated (with respect to its merkle root and witness commitments). */
 bool IsBlockMutated(const CBlock& block, bool check_witness_root);
@@ -923,6 +951,9 @@ private:
     //! A queue for script verifications that have to be performed by worker threads.
     CCheckQueue<CScriptCheck> m_script_check_queue;
 
+    //! A queue for header PoW verifications that have to be performed by worker threads.
+    CCheckQueue<CHeaderPoWCheck> m_header_pow_check_queue;
+
 public:
     using Options = kernel::ChainstateManagerOpts;
 
@@ -1274,6 +1305,7 @@ public:
     std::optional<int> GetSnapshotBaseHeight() const EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
     CCheckQueue<CScriptCheck>& GetCheckQueue() { return m_script_check_queue; }
+    CCheckQueue<CHeaderPoWCheck>& GetHeaderPoWCheckQueue() { return m_header_pow_check_queue; }
 
     ~ChainstateManager();
 };

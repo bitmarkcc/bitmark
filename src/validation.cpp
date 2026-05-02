@@ -2083,6 +2083,10 @@ bool CScriptCheck::operator()() {
     return VerifyScript(scriptSig, m_tx_out.scriptPubKey, witness, nFlags, CachingTransactionSignatureChecker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata), &error);
 }
 
+bool CHeaderPoWCheck::operator()() {
+    return CheckProofOfWork(m_header, *m_params);
+}
+
 static CuckooCache::cache<uint256, SignatureCacheHasher> g_scriptExecutionCache;
 static CSHA256 g_scriptExecutionCacheHasher;
 
@@ -4160,11 +4164,23 @@ std::vector<unsigned char> ChainstateManager::GenerateCoinbaseCommitment(CBlock&
     return commitment;
 }
 
-bool HasValidProofOfWork(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams)
+bool HasValidProofOfWork(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams,
+                         CCheckQueue<CHeaderPoWCheck>* pqueue)
 {
+    if (pqueue && pqueue->HasThreads()) {
+        CCheckQueueControl<CHeaderPoWCheck> control(pqueue);
+        std::vector<CHeaderPoWCheck> vChecks;
+        vChecks.reserve(headers.size());
+        for (const auto& header : headers) {
+            vChecks.emplace_back(header, consensusParams);
+        }
+        control.Add(std::move(vChecks));
+        return control.Wait();
+    }
+
     return std::all_of(headers.cbegin(), headers.cend(),
                        [&](const auto& header) {
-			 return CheckProofOfWork(header, consensusParams);
+                         return CheckProofOfWork(header, consensusParams);
     });
 }
 
@@ -6214,6 +6230,7 @@ static ChainstateManager::Options&& Flatten(ChainstateManager::Options&& opts)
 
 ChainstateManager::ChainstateManager(const util::SignalInterrupt& interrupt, Options options, node::BlockManager::Options blockman_options)
     : m_script_check_queue{/*batch_size=*/128, options.worker_threads_num},
+      m_header_pow_check_queue{/*batch_size=*/16, options.worker_threads_num},
       m_interrupt{interrupt},
       m_options{Flatten(std::move(options))},
       m_blockman{interrupt, std::move(blockman_options)}
