@@ -393,7 +393,7 @@ UniValue blockheaderToJSON(const CBlockIndex& tip, const CBlockIndex& blockindex
     if (blockindex.nVersion & (1<<8)) { // auxpow
 	result.pushKV("parentblockhash",blockindex.pauxpow->parentBlock.GetHash().GetHex());
 	result.pushKV("parentblockpowhash",blockindex.pauxpow->parentBlock.GetPoWHash().GetHex());
-	if (blockindex.nVersion & (7<<9) != (7<<9)) // not cryptonight
+	if ((blockindex.nVersion & (7<<9)) != (7<<9)) // not cryptonight
 	    result.pushKV("parentblockprevhash",blockindex.pauxpow->parentBlock.hashPrevBlock.GetHex());
     }
     const CBlockIndex* pnext;
