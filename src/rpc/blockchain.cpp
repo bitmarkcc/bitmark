@@ -389,6 +389,11 @@ UniValue blockheaderToJSON(const CBlockIndex& tip, const CBlockIndex& blockindex
 
     UniValue result(UniValue::VOBJ);
     result.pushKV("hash", blockindex.GetBlockHash().GetHex());
+    result.pushKV("powhash",blockindex.GetBlockPoWHash().GetHex());
+    if (blockindex.nVersion & (1<<8)) { // auxpow
+	result.pushKV("parentblockhash",blockindex.pauxpow->parentBlock.GetHash().GetHex());
+	result.pushKV("parentblockpowhash",blockindex.pauxpow->parentBlock.GetPoWHash().GetHex());
+    }
     const CBlockIndex* pnext;
     int confirmations = ComputeNextBlockAndDepth(tip, blockindex, pnext);
     result.pushKV("confirmations", confirmations);
