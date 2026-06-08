@@ -157,25 +157,27 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 	return true;
     }
     else if (type == TxoutType::MULTISIG) {
-	int pk1len = scriptPubKey[1];
 	std::string d1name;
-	char d1code = scriptPubKey[3];
-	int iPK = 0;
-	while (iPK < 2) {
+	size_t iPK = 0;
+	while (iPK < 3) {
 	    int ipk = 0;
 	    int pk1len = scriptPubKey[1+iPK*66];
 	    std::string d1name;
+	    char d1prefix = scriptPubKey[2+iPK*66];
 	    char d1code = scriptPubKey[3+iPK*66];
-	    if (d1code == 'h') {
+	    if (d1code == 'h' && d1prefix == 6) {
 		d1name = "hash";
 	    }
-	    else if (d1code == 'l') {
+	    else if (d1code == 'l' && d1prefix == 6) {
 		d1name = "link";
 	    }
-	    else if (d1code == 'd') {
+	    else if (d1code == 'd' && d1prefix == 6) {
 		d1name = "desc";
 	    }
-	    while (ipk < 65) {
+	    else {
+		d1name = "pubkey";
+	    }
+	    while (d1name.compare("pubkey") && (ipk < 65)) {
 		unsigned char d11Code = scriptPubKey[iPK*66+ipk+4];
 		if (d11Code == 0) {
 		    ipk = 65;
@@ -256,6 +258,13 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 		else {
 		    ipk = 65;
 		}
+	    }
+	    if (!d1name.compare("pubkey")) {
+		std::vector<unsigned char> pubkey;
+		for (size_t j=2+iPK*66; j<pk1len+2+iPK*66; j++) {
+		    pubkey.push_back(scriptPubKey[j]);
+		}
+		marking.pushKV("pubkey",HexStr(pubkey));
 	    }
 	    iPK++;
 	}
