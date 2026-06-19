@@ -481,7 +481,7 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	    pubkeyK.push_back(mark.keyHex[i]);
 	}
 	while (pubkeyK.size()<33) {
-	    pubkeyH.push_back(0);
+	    pubkeyK.push_back(0);
 	}
     }
     else if (lenKeyHex==33) { // compressed public key
@@ -681,7 +681,7 @@ RPCHelpMan mark()
     std::vector<CRecipient> recipients;
 
     CKey key;
-    key.MakeNewKey(false);
+    key.MakeNewKey(true); // compressed: 33-byte spend key saves 32 bytes vs uncompressed in the filler slot
     CPubKey spendKey = key.GetPubKey();
     std::vector<uchar> pubkeyH, pubkeyL, pubkeyD, pubkeyK;
     MarkPubKeysHLDK(pubkeyH,pubkeyL,pubkeyD,pubkeyK,mark);

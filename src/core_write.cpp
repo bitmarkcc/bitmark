@@ -280,7 +280,7 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 		    }
 		}
 	    }
-	    if (d1name.find("pubkey") == 0) {
+	    else if (d1name.find("pubkey") == 0) {
 		std::vector<unsigned char> pubkey;
 		for (size_t j=keyPos+1; j<keyPos+1+pk1len; j++) {
 		    pubkey.push_back(scriptPubKey[j]);
