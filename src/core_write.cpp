@@ -7,6 +7,8 @@
 #include <base38.h>
 #include <base82.h>
 #include <common/system.h>
+#include <crypto/sha256.h>
+#include <crypto/sha512.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <consensus/validation.h>
@@ -159,12 +161,15 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
     else if (type == TxoutType::MULTISIG) {
 	std::string d1name;
 	size_t iPK = 0;
+	size_t nPubkey = 0;
+	size_t nSigkey = 0;
+	size_t keyPos = 1; // byte offset past OP_1
 	while (iPK < 3) {
 	    int ipk = 0;
-	    int pk1len = scriptPubKey[1+iPK*66];
+	    int pk1len = scriptPubKey[keyPos];
 	    std::string d1name;
-	    char d1prefix = scriptPubKey[2+iPK*66];
-	    char d1code = scriptPubKey[3+iPK*66];
+	    char d1prefix = scriptPubKey[keyPos+1];
+	    char d1code = scriptPubKey[keyPos+2];
 	    if (d1code == 'h' && d1prefix == 6) {
 		d1name = "hash";
 	    }
@@ -174,101 +179,146 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 	    else if (d1code == 'd' && d1prefix == 6) {
 		d1name = "desc";
 	    }
-	    else {
-		d1name = "pubkey";
+	    else if (nSigkey == 0 && d1prefix == 7) {
+		d1name = "sig";
+		nSigkey++;
 	    }
-	    while (d1name.compare("pubkey") && (ipk < 65)) {
-		unsigned char d11Code = scriptPubKey[iPK*66+ipk+4];
-		if (d11Code == 0) {
-		    ipk = 65;
-		    continue;
-		}
-		ipk++;
-		unsigned char d11Len = 0;
-		int rem = d11Code % 16;
-		int i = 0;
-		std::string d11name;
-		if (rem == 0) {
-		    while (d11Code > 15)
-			d11Code >>= 4;
-		    d11Len = scriptPubKey[4+ipk+66*iPK];
+	    else if (nSigkey == 1 && (d1prefix == 3 || d1prefix == 7)) {
+		d1name = "sighash";
+		nSigkey++;
+	    }
+	    else {
+		if (nPubkey==2)
+		    d1name = "pubkey3";
+		else if (nPubkey == 1)
+		    d1name = "pubkey2";
+		else
+		    d1name = "pubkey";
+		nPubkey++;
+	    }
+	    if (d1name.find("pubkey") != 0 && d1name.find("sig") != 0) {
+		while (ipk < 65) {
+		    unsigned char d11Code = scriptPubKey[keyPos+3+ipk];
+		    if (d11Code == 0) {
+			ipk = 65;
+			continue;
+		    }
 		    ipk++;
-		    i = 4 + ipk + iPK*66;
-		}
-		else {
-		    while (d11Code > 15)
-			d11Code >>= 4;
-		    d11Len = rem;
-		    i = 4 + ipk + iPK*66;
-		}
-		if (!d1name.compare("hash")) {
-		    if (d11Code == 1) {
-			d11name = "hash type";
-		    }
-		    else if (d11Code == 2) {
-			d11name = "hash hex";
-		    }
-		}
-		else if (!d1name.compare("link")) {
-		    if (d11Code == 1) {
-			d11name = "link protocol";
-		    }
-		    else if (d11Code == 2) {
-			d11name = "link host";
-		    }
-		    else if (d11Code == 3) {
-			d11name = "link port";
-		    }
-		    else if (d11Code == 4) {
-			d11name = "link path";
-		    }
-		    else if (d11Code == 5) {
-			d11name = "link cert hash type";
-		    }
-		    else if (d11Code == 6) {
-			d11name = "link cert hash hex";
-		    }
-		}
-		else if (!d1name.compare("desc")) {
-		    if (d11Code == 1) {
-			d11name = "desc language";
-		    }
-		    else if (d11Code == 2) {
-			d11name = "desc text";
-		    }	    
-		}
-		std::vector<unsigned char> d11value;
-		if (ipk+d11Len<65) {
-		    for (int j=i; j<i+d11Len; j++) {
-			d11value.push_back(scriptPubKey[j]);
-		    }
-		    ipk += d11Len;
-		    std::string sd11value;
-		    if (d11name.find("link path") != std::string::npos) {
-			sd11value = EncodeBase82(d11value);
-		    }
-		    else if (d11name.find("hex") == std::string::npos) {
-			sd11value = EncodeBase38(d11value);
+		    unsigned char d11Len = 0;
+		    int rem = d11Code % 16;
+		    int i = 0;
+		    std::string d11name;
+		    if (rem == 0) {
+			while (d11Code > 15)
+			    d11Code >>= 4;
+			d11Len = scriptPubKey[keyPos+3+ipk];
+			ipk++;
+			i = keyPos + 3 + ipk;
 		    }
 		    else {
-			sd11value = HexStr(d11value);
+			while (d11Code > 15)
+			    d11Code >>= 4;
+			d11Len = rem;
+			i = keyPos + 3 + ipk;
 		    }
-		    marking.pushKV(d11name,sd11value);
-		}
-		else {
-		    ipk = 65;
+		    if (!d1name.compare("hash")) {
+			if (d11Code == 1) {
+			    d11name = "hash type";
+			}
+			else if (d11Code == 2) {
+			    d11name = "hash hex";
+			}
+		    }
+		    else if (!d1name.compare("link")) {
+			if (d11Code == 1) {
+			    d11name = "link protocol";
+			}
+			else if (d11Code == 2) {
+			    d11name = "link host";
+			}
+			else if (d11Code == 3) {
+			    d11name = "link port";
+			}
+			else if (d11Code == 4) {
+			    d11name = "link path";
+			}
+			else if (d11Code == 5) {
+			    d11name = "link cert hash type";
+			}
+			else if (d11Code == 6) {
+			    d11name = "link cert hash hex";
+			}
+		    }
+		    else if (!d1name.compare("desc")) {
+			if (d11Code == 1) {
+			    d11name = "desc language";
+			}
+			else if (d11Code == 2) {
+			    d11name = "desc text";
+			}	    
+		    }
+		    std::vector<unsigned char> d11value;
+		    if (ipk+d11Len<65) {
+			for (int j=i; j<i+d11Len; j++) {
+			    d11value.push_back(scriptPubKey[j]);
+			}
+			ipk += d11Len;
+			std::string sd11value;
+			if (d11name.find("link path") != std::string::npos) {
+			    sd11value = EncodeBase82(d11value);
+			}
+			else if (d11name.find("hex") == std::string::npos) {
+			    sd11value = EncodeBase38(d11value);
+			}
+			else {
+			    sd11value = HexStr(d11value);
+			}
+			marking.pushKV(d11name,sd11value);
+		    }
+		    else {
+			ipk = 65;
+		    }
 		}
 	    }
-	    if (!d1name.compare("pubkey")) {
+	    if (d1name.find("pubkey") == 0) {
 		std::vector<unsigned char> pubkey;
-		for (size_t j=2+iPK*66; j<pk1len+2+iPK*66; j++) {
+		for (size_t j=keyPos+1; j<keyPos+1+pk1len; j++) {
 		    pubkey.push_back(scriptPubKey[j]);
 		}
-		marking.pushKV("pubkey",HexStr(pubkey));
+		marking.pushKV(d1name,HexStr(pubkey));
 	    }
+	    else if (d1name.find("sig") == 0) {
+		std::vector<unsigned char> sigkey;
+		for (size_t j=keyPos+2; j<keyPos+1+pk1len; j++) {
+		    sigkey.push_back(scriptPubKey[j]);
+		}
+		marking.pushKV(d1name,HexStr(sigkey));
+	    }
+	    keyPos += 1 + pk1len; // advance past length byte + key data
 	    iPK++;
 	}
-	//marking.pushKV("weight",1);
+	// Collect the 0x06-prefixed keys (marking data) and hash them
+	std::vector<unsigned char> markingData;
+	size_t hpos = 1; // skip OP_1
+	for (size_t k = 0; k < 3; k++) {
+	    int pkLen = scriptPubKey[hpos];
+	    unsigned char prefix = scriptPubKey[hpos + 1];
+	    if (prefix == 6) {
+		for (int j = 0; j < pkLen; j++) {
+		    markingData.push_back(scriptPubKey[hpos + 1 + j]);
+		}
+	    }
+	    hpos += 1 + pkLen;
+	}
+	if (markingData.size() > 0) {
+	    unsigned char sha256hash[CSHA256::OUTPUT_SIZE];
+	    CSHA256().Write(markingData.data(), markingData.size()).Finalize(sha256hash);
+	    marking.pushKV("sha256", HexStr(Span<unsigned char>(sha256hash, 32)));
+
+	    unsigned char sha512hash[CSHA512::OUTPUT_SIZE];
+	    CSHA512().Write(markingData.data(), markingData.size()).Finalize(sha512hash);
+	    marking.pushKV("sha512", HexStr(Span<unsigned char>(sha512hash, 64)));
+	}
 	return true;
     }
     return false;

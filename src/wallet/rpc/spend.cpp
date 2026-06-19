@@ -6,6 +6,7 @@
 #include <base82.h>
 #include <consensus/validation.h>
 #include <core_io.h>
+#include <crypto/sha256.h>
 #include <key_io.h>
 #include <policy/policy.h>
 #include <rpc/rawtransaction_util.h>
@@ -742,7 +743,113 @@ RPCHelpMan mark()
 },
     };
 }
-	    			   
+
+RPCHelpMan marksign()
+{
+    return RPCHelpMan{"marksign",
+                "\nSign marking data with a private key (BIP-340 Schnorr).\n"
+                "Creates a new 1-of-3 multisig output encoding the signature, the hash\n"
+                "of the marking data, and the signer's public key.\n"
+                "The hash can be SHA256 (64 hex chars) or SHA512 (128 hex chars).\n"
+                "SHA256 produces a compressed slot 2 (prefix 0x03), SHA512 produces\n"
+                "an uncompressed slot 2 (prefix 0x07).",
+                {
+                    {"hash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "SHA256 or SHA512 hash of the marking data (hex)"},
+                    {"privkey", RPCArg::Type::STR, RPCArg::Optional::NO, "The private key to sign with (WIF format)"},
+                },
+                RPCResult{
+                    RPCResult::Type::STR_HEX, "txid", "The signature transaction id"
+                },
+                RPCExamples{
+                    HelpExampleCli("marksign", "\"<sha256_or_sha512_hex>\" \"<WIF_privkey>\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!pwallet) return UniValue::VNULL;
+    pwallet->BlockUntilSyncedToCurrentChain();
+    LOCK(pwallet->cs_wallet);
+
+    // Parse the marking hash
+    std::string hashHex = request.params[0].get_str();
+    if (!IsHex(hashHex))
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "hash must be hex");
+    std::vector<uchar> markHash = ParseHex(hashHex);
+    if (markHash.size() != 32 && markHash.size() != 64)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "hash must be 32 bytes (SHA256) or 64 bytes (SHA512)");
+
+    // Decode the private key
+    CKey signingKey = DecodeSecret(request.params[1].get_str());
+    if (!signingKey.IsValid())
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key");
+
+    // Get the signer's public key
+    CPubKey signerPubKey = signingKey.GetPubKey();
+
+    // BIP-340 Schnorr signs a 32-byte message.
+    // For SHA256: sign the hash directly.
+    // For SHA512: SHA256 the 64-byte hash to get a 32-byte message to sign.
+    uint256 hashToSign;
+    if (markHash.size() == 32) {
+        memcpy(hashToSign.data(), markHash.data(), 32);
+    } else {
+        CSHA256().Write(markHash.data(), 64).Finalize(hashToSign.data());
+    }
+
+    std::vector<unsigned char> schnorrSig(64);
+    uint256 aux;
+    if (!signingKey.SignSchnorr(hashToSign, schnorrSig, nullptr, aux))
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Schnorr signing failed");
+
+    // Slot 1: 0x07 + 64-byte Schnorr signature (65 bytes total)
+    std::vector<uchar> slot1;
+    slot1.push_back(7);
+    slot1.insert(slot1.end(), schnorrSig.begin(), schnorrSig.end());
+
+    // Slot 2: hash of marking data
+    std::vector<uchar> slot2;
+    if (markHash.size() == 32) {
+        // Compressed: 0x03 + 32-byte SHA256 (33 bytes)
+        slot2.push_back(3);
+    } else {
+        // Uncompressed: 0x07 + 64-byte SHA512 (65 bytes)
+        slot2.push_back(7);
+    }
+    slot2.insert(slot2.end(), markHash.begin(), markHash.end());
+
+    // Slot 3: signer's pubkey (as-is)
+    std::vector<uchar> slot3(signerPubKey.begin(), signerPubKey.end());
+
+    CPubKey key1(slot1);
+    CPubKey key2(slot2);
+    CPubKey key3(slot3);
+
+    if (!key1.IsValid() || !key2.IsValid() || !key3.IsValid())
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to construct pubkeys for signature output");
+
+    // Build 1-of-3 multisig: OP_1 <sig> <hash> <pubkey> OP_3 OP_CHECKMULTISIG
+    CScript scriptOut = CScript() << OP_1 << key1 << key2 << key3 << OP_3 << OP_CHECKMULTISIG;
+
+    pwallet->WalletLogPrintf("marksign: hash %s pubkey %s\n", hashHex, HexStr(signerPubKey));
+
+    // Create and send the transaction
+    CCoinControl coin_control;
+    coin_control.m_change_type = OutputType::LEGACY;
+
+    std::vector<CRecipient> recipients;
+    CTxDestination destination{CNoDestination{scriptOut}};
+    CAmount amount{10000};
+    CRecipient recipient{destination, amount, false};
+    recipients.push_back(recipient);
+
+    mapValue_t mapValue;
+    const bool verbose = false;
+
+    return SendMoney(*pwallet, coin_control, recipients, mapValue, verbose);
+},
+    };
+}
+
 RPCHelpMan sendmany()
 {
     return RPCHelpMan{"sendmany",
