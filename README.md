@@ -1,3 +1,7 @@
+# See the 27.xb branch
+
+We now recommend not using this master branch but rather the [27.xb](https://github.com/bitmarkcc/bitmark/tree/27.xb) branch of this repository
+
 # Introduction
 
 Project Bitmark is a multi faceted project which aims to provide:
