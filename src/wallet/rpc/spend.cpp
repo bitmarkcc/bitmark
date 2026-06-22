@@ -332,12 +332,29 @@ struct Mark {
     std::vector<uchar> descText;
     std::vector<uchar> keyHex;
     int64_t fee;
+    // Field ids (1..6) to emit as zero-length "deferred" placeholders, per block.
+    // A deferred field's value is supplied by a separate reference (extension) marking.
+    std::set<int> deferH;
+    std::set<int> deferL;
+    std::set<int> deferD;
 };
 
-void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, std::vector<uchar>& pubkeyD, std::vector<uchar>& pubkeyK, Mark& mark) {
+void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, std::vector<uchar>& pubkeyD, std::vector<uchar>& pubkeyK, Mark& mark, bool forceDesc = true) {
+
+    // Emit a zero-length "deferred" placeholder: the field tag with no value, whose
+    // real value is supplied by a separate reference (extension) marking. Normally the
+    // tag is followed by a 0x00 length byte; but if only the final byte of the 65-byte
+    // key is free, push just the tag and let the key boundary imply length 0.
+    auto pushDefer = [](std::vector<uchar>& pk, uchar tag) {
+	if (pk.size() < 65) {
+	    pk.push_back(tag);
+	    if (pk.size() < 65)
+		pk.push_back(0);
+	}
+    };
 
     unsigned int lenHashHex = mark.hashHex.size();
-    if (lenHashHex) {
+    if (lenHashHex || !mark.deferH.empty()) {
 	pubkeyH.push_back(6);
 	pubkeyH.push_back('h');
 	unsigned int lenHashType = mark.hashType.size();
@@ -355,12 +372,14 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	    pubkeyH.push_back(0x20);
 	    pubkeyH.push_back(lenHashHex);
 	}
-	else {
+	else if (lenHashHex) {
 	    pubkeyH.push_back(0x20+lenHashHex);
 	}
 	for (int i=0; i<lenHashHex; i++) {
 	    pubkeyH.push_back(mark.hashHex[i]);
 	}
+	if (mark.deferH.count(1) && !lenHashType) pushDefer(pubkeyH, 0x10);
+	if (mark.deferH.count(2) && !lenHashHex)  pushDefer(pubkeyH, 0x20);
 	while (pubkeyH.size()<65) {
 	    pubkeyH.push_back(0);
 	}
@@ -368,7 +387,7 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
     
     size_t lenLinkHost = mark.linkHost.size();
     size_t lenLinkCertHashHex = mark.linkCertHashHex.size();
-    if (lenLinkHost || lenLinkCertHashHex) {
+    if (lenLinkHost || lenLinkCertHashHex || mark.linkPath.size() || mark.linkPort.size() || mark.linkProtocol.size() || !mark.deferL.empty()) {
 	pubkeyL.push_back(6);
 	pubkeyL.push_back('l');
 	size_t lenLinkProtocol = mark.linkProtocol.size();
@@ -439,13 +458,19 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 		pubkeyL.push_back(mark.linkCertHashHex[i]);
 	    }
 	}
+	if (mark.deferL.count(1) && !lenLinkProtocol)     pushDefer(pubkeyL, 0x10);
+	if (mark.deferL.count(2) && !lenLinkHost)         pushDefer(pubkeyL, 0x20);
+	if (mark.deferL.count(3) && !lenLinkPort)         pushDefer(pubkeyL, 0x30);
+	if (mark.deferL.count(4) && !lenLinkPath)         pushDefer(pubkeyL, 0x40);
+	if (mark.deferL.count(5) && !lenLinkCertHashType) pushDefer(pubkeyL, 0x50);
+	if (mark.deferL.count(6) && !lenLinkCertHashHex)  pushDefer(pubkeyL, 0x60);
 	while (pubkeyL.size()<65) {
 	    pubkeyL.push_back(0);
 	}
     }
 
     size_t lenDescText = mark.descText.size();
-    if (lenDescText || pubkeyH.size() && !pubkeyL.size() || pubkeyL.size() && !pubkeyH.size()) {
+    if (lenDescText || !mark.deferD.empty() || (forceDesc && ((pubkeyH.size() && !pubkeyL.size()) || (pubkeyL.size() && !pubkeyH.size())))) {
 	pubkeyD.push_back(6);
 	pubkeyD.push_back('d');
 	size_t lenDescLang = mark.descLang.size();
@@ -469,6 +494,8 @@ void MarkPubKeysHLDK(std::vector<uchar>& pubkeyH, std::vector<uchar>& pubkeyL, s
 	for (int i=0; i<lenDescText; i++) {
 	    pubkeyD.push_back(mark.descText[i]);
 	}
+	if (mark.deferD.count(1) && !lenDescLang) pushDefer(pubkeyD, 0x10);
+	if (mark.deferD.count(2) && !lenDescText) pushDefer(pubkeyD, 0x20);
 	while (pubkeyD.size()<65) {
 	    pubkeyD.push_back(0);
 	}
@@ -501,6 +528,10 @@ RPCHelpMan mark()
 			  {
 			      {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "type of hash"},
 			      {"hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "hex value of hash"},
+			      {"defer", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "field names (\"type\", \"hex\") to emit as zero-length deferred placeholders, filled by a reference marking",
+			       {
+				   {"field", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "a deferred field name"},
+			       }},
 			  }
 			 },
 			 {"link", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
@@ -514,13 +545,32 @@ RPCHelpMan mark()
 				   {"type",RPCArg::Type::STR,RPCArg::Optional::NO,"the certificate hash type"},
 				   {"hex",RPCArg::Type::STR_HEX,RPCArg::Optional::NO,"the certificate hash hex"}
 			       }
-			      }
+			      },
+			      {"defer", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "field names (\"protocol\", \"host\", \"port\", \"path\", \"cert_hash_type\", \"cert_hash_hex\") to emit as zero-length deferred placeholders, filled by a reference marking",
+			       {
+				   {"field", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "a deferred field name"},
+			       }}
 			  }
 			 },
 			 {"desc", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
 			  {
 			      {"lang", RPCArg::Type::STR, RPCArg::Optional::NO, "language for description"},
-			      {"text", RPCArg::Type::STR, RPCArg::Optional::NO, "text of description"}
+			      {"text", RPCArg::Type::STR, RPCArg::Optional::NO, "text of description"},
+			      {"defer", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "field names (\"lang\", \"text\") to emit as zero-length deferred placeholders, filled by a reference marking",
+			       {
+				   {"field", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "a deferred field name"},
+			       }}
+			  }
+			 },
+			 {"key", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "public key to occupy the spendable slot, associating the marking with it instead of a generated throwaway key",
+			  {
+			      {"hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "public key hex: 32 bytes (nostr) or 33 bytes (compressed secp256k1)"}
+			  }
+			 },
+			 {"ref", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "reference to a parent marking by hash; when present, this marking adds exactly one metadata block (hash, link, or desc) to that parent",
+			  {
+			      {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "hash type of the reference: \"sha256\" or \"sha512\""},
+			      {"hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "parent marking hash (64 hex chars for sha256, 128 for sha512)"}
 			  }
 			 }
 		     }
@@ -588,7 +638,17 @@ RPCHelpMan mark()
     const UniValue& keyval = marking.find_value("key");
     if (keyval.isObject())
 	keyHex = keyval.find_value("hex").get_str();
-        
+
+    // Optional reference to a parent marking (extension marking).
+    std::string refType, refHex;
+    bool hasRef = false;
+    const UniValue& refval = marking.find_value("ref");
+    if (refval.isObject()) {
+	refType = refval.find_value("type").get_str();
+	refHex = refval.find_value("hex").get_str();
+	hasRef = true;
+    }
+
     if (!IsBase38(hashType))
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("hashType must be in base38"));
     if (hashHex.size() && !IsHex(hashHex))
@@ -611,6 +671,46 @@ RPCHelpMan mark()
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("descText must be in base38"));
 
     Mark mark;
+
+    // Parse optional per-block "defer" arrays: field names emitted as zero-length
+    // placeholders whose values are supplied by a reference (extension) marking.
+    if (hashval.isObject()) {
+	const UniValue& hd = hashval.find_value("defer");
+	if (hd.isArray()) {
+	    for (const UniValue& f : hd.getValues()) {
+		std::string n = f.get_str();
+		if (n == "type") mark.deferH.insert(1);
+		else if (n == "hex") mark.deferH.insert(2);
+		else throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("unknown hash defer field: %s", n));
+	    }
+	}
+    }
+    if (linkval.isObject()) {
+	const UniValue& ld = linkval.find_value("defer");
+	if (ld.isArray()) {
+	    for (const UniValue& f : ld.getValues()) {
+		std::string n = f.get_str();
+		if (n == "protocol") mark.deferL.insert(1);
+		else if (n == "host") mark.deferL.insert(2);
+		else if (n == "port") mark.deferL.insert(3);
+		else if (n == "path") mark.deferL.insert(4);
+		else if (n == "cert_hash_type") mark.deferL.insert(5);
+		else if (n == "cert_hash_hex") mark.deferL.insert(6);
+		else throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("unknown link defer field: %s", n));
+	    }
+	}
+    }
+    if (descval.isObject()) {
+	const UniValue& dd = descval.find_value("defer");
+	if (dd.isArray()) {
+	    for (const UniValue& f : dd.getValues()) {
+		std::string n = f.get_str();
+		if (n == "lang") mark.deferD.insert(1);
+		else if (n == "text") mark.deferD.insert(2);
+		else throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("unknown desc defer field: %s", n));
+	    }
+	}
+    }
 
     std::vector<uchar> vHashType;
     if (hashType.size() && !DecodeBase38(hashType,vHashType,128))
@@ -674,29 +774,86 @@ RPCHelpMan mark()
     pwallet->WalletLogPrintf("linkProtocol %s (%u) linkHost %s (%u) linkPort %s (%u) linkPath %s (%u) linkCertHashType %s (%u) linkCertHashHex %s (%u)\n",linkProtocol,mark.linkProtocol.size(),linkHost,mark.linkHost.size(),linkPort,mark.linkPort.size(),linkPath,mark.linkPath.size(),linkCertHashType,mark.linkCertHashType.size(),linkCertHashHex,mark.linkCertHashHex.size());
     pwallet->WalletLogPrintf("descLang %s (%u) descText %s (%u)\n",descLang,mark.descLang.size(),descText,mark.descText.size());
     pwallet->WalletLogPrintf("keyHex %s\n",keyHex);
-    
+
+    // Build the reference-hash slot for an extension marking, reusing the marksign
+    // hash-slot convention: sha256 -> 0x03 + 32 bytes (33), sha512 -> 0x07 + 64 bytes (65).
+    std::vector<uchar> refBytes;
+    if (hasRef) {
+	if (!IsHex(refHex))
+	    throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("ref hex must be in hex"));
+	std::vector<uchar> refHash = ParseHex(refHex);
+	if (refType == "sha256") {
+	    if (refHash.size() != 32)
+		throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("sha256 ref must be 32 bytes (64 hex chars)"));
+	    refBytes.push_back(3);
+	}
+	else if (refType == "sha512") {
+	    if (refHash.size() != 64)
+		throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("sha512 ref must be 64 bytes (128 hex chars)"));
+	    refBytes.push_back(7);
+	}
+	else {
+	    throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("ref type must be \"sha256\" or \"sha512\""));
+	}
+	refBytes.insert(refBytes.end(), refHash.begin(), refHash.end());
+    }
+
     CCoinControl coin_control;
     coin_control.m_change_type = OutputType::LEGACY;
 
     std::vector<CRecipient> recipients;
 
-    CKey key;
-    key.MakeNewKey(true); // compressed: 33-byte spend key saves 32 bytes vs uncompressed in the filler slot
-    CPubKey spendKey = key.GetPubKey();
     std::vector<uchar> pubkeyH, pubkeyL, pubkeyD, pubkeyK;
-    MarkPubKeysHLDK(pubkeyH,pubkeyL,pubkeyD,pubkeyK,mark);
+    MarkPubKeysHLDK(pubkeyH,pubkeyL,pubkeyD,pubkeyK,mark, !hasRef);
     if (pubkeyH.size()>65 || pubkeyL.size()>65 || pubkeyD.size()>65)
 	throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("each pubkey size must be at most 65 bytes"));
-    if (!pubkeyK.size())
-      pwallet->WalletLogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),EncodeSecret(key));
+
+    // Reference / extension marking: slot1 = parent hash ref, slot2 = the single
+    // added data block, slot3 = spendable key. Exactly one 0x06 block is what the
+    // decoder uses to tell a reference marking apart from a normal mark (>=2 blocks).
+    if (hasRef) {
+	int nBlocks = (pubkeyH.size()?1:0) + (pubkeyL.size()?1:0) + (pubkeyD.size()?1:0);
+	if (nBlocks != 1)
+	    throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("a reference marking must add exactly one metadata block (hash, link, or desc)"));
+	std::vector<uchar>& dataPub = pubkeyH.size() ? pubkeyH : (pubkeyL.size() ? pubkeyL : pubkeyD);
+	CPubKey refKey(refBytes);
+	CPubKey dataKey(dataPub);
+	if (!refKey.IsValid() || !dataKey.IsValid())
+	    throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("failed to construct reference marking pubkeys"));
+	pwallet->WalletLogPrintf("reference marking: ref %s %s\n",refType,refHex);
+	CPubKey spendKey;
+	if (pubkeyK.size()) {
+	    spendKey = CPubKey(pubkeyK);
+	}
+	else {
+	    CKey key;
+	    key.MakeNewKey(true); // compressed: 33-byte spend key saves 32 bytes vs uncompressed in the filler slot
+	    spendKey = key.GetPubKey();
+	    pwallet->WalletLogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),EncodeSecret(key));
+	}
+	CScript scriptRef = CScript() << OP_1 << refKey << dataKey << spendKey << OP_3 << OP_CHECKMULTISIG;
+	CTxDestination destination{CNoDestination{scriptRef}};
+	CRecipient recipient{destination, CAmount{10000}, false};
+	recipients.push_back(recipient);
+	mapValue_t mapValue;
+	return SendMoney(*pwallet, coin_control, recipients, mapValue, false);
+    }
+
+    CPubKey spendKey;
+    if (pubkeyK.size()) {
+	spendKey = CPubKey(pubkeyK);
+    }
+    else {
+	CKey key;
+	key.MakeNewKey(true); // compressed: 33-byte spend key saves 32 bytes vs uncompressed in the filler slot
+	spendKey = key.GetPubKey();
+	pwallet->WalletLogPrintf("private key for %s = %s\n",spendKey.GetHash().GetHex(),EncodeSecret(key));
+    }
     CPubKey hashKey;
     CPubKey linkKey;
     CPubKey descKey;
     if (pubkeyH.size()) {
 	hashKey = CPubKey(pubkeyH);
-    }
-    else if (pubkeyK.size()) {
-	hashKey = CPubKey(pubkeyK);
     }
     else {
 	hashKey = spendKey;
@@ -704,17 +861,11 @@ RPCHelpMan mark()
     if (pubkeyL.size()) {
 	linkKey = CPubKey(pubkeyL);
     }
-    else if (pubkeyK.size()) {
-	linkKey = CPubKey(pubkeyK);
-    }
     else {
 	linkKey = spendKey;
     }
     if (pubkeyD.size()) {
 	descKey = CPubKey(pubkeyD);
-    }
-    else if (pubkeyK.size()) {
-	descKey = CPubKey(pubkeyK);
     }
     else {
 	descKey = spendKey;

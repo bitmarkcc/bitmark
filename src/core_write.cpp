@@ -164,6 +164,19 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 	size_t nPubkey = 0;
 	size_t nSigkey = 0;
 	size_t keyPos = 1; // byte offset past OP_1
+	// Count 0x06 data blocks up front: exactly one means this is a reference
+	// (extension) marking, in which the lone non-0x06 hash key is the parent ref.
+	size_t n06 = 0;
+	{
+	    size_t p = 1;
+	    for (size_t k = 0; k < 3; k++) {
+		int len = scriptPubKey[p];
+		unsigned char pre = scriptPubKey[p + 1];
+		if (pre == 6)
+		    n06++;
+		p += 1 + len;
+	    }
+	}
 	while (iPK < 3) {
 	    int ipk = 0;
 	    int pk1len = scriptPubKey[keyPos];
@@ -178,6 +191,12 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 	    }
 	    else if (d1code == 'd' && d1prefix == 6) {
 		d1name = "desc";
+	    }
+	    else if (n06 == 1 && iPK == 0 && (d1prefix == 3 || d1prefix == 7)) {
+		// reference (extension) marking: the FIRST key holds the parent hash.
+		// The third key is the spendable pubkey (also non-data, and a sha256
+		// ref shares the 0x03 prefix), so it must fall through to the pubkey handler.
+		d1name = (d1prefix == 7) ? "ref sha512" : "ref sha256";
 	    }
 	    else if (nSigkey == 0 && d1prefix == 7) {
 		d1name = "sig";
@@ -196,8 +215,16 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 		    d1name = "pubkey";
 		nPubkey++;
 	    }
-	    if (d1name.find("pubkey") != 0 && d1name.find("sig") != 0) {
-		while (ipk < 65) {
+	    if (d1name.compare(0, 3, "ref") == 0) {
+		// parent hash reference: skip the 1-byte prefix, emit the raw hash bytes
+		std::vector<unsigned char> refhash;
+		for (size_t j = keyPos + 2; j < keyPos + 1 + pk1len; j++)
+		    refhash.push_back(scriptPubKey[j]);
+		marking.pushKV(d1name, HexStr(refhash));
+	    }
+	    else if (d1name.find("pubkey") != 0 && d1name.find("sig") != 0) {
+		// field bytes occupy offsets 2..pk1len-1 of the key, i.e. ipk in [0, pk1len-3]
+		while (ipk < pk1len - 2) {
 		    unsigned char d11Code = scriptPubKey[keyPos+3+ipk];
 		    if (d11Code == 0) {
 			ipk = 65;
@@ -211,8 +238,13 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 		    if (rem == 0) {
 			while (d11Code > 15)
 			    d11Code >>= 4;
-			d11Len = scriptPubKey[keyPos+3+ipk];
-			ipk++;
+			if (ipk < pk1len - 2) {
+			    d11Len = scriptPubKey[keyPos+3+ipk];
+			    ipk++;
+			}
+			else {
+			    d11Len = 0; // tag sits at the key boundary: zero-length (deferred) placeholder
+			}
 			i = keyPos + 3 + ipk;
 		    }
 		    else {
@@ -258,22 +290,29 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 			}	    
 		    }
 		    std::vector<unsigned char> d11value;
-		    if (ipk+d11Len<65) {
+		    if (ipk + d11Len <= pk1len - 2) {
 			for (int j=i; j<i+d11Len; j++) {
 			    d11value.push_back(scriptPubKey[j]);
 			}
 			ipk += d11Len;
-			std::string sd11value;
-			if (d11name.find("link path") != std::string::npos) {
-			    sd11value = EncodeBase82(d11value);
-			}
-			else if (d11name.find("hex") == std::string::npos) {
-			    sd11value = EncodeBase38(d11value);
+			if (d11Len == 0) {
+			    // zero-length tag: a deferred placeholder whose value is
+			    // supplied by a separate reference (extension) marking
+			    marking.pushKV(d11name + " deferred", "");
 			}
 			else {
-			    sd11value = HexStr(d11value);
+			    std::string sd11value;
+			    if (d11name.find("link path") != std::string::npos) {
+				sd11value = EncodeBase82(d11value);
+			    }
+			    else if (d11name.find("hex") == std::string::npos) {
+				sd11value = EncodeBase38(d11value);
+			    }
+			    else {
+				sd11value = HexStr(d11value);
+			    }
+			    marking.pushKV(d11name,sd11value);
 			}
-			marking.pushKV(d11name,sd11value);
 		    }
 		    else {
 			ipk = 65;
@@ -297,13 +336,16 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 	    keyPos += 1 + pk1len; // advance past length byte + key data
 	    iPK++;
 	}
-	// Collect the 0x06-prefixed keys (marking data) and hash them
+	// Collect the marking-data keys and hash them. Normally these are the
+	// 0x06-prefixed data keys. For a reference (extension) marking (n06 == 1) the
+	// marking data is the parent-hash reference (the first key) plus the single
+	// 0x06 block that is added to the referenced marking.
 	std::vector<unsigned char> markingData;
 	size_t hpos = 1; // skip OP_1
 	for (size_t k = 0; k < 3; k++) {
 	    int pkLen = scriptPubKey[hpos];
 	    unsigned char prefix = scriptPubKey[hpos + 1];
-	    if (prefix == 6) {
+	    if (prefix == 6 || (n06 == 1 && k == 0)) {
 		for (int j = 0; j < pkLen; j++) {
 		    markingData.push_back(scriptPubKey[hpos + 1 + j]);
 		}
