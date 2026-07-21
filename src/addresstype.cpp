@@ -93,6 +93,7 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
     }
     case TxoutType::MULTISIG:
     case TxoutType::NULL_DATA:
+    case TxoutType::PUSHCODE:
     case TxoutType::NONSTANDARD:
         addressRet = CNoDestination(scriptPubKey);
         return false;

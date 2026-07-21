@@ -28,6 +28,7 @@ std::string GetTxnOutputType(TxoutType t)
     case TxoutType::WITNESS_V0_SCRIPTHASH: return "witness_v0_scripthash";
     case TxoutType::WITNESS_V1_TAPROOT: return "witness_v1_taproot";
     case TxoutType::WITNESS_UNKNOWN: return "witness_unknown";
+    case TxoutType::PUSHCODE: return "pushcode";
     } // no default case, so the compiler can warn about missing cases
     assert(false);
 }
@@ -137,6 +138,39 @@ std::optional<std::pair<int, std::vector<Span<const unsigned char>>>> MatchMulti
     return std::pair{*threshold, std::move(keyspans)};
 }
 
+// Bitmark: match a PUSHCODE output: 1..5 push params followed by OP_PUSHCODE and
+// nothing else. Data pushes become their bytes; small integers (OP_0, OP_1..OP_16)
+// become a single byte holding 0..16, matching the dev2024 param decoding.
+// Maximal form: <pushtype> <codehash(32B)> <nPart> <nPart2> <code>. This is 5,
+// down from dev2024's 6, because a referenced entry is now identified by a single
+// 32-byte content hash instead of a (txid, nOutput) outpoint pair.
+static const unsigned int MAX_PUSHCODE_PARAMS = 5;
+static bool MatchPushCode(const CScript& script, std::vector<valtype>& params)
+{
+    params.clear();
+    CScript::const_iterator it = script.begin();
+    opcodetype opcode;
+    valtype vch;
+    while (it < script.end()) {
+        if (!script.GetOp(it, opcode, vch)) return false;
+        if (opcode == OP_PUSHCODE) {
+            // OP_PUSHCODE must be the final opcode, with at least one param
+            return it == script.end() && !params.empty();
+        }
+        if (params.size() >= MAX_PUSHCODE_PARAMS) return false;
+        if (!vch.empty()) {
+            params.push_back(std::move(vch));
+        } else if (opcode == OP_0) {
+            params.push_back(valtype(1, 0));
+        } else if (opcode >= OP_1 && opcode <= OP_16) {
+            params.push_back(valtype(1, (unsigned char)(opcode - OP_RESERVED)));
+        } else {
+            return false; // only pushes / small integers are valid params
+        }
+    }
+    return false; // reached end without OP_PUSHCODE
+}
+
 TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned char>>& vSolutionsRet)
 {
     vSolutionsRet.clear();
@@ -200,6 +234,12 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
         vSolutionsRet.insert(vSolutionsRet.end(), keys.begin(), keys.end());
         vSolutionsRet.push_back({static_cast<unsigned char>(keys.size())}); // safe as size is in range 1..20
         return TxoutType::MULTISIG;
+    }
+
+    std::vector<valtype> params;
+    if (MatchPushCode(scriptPubKey, params)) {
+        vSolutionsRet = std::move(params);
+        return TxoutType::PUSHCODE;
     }
 
     vSolutionsRet.clear();

@@ -553,6 +553,7 @@ static RPCHelpMan decodescript()
             // Can be wrapped if the checks below pass
             break;
         case TxoutType::NULL_DATA:
+        case TxoutType::PUSHCODE:
         case TxoutType::SCRIPTHASH:
         case TxoutType::WITNESS_UNKNOWN:
         case TxoutType::WITNESS_V1_TAPROOT:
@@ -593,6 +594,7 @@ static RPCHelpMan decodescript()
                 // Can be P2WSH wrapped
                 return true;
             case TxoutType::NULL_DATA:
+            case TxoutType::PUSHCODE:
             case TxoutType::SCRIPTHASH:
             case TxoutType::WITNESS_UNKNOWN:
             case TxoutType::WITNESS_V0_KEYHASH:

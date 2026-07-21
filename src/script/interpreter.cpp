@@ -591,7 +591,23 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
                     break;
                 }
 
-                case OP_NOP1: case OP_NOP4: case OP_NOP5:
+                case OP_PUSHCODE: // Bitmark OP_NOP4: dynamic-algo code carrier
+                {
+                    // When the soft fork is active, OP_PUSHCODE is a defined
+                    // opcode that acts as a no-op during script execution: a
+                    // PUSHCODE output's meaning (the pushed code and its
+                    // references) is extracted and validated in the block
+                    // connect / code-assembly phase, not here. When inactive,
+                    // fall through to upgradable-NOP semantics so old nodes and
+                    // relay policy still discourage it.
+                    if (flags & SCRIPT_VERIFY_PUSHCODE)
+                        break;
+                    if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                        return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                }
+                break;
+
+                case OP_NOP1: case OP_NOP5:
                 case OP_NOP6: case OP_NOP7: case OP_NOP8: case OP_NOP9: case OP_NOP10:
                 {
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)

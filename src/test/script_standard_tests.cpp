@@ -128,6 +128,39 @@ BOOST_AUTO_TEST_CASE(script_standard_Solver_success)
     BOOST_CHECK(solutions[0] == std::vector<unsigned char>{16});
     BOOST_CHECK(solutions[1] == ToByteVector(uint256::ONE));
 
+    // TxoutType::PUSHCODE (Bitmark): <params> OP_PUSHCODE
+    // data-push param + a 32-byte content-hash reference + a small-int param
+    s.clear();
+    std::vector<unsigned char> code_ref(32, 0xab);
+    s << std::vector<unsigned char>{0x01, 0x02, 0x03} << code_ref << OP_2 << OP_PUSHCODE;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::PUSHCODE);
+    BOOST_CHECK_EQUAL(solutions.size(), 3U);
+    BOOST_CHECK(solutions[0] == (std::vector<unsigned char>{0x01, 0x02, 0x03}));
+    BOOST_CHECK(solutions[1] == code_ref);
+    BOOST_CHECK(solutions[2] == std::vector<unsigned char>{2}); // OP_2 decoded to byte 2
+
+    // PUSHCODE with the maximum 5 params is accepted
+    // (maximal form: pushtype, codehash, nPart, nPart2, code)
+    s.clear();
+    s << OP_1 << OP_2 << OP_3 << OP_4 << OP_5 << OP_PUSHCODE;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::PUSHCODE);
+    BOOST_CHECK_EQUAL(solutions.size(), 5U);
+
+    // 6 params is too many -> not a PUSHCODE match
+    s.clear();
+    s << OP_1 << OP_2 << OP_3 << OP_4 << OP_5 << OP_6 << OP_PUSHCODE;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // OP_PUSHCODE with no params is not a match
+    s.clear();
+    s << OP_PUSHCODE;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // trailing opcode after OP_PUSHCODE is not a match
+    s.clear();
+    s << OP_2 << OP_PUSHCODE << OP_1;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
     // TxoutType::NONSTANDARD
     s.clear();
     s << OP_9 << OP_ADD << OP_11 << OP_EQUAL;

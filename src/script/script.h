@@ -198,7 +198,8 @@ enum opcodetype
     OP_NOP2 = OP_CHECKLOCKTIMEVERIFY,
     OP_CHECKSEQUENCEVERIFY = 0xb2,
     OP_NOP3 = OP_CHECKSEQUENCEVERIFY,
-    OP_NOP4 = 0xb3,
+    OP_PUSHCODE = 0xb3, // Bitmark: push wasm code to the chain (dynamic PoW algo)
+    OP_NOP4 = OP_PUSHCODE,
     OP_NOP5 = 0xb4,
     OP_NOP6 = 0xb5,
     OP_NOP7 = 0xb6,
