@@ -811,12 +811,15 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     CheckIsNotStandard(t, "scriptpubkey");
 
     // MAX_OP_RETURN_RELAY-byte TxoutType::NULL_DATA (standard)
-    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef3804678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38");
+    // Script = OP_RETURN(1) + OP_PUSHDATA1 opcode(1) + length(1) + data.
+    // For a 200-byte script the data payload is 197 bytes (197 is in the
+    // 76..255 range, so a single-byte length is used).
+    t.vout[0].scriptPubKey = CScript() << OP_RETURN << std::vector<unsigned char>(197, 0);
     BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY, t.vout[0].scriptPubKey.size());
     CheckIsStandard(t);
 
     // MAX_OP_RETURN_RELAY+1-byte TxoutType::NULL_DATA (non-standard)
-    t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef3804678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef3800");
+    t.vout[0].scriptPubKey = CScript() << OP_RETURN << std::vector<unsigned char>(198, 0);
     BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY + 1, t.vout[0].scriptPubKey.size());
     CheckIsNotStandard(t, "scriptpubkey");
 
