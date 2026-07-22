@@ -14,6 +14,12 @@ src/bitcoin-wallet
 src/test/fuzz/fuzz
 src/test/test_bitcoin
 src/qt/test/test_bitcoin-qt
+src/bitmarkd
+src/bitmark-cli
+src/bitmark-tx
+src/bitmark-util
+src/bitmark-wallet
+src/test/test_bitmark
 
 # autoreconf
 Makefile.in
