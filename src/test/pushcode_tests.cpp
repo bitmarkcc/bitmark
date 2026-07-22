@@ -11,6 +11,8 @@
 
 #include <chain.h>
 #include <primitives/pureheader.h>
+#include <script/pushcode.h>
+#include <script/script.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -92,6 +94,48 @@ BOOST_AUTO_TEST_CASE(algo_bits_are_masked)
         auto blocks = MakeChain(v);
         BOOST_CHECK(!blocks.back().IsSuperMajority(5, 75, 100));
     }
+}
+
+namespace {
+using valtype = std::vector<unsigned char>;
+// a numeric PUSHCODE param, encoded as it lives on the stack (CScriptNum)
+valtype pnum(int64_t v) { return CScriptNum(v).getvch(); }
+valtype pbytes(size_t n, unsigned char fill = 0xab) { return valtype(n, fill); }
+} // namespace
+
+// Phase 3a grammar validation (CheckPushCodeGrammar): structure/sizes/consistency.
+BOOST_AUTO_TEST_CASE(pushcode_grammar)
+{
+    std::string reason;
+    auto ok = [&](std::vector<valtype> sol) { reason.clear(); return CheckPushCodeGrammar(sol, reason); };
+
+    const valtype H = pbytes(32);          // valid 32-byte content hash
+    const valtype code = pbytes(4, 0x11);
+    const valtype empty;
+
+    // valid forms
+    BOOST_CHECK(ok({code}));                                // NEW
+    BOOST_CHECK(ok({H, code}));                             // INSERT at end
+    BOOST_CHECK(ok({pnum(0), H, code}));                    // pushtype INSERT, at end
+    BOOST_CHECK(ok({pnum(1), H, code}));                    // pushtype REPLACE, at end
+    BOOST_CHECK(ok({pnum(0), H, pnum(3), code}));           // INSERT at part 3
+    BOOST_CHECK(ok({pnum(1), H, pnum(2), pnum(5), code}));  // REPLACE range [2,5]
+    BOOST_CHECK(ok({pnum(1), H, pnum(2), pnum(5), empty})); // REPLACE delete (empty ok)
+    BOOST_CHECK(ok({pnum(1), H, pnum(4), pnum(4), code}));  // single-element range
+
+    // invalid forms
+    BOOST_CHECK(!ok({}));                                   // 0 params
+    BOOST_CHECK(!ok({pnum(0), H, pnum(1), pnum(2), pnum(3), code})); // 6 params
+    BOOST_CHECK(!ok({empty}));                              // NEW with empty code
+    BOOST_CHECK(!ok({H, empty}));                           // INSERT with empty code
+    BOOST_CHECK(!ok({pnum(0), H, empty}));                  // explicit INSERT, empty code
+    BOOST_CHECK(!ok({pbytes(31), code}));                   // ref hash not 32 bytes
+    BOOST_CHECK(!ok({pbytes(33), code}));                   // ref hash not 32 bytes
+    BOOST_CHECK(!ok({pnum(0), H, pnum(2), pnum(5), code})); // part range with INSERT
+    BOOST_CHECK(!ok({pnum(1), H, pnum(5), pnum(2), code})); // nPart2 < nPart
+    BOOST_CHECK(!ok({pnum(-1), H, code}));                  // negative pushtype
+    BOOST_CHECK(!ok({pbytes(5), H, code}));                 // pushtype param > 4 bytes
+    BOOST_CHECK(!reason.empty());                           // a reason was set on the last failure
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -134,6 +134,124 @@ reference layout only matters in phase 3).
   fixture's SetupServerArgs re-registers duplicates. The flood is an artifact;
   find the FIRST real SIGABRT. Full suite green after the regen.
 
+## Phase 3 DESIGN (2026-07-22): content-hash code model + assembly
+
+### What dev2024 did (and why we change it)
+
+dev2024 stores code as a MUTABLE doubly-linked list of "parts" spliced across
+five LevelDB indexes (CodeHeight/CodeSize/CodePos/CodeNext/CodePrev), each part
+identified by a (txid,nOutput) outpoint (COutPointPair = (part_outpoint,
+branch_outpoint)). A branch is a sequence of parts; the assembled code is their
+concatenation. Operations on a referenced branch:
+  - NEW: start a branch with one part.
+  - INSERT @ nPart: splice a new part before part index nPart.
+  - REPLACE/DELETE [nPart, nPart2]: replace a range of parts (empty code = delete).
+Reference to the branch/part being modified is the (txid,nOutput) outpoint.
+Only the code POSITION (CDiskTxPos into the block file) is stored, not bytes.
+Limits (main.h): MAX_PUSHCODE_DEPTH / _LENGTH = 33638400, _PART_DEPTH = 525600,
+_SIZE = int64 max. Validation in ConnectBlock; a flood of bad-pushcode DoS
+rejects. Reorg undo must reverse every splice -- the hard, error-prone part.
+
+### The content-hash redesign (chosen; big simplification)
+
+Because phase 1 made references 32-byte CONTENT HASHES (Hash() of the referenced
+scriptPubKey), code entries become IMMUTABLE and content-addressed -- like git
+commits. This replaces the 5 mutable spliced indexes with ONE append-only map
+and makes reorg trivial.
+
+Entry model: each PUSHCODE output is an immutable code entry
+  E = (op, parent_hash, nPart, nPart2, code_chunk)
+with identity  H = Hash(scriptPubKey)  (the whole output script, which embeds
+parent_hash). Because H depends on parent_hash, the DAG is acyclic by
+construction (a cycle needs a hash preimage cycle) -- no "reference earlier
+only" rule needed.
+
+Codeindex: a single map  H -> { parent_hash, op, nPart, nPart2, code_pos
+(CDiskTxPos), height, refcount }. No linked list; no splicing.
+
+Assembly of a branch tip H (pure function, no stored mutable state):
+  walk parent_hash from H back to the NEW root, collecting entries; then replay
+  ops root->tip to build the ordered part list (NEW seeds [p]; INSERT adds a
+  part at nPart; REPLACE/DELETE rewrites [nPart,nPart2]); concatenate the
+  parts' code chunks (fetched from code_pos in the block files). The materialized
+  code of any entry is thus deterministic and recomputable from the DAG alone.
+
+Reorg safety (the payoff): entries are immutable, so DisconnectBlock just deletes
+the block's entries (and decrements refcount); there is NOTHING to un-splice.
+Content dedup: if two outputs have byte-identical scriptPubKeys they share H;
+refcount tracks how many confirmed outputs back H, so a reference is valid iff
+refcount>0, and a reorg dropping the last one invalidates it. Canonical
+selection among duplicates (for code_pos) = lowest height, then tx position.
+
+Consensus validation in ConnectBlock (gated on SCRIPT_VERIFY_PUSHCODE /
+DeploymentActiveAt), per PUSHCODE output:
+  1. Grammar: parse {pushtype, [codehash 32B], [nPart], [nPart2], code_chunk}
+     from Solver's vSolutions; the 1..5 param forms mirror dev2024 minus the
+     (txid,nOutput)->codehash collapse. Range/consistency: pushtype>=0; INSERT
+     forbids empty code and nPart2; REPLACE required when nPart2 present;
+     indices >=0.
+  2. Reference: NEW has no parent; otherwise parent_hash=codehash must resolve
+     to a confirmed entry (refcount>0) in the codeindex.
+  3. Limits: assembled part-count/length/total-size and DAG depth under the
+     MAX_PUSHCODE_* caps (recompute cheaply by walking parents; cache lengths).
+  4. On success, stage the new entry for the codeindex batch (written with the
+     block).
+
+### Staged implementation (each testable; full set required before mainnet activation)
+
+- 3a: ConnectBlock param-grammar validation gated on activation (steps 1 above,
+  no storage) -- makes the fork OBSERVABLE (malformed PUSHCODE rejected after
+  activation, ignored before) and functional-testable. Reference resolution
+  and assembly stubbed/deferred. [DONE 2026-07-22]
+    * New module src/script/pushcode.{h,cpp}: CheckPushCodeGrammar(solutions,
+      reason) + CheckPushCodeOutputs(tx, reason) -- pure functions returning a
+      consensus reject-reason string (no BlockValidationState dep, so unit-
+      testable; CTransaction forward-declared in the header, full include only
+      in the .cpp). Registered in Makefile.am (libbitcoin_common +
+      libbitcoinkernel + headers).
+    * validation.cpp ConnectBlock tx loop: when (flags & SCRIPT_VERIFY_PUSHCODE),
+      runs CheckPushCodeOutputs on every tx (coinbase included) and, on failure,
+      state.Invalid(BLOCK_CONSENSUS, reason).
+    * Numeric params (pushtype/nPart/nPart2) decoded as CScriptNum (<=4 bytes =>
+      int32; NOT CompactSize -- no length prefix), fRequireMinimal=false since
+      MatchPushCode emits OP_0 as {0x00}.
+    * Unit tests in test/pushcode_tests.cpp (pushcode_grammar): valid 1..5-param
+      forms incl. REPLACE-range and delete; rejects 0/6 params, empty NEW/INSERT
+      code, non-32-byte ref hash, range-on-INSERT, nPart2<nPart, negative
+      pushtype, oversized numeric param.
+- 3b: code-entry consensus store. CORRECTION (2026-07-22): this is NOT a
+  BaseIndex/src-index optional index -- those sync in the background and are
+  unavailable during ConnectBlock. Reference resolution is CONSENSUS (a
+  connecting block's PUSHCODE ref must resolve against already-confirmed
+  entries), so the store must be updated SYNCHRONOUSLY in ConnectBlock and
+  undone in DisconnectBlock, like the UTXO set / block-tree DB (this is what
+  dev2024 did -- it put the code indexes in CBlockTreeDB/txdb and wrote them
+  from ConnectBlock). Design: a LevelDB (extend CBlockTreeDB, or a dedicated
+  CCodeDB) with map H -> { parent_hash, op, nPart, nPart2, height, refcount,
+  code_bytes }. Writes staged in ConnectBlock via the block's write batch;
+  DisconnectBlock deletes the block's entries and decrements refcounts.
+  Content-hash immutability keeps disconnect trivial (delete, no un-splice).
+  Storage decision (2026-07-22): store code_pos (CDiskTxPos into the block
+  file), as dev2024 did -- NOT the code bytes. Tiny index; assembly seeks into
+  block files to fetch each chunk (so assembly requires the block files -- not
+  available under pruning; acceptable, matching dev2024). Authorization model:
+  anyone-proposes / PoW-decides (phase-1 assumption; no per-entry spend auth).
+  So codeindex map: H -> { parent_hash, op, nPart, nPart2, height, refcount,
+  code_pos (CDiskTxPos) }.
+- 3c: full assembly (walk parents / replay ops), the MAX_PUSHCODE_* limits
+  (step 3), and code_pos materialization; unit tests for insert/replace/delete,
+  cycle/dangling rejection, canonical selection.
+
+### Open questions for review
+- MAX_PUSHCODE_* values: keep dev2024's (huge) or retune for the wasm-module
+  use case (llm.c verifier ~100 KB assembled from MAX_CODE_RELAY=256 chunks =>
+  ~400 parts; depth/length caps should comfortably exceed that)?
+- Authorization model (from phase-1 doc): still "anyone proposes, PoW-vote
+  decides"? If so, no per-entry spend auth is needed and content-hash refs are
+  fully sufficient. Confirm before 3b.
+- Store code bytes in the codeindex, or keep dev2024's code_pos-into-blockfile
+  approach (smaller index, but assembly must read block files)? Lean code_pos.
+
 ## Suggested phases
 
 1. **Script layer** (self-contained, unit-testable): opcode at NOP4, verify

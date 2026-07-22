@@ -42,6 +42,7 @@
 #include <primitives/transaction.h>
 #include <random.h>
 #include <reverse_iterator.h>
+#include <script/pushcode.h>
 #include <script/script.h>
 #include <script/sigcache.h>
 #include <signet.h>
@@ -2717,6 +2718,19 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (nSigOpsCost > MAX_BLOCK_SIGOPS_COST) {
             LogPrintf("ERROR: ConnectBlock(): too many sigops\n");
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blk-sigops");
+        }
+
+        // Bitmark: once the OP_PUSHCODE soft fork is active, a malformed PUSHCODE
+        // output makes the block invalid. Phase 3a validates the param grammar
+        // only; reference resolution and code assembly are phases 3b/3c. Applies
+        // to every transaction's outputs, coinbase included.
+        if (flags & SCRIPT_VERIFY_PUSHCODE) {
+            std::string pushcode_reason;
+            if (!CheckPushCodeOutputs(tx, pushcode_reason)) {
+                state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, pushcode_reason);
+                return error("ConnectBlock(): bad OP_PUSHCODE output in %s: %s",
+                             tx.GetHash().ToString(), state.ToString());
+            }
         }
 
         if (!tx.IsCoinBase())
