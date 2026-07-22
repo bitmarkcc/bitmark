@@ -107,6 +107,16 @@ struct Params {
      */
     uint32_t nRuleChangeActivationThreshold;
     uint32_t nMinerConfirmationWindow;
+    /** OP_PUSHCODE soft fork: miner-signaled activation with no hardcoded
+     * height. Bitmark cannot use BIP9 versionbits because nVersion's upper bits
+     * carry the PoW algo / auxpow / variant / chainid fields, so activation is
+     * by base-version supermajority instead (CBlockIndex::IsSuperMajority masks
+     * to the low 8 bits via GetBlockVersion). Active once at least
+     * nPushCodeActivationThreshold of the previous nPushCodeActivationWindow
+     * blocks have base version >= nPushCodeVersion. */
+    int nPushCodeVersion;
+    unsigned int nPushCodeActivationThreshold;
+    unsigned int nPushCodeActivationWindow;
     BIP9Deployment vDeployments[MAX_VERSION_BITS_DEPLOYMENTS];
     /** Proof of work parameters */
     uint256 powLimit;

@@ -181,7 +181,7 @@ bool GetBlockVariant(const int nVersion)
 }
 
 bool CBlockIndex::OnFork() const
-{
+{ //todo: Can this->pprev be NULL?
     if (this->pprev->IsSuperMajority(4, 75, 100))
         return true;
 

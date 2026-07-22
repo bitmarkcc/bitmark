@@ -87,6 +87,53 @@ reference layout only matters in phase 3).
   6-param max, 7-param reject, no-param reject, trailing-opcode reject);
   full build green, suite passes.
 
+## Phase 2 COMPLETE (2026-07-21): consensus activation + relay policy
+
+- `primitives/pureheader.h`: CURRENT_VERSION 4 -> 5 (new blocks signal PUSHCODE
+  readiness). Base version is the low 8 bits.
+- `consensus/params.h`: nPushCodeVersion / nPushCodeActivationThreshold /
+  nPushCodeActivationWindow. Set in ALL FOUR network classes in
+  kernel/chainparams.cpp (main/testnet/signet 5/750/1000; regtest 5/75/100 so
+  functional tests cross the boundary fast).
+- `validation.cpp` GetBlockScriptFlags: sets SCRIPT_VERIFY_PUSHCODE when
+  block_index.pprev->IsSuperMajority(5, threshold, window). Window ends at the
+  parent so a block cannot self-activate. NO hardcoded height.
+- KEY FINDING: the masked supermajority machinery already exists in 27.xb
+  (Bitmark kept CBlockIndex::IsSuperMajority + GetBlockVersion = nVersion & 255
+  for its multi-PoW fork), so no reintroduction was needed -- the plan's
+  masking caution is handled by the existing GetBlockVersion mask. BIP9
+  versionbits is unusable here precisely because nVersion's upper bits carry
+  algo/auxpow/variant/chainid.
+- `policy/policy.{h,cpp}`: MAX_CODE_RELAY = 256 (relay-only, tunable, subject to
+  change); IsStandard caps a PUSHCODE output's code chunk (last push param).
+- Test: `src/test/pushcode_tests.cpp` (unit) -- threshold boundary (74 vs 75 of
+  100) and, critically, that algo/auxpow/variant/chainid bits do NOT perturb the
+  count (a version-4 block with algo bits, raw nVersion 516, must not count as
+  >=5; genuine version-5 blocks with mixed algo bits still count). Registered in
+  Makefile.test.include.
+- Note: phase 2 activation has NO observable consensus effect yet -- OP_PUSHCODE
+  is a NOP in the interpreter until phase 3 adds real validation gated on the
+  flag. So the "accepted-before / rejected-after" FUNCTIONAL test belongs in
+  phase 3; the phase-2 unit test targets the mechanism (masking + threshold).
+- DEPLOYMENT CAUTION: because the CURRENT_VERSION bump makes mainnet start
+  signalling immediately, do not let mainnet reach the activation threshold
+  before phase 3 (real validation) has shipped -- ship the full rule set with,
+  or before, activation. Fine on the dev branch.
+- TEST-VECTOR FALLOUT of the version bump (expected; Bitcoin Core does the same
+  for BIP34/65/66): CURRENT_VERSION 4->5 changes every regtest block header, so
+  every hardcoded regtest BLOCK HASH had to be regenerated:
+    * TestChain100Setup tip hash (test/util/setup_common.cpp) -> cf9e4abe...
+    * regtest m_assumeutxo_data[].blockhash (kernel/chainparams.cpp): height 730
+      -> 303714dc..., height 299 -> a11ee63f... (.hash_serialized and .nChainTx
+      unchanged -- the UTXO SET is version-independent, only the block hash moves)
+  Mainnet/testnet/signet assumeutxo + checkpoints are NOT affected (they
+  reference real historical blocks, not version-bumped test chains). Symptom if
+  missed: a SIGABRT in a fixture (stale hash assert or failed snapshot load)
+  cascades into a flood of unrelated "AddArg:576 ret.second" aborts, because a
+  SIGABRT mid-test leaves the global ArgsManager populated and the next
+  fixture's SetupServerArgs re-registers duplicates. The flood is an artifact;
+  find the FIRST real SIGABRT. Full suite green after the regen.
+
 ## Suggested phases
 
 1. **Script layer** (self-contained, unit-testable): opcode at NOP4, verify

@@ -2395,6 +2395,17 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const Ch
         flags |= SCRIPT_VERIFY_NULLDUMMY;
     }
 
+    // Bitmark: enforce OP_PUSHCODE once miners have signalled a supermajority
+    // of the new base block version. No hardcoded height; the window ends at
+    // this block's parent so a block cannot self-activate. IsSuperMajority masks
+    // out the algo/auxpow/variant/chainid bits via GetBlockVersion (& 255).
+    if (block_index.pprev &&
+        block_index.pprev->IsSuperMajority(consensusparams.nPushCodeVersion,
+                                           consensusparams.nPushCodeActivationThreshold,
+                                           consensusparams.nPushCodeActivationWindow)) {
+        flags |= SCRIPT_VERIFY_PUSHCODE;
+    }
+
     return flags;
 }
 

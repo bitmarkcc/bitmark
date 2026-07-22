@@ -86,6 +86,12 @@ bool IsStandard(const CScript& scriptPubKey, const std::optional<unsigned>& max_
         if (!max_datacarrier_bytes || scriptPubKey.size() > *max_datacarrier_bytes) {
             return false;
         }
+    } else if (whichType == TxoutType::PUSHCODE) {
+        // Bitmark: cap the code chunk (last push param) for relay. Consensus
+        // validation of the full param grammar happens at block connect.
+        if (vSolutions.empty() || vSolutions.back().size() > MAX_CODE_RELAY) {
+            return false;
+        }
     }
 
     return true;

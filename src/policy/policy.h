@@ -70,6 +70,11 @@ static const bool DEFAULT_ACCEPT_DATACARRIER = true;
  * +2 for the pushdata opcodes.
  */
 static const unsigned int MAX_OP_RETURN_RELAY = 200;
+/** Bitmark: relay-policy cap on the code chunk of an OP_PUSHCODE output (the
+ * last push param). Pure relay policy, not consensus -- tunable without a fork.
+ * A full dynamic-algo module is assembled from many such chunks across outputs.
+ * 256 for now, subject to change. */
+static const unsigned int MAX_CODE_RELAY = 256;
 /**
  * An extra transaction can be added to a package, as long as it only has one
  * ancestor and is no larger than this. Not really any reason to make this

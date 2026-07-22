@@ -303,7 +303,9 @@ TestChain100Setup::TestChain100Setup(
 	printf("TestChain100Setup activechain tip blockhash = %s\n",m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString().c_str());
         assert(
             m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString() ==
-            "0d47973c0e3784306afd224d888d35027cc109bb56b11d07548dcd7fed59e341");
+            // Updated for base block version 5 (OP_PUSHCODE signalling): the
+            // version bump changes every mined header, hence the tip hash.
+            "cf9e4abe2a5cbf855f37c681112e408a54cf8c309ac867c3f77be73d82a09d17");
     }
 }
 

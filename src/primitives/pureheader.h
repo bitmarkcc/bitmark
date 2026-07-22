@@ -62,7 +62,11 @@ inline bool update_ssf(int nVersion)
 class CPureBlockHeader
 { // Needed to resolve circular dependecies with CAuxPow in CBlockHeader
 public:
-    static const int CURRENT_VERSION = 4;
+    // Base block version 5 signals readiness for OP_PUSHCODE (activated by
+    // miner supermajority; see Consensus::Params::nPushCode*). Base version is
+    // the low 8 bits of nVersion (GetBlockVersion = nVersion & 255); the
+    // algo/auxpow/variant/chainid fields occupy bits 8 and above.
+    static const int CURRENT_VERSION = 5;
     int nVersion;
     uint256 hashPrevBlock;
     uint256 hashMerkleRoot;

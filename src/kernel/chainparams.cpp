@@ -101,6 +101,10 @@ public:
         consensus.CSVHeight = std::numeric_limits<int>::max();
         consensus.SegwitHeight = std::numeric_limits<int>::max();
         consensus.MinBIP9WarningHeight = std::numeric_limits<int>::max(); // segwit activation height + miner confirmation window
+        // OP_PUSHCODE: activate when 750 of the last 1000 blocks signal base version >= 5
+        consensus.nPushCodeVersion = 5;
+        consensus.nPushCodeActivationThreshold = 750;
+        consensus.nPushCodeActivationWindow = 1000;
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 24 * 60 * 60; // one day
         consensus.nPowTargetSpacing = 2 * 60; // two minutes
@@ -225,6 +229,10 @@ public:
         consensus.CSVHeight = std::numeric_limits<int>::max();
         consensus.SegwitHeight = std::numeric_limits<int>::max();
         consensus.MinBIP9WarningHeight = std::numeric_limits<int>::max();
+        // OP_PUSHCODE: same 750/1000 base-version-5 supermajority as mainnet
+        consensus.nPushCodeVersion = 5;
+        consensus.nPushCodeActivationThreshold = 750;
+        consensus.nPushCodeActivationWindow = 1000;
         consensus.powLimit = uint256S("00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 24 * 60 * 60;
         consensus.nPowTargetSpacing = 2 * 60;
@@ -344,6 +352,10 @@ public:
         consensus.BIP66Height = 1;
         consensus.CSVHeight = 1;
         consensus.SegwitHeight = 1;
+        // OP_PUSHCODE: 750/1000 base-version-5 supermajority, as mainnet
+        consensus.nPushCodeVersion = 5;
+        consensus.nPushCodeActivationThreshold = 750;
+        consensus.nPushCodeActivationWindow = 1000;
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
@@ -422,6 +434,12 @@ public:
         consensus.CSVHeight = 1;    // Always active unless overridden
         consensus.SegwitHeight = 0; // Always active unless overridden
         consensus.MinBIP9WarningHeight = 0;
+        // OP_PUSHCODE: small window so functional tests can cross the boundary
+        // quickly (75 of the last 100 blocks at base version >= 5, mirroring the
+        // mainnet 75% ratio). Drive per-block signaling with -blockversion.
+        consensus.nPushCodeVersion = 5;
+        consensus.nPushCodeActivationThreshold = 75;
+        consensus.nPushCodeActivationWindow = 100;
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 24 * 60 * 60; // one day
         consensus.nPowTargetSpacing = 2 * 60;
@@ -503,15 +521,17 @@ public:
                 .height = 730,
                 .hash_serialized = AssumeutxoHash{uint256S("0xb780d393d02281d35fe3fd2a108f275bc6cc800d5f312e6cf536688d03a8ca31")},
                 .nChainTx = 731,
-		//.blockhash = uint256S("0x0d47973c0e3784306afd224d888d35027cc109bb56b11d07548dcd7fed59e341")
-		.blockhash = uint256S("0x629317bdad0f6c27e833b460ea0be8eb96bc60549beffbfd3c3d6dc884ace296")
+		// blockhash rebased for base block version 5 (was version-4 hash
+		// 0x629317bd...); UTXO set is version-independent so hash_serialized/nChainTx unchanged
+		.blockhash = uint256S("0x303714dca134b21a64fbcb705d15d64db1c459ceadd8e0e513567b515f7cc13b")
             },
             {
                 // For use by test/functional/feature_assumeutxo.py
                 .height = 299,
                 .hash_serialized = AssumeutxoHash{uint256S("0xa4bf3407ccb2cc0145c49ebba8fa91199f8a3903daf0883875941497d2493c27")},
                 .nChainTx = 334,
-                .blockhash = uint256S("0x3bb7ce5eba0be48939b7a521ac1ba9316afee2c7bada3a0cca24188e6d7d96c0")
+                // blockhash rebased for base block version 5 (was 0x3bb7ce5e...)
+                .blockhash = uint256S("0xa11ee63f0a1422b09c234986dde314ddc52b83b02c6f52ff56144a0bd44ceec2")
             },
 	};
 
