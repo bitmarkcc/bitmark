@@ -764,6 +764,13 @@ public:
     /** Update the chain tip based on database information, i.e. CoinsTip()'s best block. */
     bool LoadChainTip() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
+    /** Bitmark: reconcile the OP_PUSHCODE code DB with the active chain tip at
+     *  startup (crash recovery). The code DB is written every block but the
+     *  coins DB flushes periodically, so after a crash the code DB may be ahead
+     *  of the connected tip on the same chain -- roll it back. Returns false if
+     *  the divergence cannot be reconciled and a -reindex is required. */
+    bool ReconcileCodeDB() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
     //! Dictates whether we need to flush the cache to disk or not.
     //!
     //! @return the state of the size of the coins cache.

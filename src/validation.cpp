@@ -45,6 +45,7 @@
 #include <script/pushcode.h>
 #include <script/script.h>
 #include <script/sigcache.h>
+#include <script/solver.h>
 #include <signet.h>
 #include <tinyformat.h>
 #include <txdb.h>
@@ -263,6 +264,9 @@ bool CheckSequenceLocksAtTip(CBlockIndex* tip,
 
 // Returns the script flags which should be checked for a given block
 static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const ChainstateManager& chainman);
+
+// Bitmark: content hashes of a block's OP_PUSHCODE outputs (defined below).
+static std::vector<uint256> CollectPushCodeHashes(const CBlock& block);
 
 static void LimitMempoolSize(CTxMemPool& pool, CCoinsViewCache& coins_cache)
     EXCLUSIVE_LOCKS_REQUIRED(::cs_main, pool.cs)
@@ -2326,6 +2330,18 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         }
     }
 
+    // Bitmark: undo this block's OP_PUSHCODE code entries. Content-hash
+    // immutability makes this a plain removal (no linked-list un-splicing).
+    // Pre-activation blocks added no entries, so UndoBlock simply skips hashes
+    // it does not find; the empty-hash case still retreats the code-DB best
+    // block to the parent, keeping it in step with the chain tip.
+    if (m_blockman.m_code_db) {
+        if (!m_blockman.m_code_db->UndoBlock(CollectPushCodeHashes(block), pindex->pprev->GetBlockHash())) {
+            error("DisconnectBlock(): failed to undo OP_PUSHCODE entries");
+            return DISCONNECT_FAILED;
+        }
+    }
+
     // move best block pointer to prevout block
     view.SetBestBlock(pindex->pprev->GetBlockHash());
 
@@ -2408,6 +2424,123 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const Ch
     }
 
     return flags;
+}
+
+// Bitmark: validate a block's OP_PUSHCODE outputs (grammar only) and collect the
+// code entries they add. A reference is a content-addressed COMMITMENT: the
+// target need NOT already be on the chain -- it may appear in this same block, a
+// future block, or never. So there is no reference-resolution check here;
+// whether a referenced part is AVAILABLE is a separate concern, checked at
+// assembly time (3c), where a missing part just makes a branch incomplete rather
+// than invalid. Acyclicity still holds because H depends on parent_hash.
+// The CCodeEntry list is built only when compute_entries is set (i.e. actually
+// connecting, so the block is on disk and code_pos is valid).
+static bool ProcessPushCodeBlock(const CBlock& block, const CBlockIndex& block_index,
+                                 bool compute_entries,
+                                 std::vector<std::pair<uint256, CCodeEntry>>& out_entries,
+                                 BlockValidationState& state)
+{
+    CDiskTxPos pos;
+    if (compute_entries) {
+        pos = CDiskTxPos(block_index.GetBlockPos(), GetSizeOfCompactSize(block.vtx.size()));
+    }
+    for (size_t i = 0; i < block.vtx.size(); i++) {
+        const CTransaction& tx = *block.vtx[i];
+        for (size_t j = 0; j < tx.vout.size(); j++) {
+            std::vector<std::vector<unsigned char>> sol;
+            if (Solver(tx.vout[j].scriptPubKey, sol) != TxoutType::PUSHCODE) continue;
+            PushCodeParams p;
+            std::string reason;
+            if (!ParsePushCode(sol, p, reason)) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, reason);
+            }
+            if (compute_entries) {
+                CCodeEntry e;
+                e.op = p.op;
+                e.has_parent = p.has_parent;
+                e.parent_hash = p.parent_hash;
+                e.has_part = p.has_part;
+                e.nPart = p.nPart;
+                e.has_part2 = p.has_part2;
+                e.nPart2 = p.nPart2;
+                e.height = block_index.nHeight;
+                e.code_pos = pos;
+                e.vout = static_cast<uint32_t>(j);
+                e.refcount = 1;
+                out_entries.emplace_back(PushCodeHash(tx.vout[j].scriptPubKey), e);
+            }
+        }
+        if (compute_entries) pos.nTxOffset += ::GetSerializeSize(TX_WITH_WITNESS(tx));
+    }
+    return true;
+}
+
+// Collect the content hashes of a block's OP_PUSHCODE outputs (used to undo a
+// block's code entries during reorg and reconciliation).
+static std::vector<uint256> CollectPushCodeHashes(const CBlock& block)
+{
+    std::vector<uint256> hashes;
+    for (const auto& tx : block.vtx) {
+        for (const auto& out : tx->vout) {
+            std::vector<std::vector<unsigned char>> sol;
+            if (Solver(out.scriptPubKey, sol) == TxoutType::PUSHCODE) {
+                hashes.push_back(PushCodeHash(out.scriptPubKey));
+            }
+        }
+    }
+    return hashes;
+}
+
+bool Chainstate::ReconcileCodeDB()
+{
+    AssertLockHeld(cs_main);
+    CCodeDB* codedb = m_blockman.m_code_db.get();
+    if (!codedb) return true;
+    // A snapshot (assumeutxo) chainstate trusts the UTXO set at its base height
+    // without connecting the historical blocks, so it never populates the code
+    // DB for that history and there is nothing to reconcile against its tip. The
+    // fully-validated (background) chainstate owns historical code-DB population.
+    if (m_from_snapshot_blockhash) return true;
+    const CBlockIndex* tip = m_chain.Tip();
+    if (!tip) return true; // empty chain, nothing to reconcile
+
+    // If OP_PUSHCODE is not active at the tip, the code DB is legitimately empty.
+    if (!(GetBlockScriptFlags(*tip, m_chainman) & SCRIPT_VERIFY_PUSHCODE)) {
+        return true;
+    }
+
+    uint256 best;
+    const bool have_best = codedb->ReadBestBlock(best);
+    if (have_best && best == tip->GetBlockHash()) {
+        return true; // already consistent
+    }
+
+    // Crash recovery: the code DB is written every block but the coins DB flushes
+    // periodically, so after a crash the code DB can be AHEAD of the connected
+    // tip on the same chain (best is a descendant of tip). Roll it back.
+    const CBlockIndex* pindex_c = have_best ? m_blockman.LookupBlockIndex(best) : nullptr;
+    if (pindex_c && pindex_c->GetAncestor(tip->nHeight) == tip) {
+        for (const CBlockIndex* pindex = pindex_c; pindex && pindex != tip; pindex = pindex->pprev) {
+            CBlock block;
+            if (!m_blockman.ReadBlockFromDisk(block, *pindex)) {
+                LogPrintf("ReconcileCodeDB: cannot read block %s to roll back\n", pindex->GetBlockHash().ToString());
+                return false; // require -reindex
+            }
+            const uint256 new_best = pindex->pprev ? pindex->pprev->GetBlockHash() : uint256();
+            if (!codedb->UndoBlock(CollectPushCodeHashes(block), new_best)) {
+                return false;
+            }
+        }
+        LogPrintf("ReconcileCodeDB: rolled the OP_PUSHCODE code DB back to the active tip %s\n",
+                  tip->GetBlockHash().ToString());
+        return true;
+    }
+
+    // Any other divergence (code DB behind, wiped, or on a different fork) needs
+    // a full rebuild, which -reindex performs via normal block connection.
+    LogPrintf("ReconcileCodeDB: code DB best block %s is inconsistent with active tip %s; -reindex required\n",
+              have_best ? best.ToString() : "none", tip->GetBlockHash().ToString());
+    return false;
 }
 
 
@@ -2720,19 +2853,6 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blk-sigops");
         }
 
-        // Bitmark: once the OP_PUSHCODE soft fork is active, a malformed PUSHCODE
-        // output makes the block invalid. Phase 3a validates the param grammar
-        // only; reference resolution and code assembly are phases 3b/3c. Applies
-        // to every transaction's outputs, coinbase included.
-        if (flags & SCRIPT_VERIFY_PUSHCODE) {
-            std::string pushcode_reason;
-            if (!CheckPushCodeOutputs(tx, pushcode_reason)) {
-                state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, pushcode_reason);
-                return error("ConnectBlock(): bad OP_PUSHCODE output in %s: %s",
-                             tx.GetHash().ToString(), state.ToString());
-            }
-        }
-
         if (!tx.IsCoinBase())
         {
             std::vector<CScriptCheck> vChecks;
@@ -2785,8 +2905,34 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
              Ticks<SecondsDouble>(time_verify),
              Ticks<MillisecondsDouble>(time_verify) / num_blocks_total);
 
+    // Bitmark: OP_PUSHCODE grammar validation (rejects a bad block even under
+    // fJustCheck) and entry collection. No reference resolution -- a referenced
+    // entry need not exist yet (see ProcessPushCodeBlock). Entries are staged
+    // only when actually connecting and recorded in the code DB just below.
+    std::vector<std::pair<uint256, CCodeEntry>> pushcode_entries;
+    if (flags & SCRIPT_VERIFY_PUSHCODE) {
+        if (!ProcessPushCodeBlock(block, *pindex, /*compute_entries=*/!fJustCheck, pushcode_entries, state)) {
+            return error("ConnectBlock(): OP_PUSHCODE validation failed: %s", state.ToString());
+        }
+    }
+
     if (fJustCheck)
         return true;
+
+    // Bitmark: record this block's PUSHCODE entries with the block as the new
+    // code-DB best block (atomic batch). This store is CONSENSUS-CRITICAL: the
+    // dynamic-PoW-algo execution phase assembles the code to run/verify from it,
+    // so every node must build identical entries. Kept in step with the chain
+    // here and in DisconnectBlock; startup reconciliation (still TODO) is
+    // required before that execution phase ships.
+    if (flags & SCRIPT_VERIFY_PUSHCODE) {
+        if (!m_blockman.m_code_db) {
+            return FatalError(m_chainman.GetNotifications(), state, "OP_PUSHCODE code DB not open");
+        }
+        if (!m_blockman.m_code_db->ApplyBlock(pushcode_entries, pindex->GetBlockHash())) {
+            return FatalError(m_chainman.GetNotifications(), state, "Failed to write OP_PUSHCODE code entries");
+        }
+    }
 
     // Increment the nMoneySupply to include this blocks subsidy
     if (onForkNow) {

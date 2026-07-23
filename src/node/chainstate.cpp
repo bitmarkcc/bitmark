@@ -48,6 +48,17 @@ static ChainstateLoadResult CompleteChainstateInitialization(
         .wipe_data = options.reindex,
         .options = chainman.m_options.block_tree_db});
 
+    // Bitmark: open the OP_PUSHCODE code-entry consensus store next to the block
+    // index. Shares the reindex/in-memory options; wiped on reindex so it is
+    // rebuilt in lockstep with the block index.
+    auto& pcodedb{chainman.m_blockman.m_code_db};
+    pcodedb.reset();
+    pcodedb = std::make_unique<CCodeDB>(DBParams{
+        .path = chainman.m_options.datadir / "blocks" / "code",
+        .cache_bytes = static_cast<size_t>(cache_sizes.block_tree_db),
+        .memory_only = options.block_tree_db_in_memory,
+        .wipe_data = options.reindex});
+
     if (options.reindex) {
         pblocktree->WriteReindexing(true);
         //If we're reindexing in prune mode, wipe away unusable block files and all undo data files
@@ -146,6 +157,15 @@ static ChainstateLoadResult CompleteChainstateInitialization(
             }
             assert(chainstate->m_chain.Tip() != nullptr);
         }
+    }
+
+    // Bitmark: reconcile the OP_PUSHCODE code DB with the active chain tip before
+    // connecting any further blocks. The code index is consensus-critical (the
+    // dynamic-algo execution phase assembles from it), and after a crash it may
+    // be ahead of the connected tip; ReconcileCodeDB rolls it back, or asks for a
+    // -reindex if the divergence cannot be reconciled.
+    if (!chainman.ActiveChainstate().ReconcileCodeDB()) {
+        return {ChainstateLoadStatus::FAILURE, _("The OP_PUSHCODE code database is inconsistent with the block chain. Please restart with -reindex.")};
     }
 
     if (!options.reindex) {

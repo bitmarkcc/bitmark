@@ -238,6 +238,99 @@ DeploymentActiveAt), per PUSHCODE output:
   anyone-proposes / PoW-decides (phase-1 assumption; no per-entry spend auth).
   So codeindex map: H -> { parent_hash, op, nPart, nPart2, height, refcount,
   code_pos (CDiskTxPos) }.
+    * MODULE DONE (2026-07-22): src/pushcodedb.{h,cpp} (registered in
+      Makefile.am kernel+node libs). CCodeEntry (serialized), PushCodeHash =
+      Hash() of the output scriptPubKey (content identity), and CCodeDB
+      (CDBWrapper): ReadEntry/HaveEntry/AddEntry(refcount-bumping on dedup)/
+      RemoveEntry(refcount-decrement then erase)/Read+WriteBestBlock. Best-block
+      marker is written in the same batch as each entry change so the store can
+      be reconciled with the active chain on startup. Note: content-hash refs
+      mean resolution is a code-DB lookup, NOT GetTransaction -- so, unlike
+      dev2024, PUSHCODE validation does NOT require -txindex. Unit tests:
+      test/pushcodedb_tests.cpp (content hash determinism/sensitivity; entry
+      round-trip; dedup refcount up/down; best-block tracking).
+    * INFRASTRUCTURE DONE (2026-07-22, compilable checkpoint):
+      - CCodeDB owned by BlockManager (m_code_db, blockstorage.h) and opened at
+        startup next to m_block_tree_db (node/chainstate.cpp, path blocks/code,
+        shares reindex/in-memory options). Available during ConnectBlock.
+      - script/pushcode.{h,cpp}: added PushCodeParams + ParsePushCode() which
+        validates grammar AND extracts {op, has_parent, parent_hash, has_part,
+        nPart, has_part2, nPart2}; CheckPushCodeGrammar now wraps it.
+      - CCodeEntry gained a `vout` field: code_pos is the containing tx's
+        CDiskTxPos (computed like txindex), vout selects the output; 3c reads
+        the tx and Solvers vout[vout] for the code chunk.
+    * CONSENSUS WIRING DONE (2026-07-22):
+      - CCodeDB block-atomic API: ApplyBlock(entries, best)/UndoBlock(hashes,
+        best), each one batch; both aggregate duplicate H within a block for
+        correct refcounting; both always write the best block (so empty-entry
+        blocks still advance/retreat it). Unit test extended for intra-block
+        dedup.
+      - ConnectBlock: ProcessPushCodeBlock() (after the tx loop, before the
+        `if (fJustCheck) return true;`) runs Solver+ParsePushCode on every
+        output and rejects only on bad GRAMMAR -- runs even under fJustCheck
+        (TestBlockValidity / mining pre-checks). Entries are built only when
+        actually connecting (code_pos = containing tx's CDiskTxPos via
+        GetBlockPos + GetSizeOfCompactSize + cumulative TX_WITH_WITNESS sizes;
+        vout = output index) and committed with ApplyBlock(best = block hash)
+        after the fJustCheck return. FatalError on a DB write failure.
+      - DisconnectBlock: scan the block's PUSHCODE outputs, UndoBlock(hashes,
+        best = pprev hash) -- trivial thanks to content-hash immutability.
+    * REFERENCES ARE COMMITMENTS, NOT RESOLVED AT PUSH TIME (design, 2026-07-23):
+      no reference-resolution check in ConnectBlock. A PUSHCODE output's
+      parent_hash may name an entry that appears in this same block, a future
+      block, or never -- validity is grammar only. This enables intra-block and
+      FORWARD references (referencing a scriptPubKey not yet on chain).
+      Acyclicity still holds (H depends on parent_hash). Whether a referenced
+      part is AVAILABLE is a separate concern, resolved at ASSEMBLY time (3c):
+      a missing part makes a branch INCOMPLETE (unassemblable), not invalid, so
+      an algo with a dangling ref simply cannot be activated/run.
+    * THE CODE INDEX IS CONSENSUS-CRITICAL (clarified by user 2026-07-23): the
+      future dynamic-PoW-algo execution phase assembles code from this index to
+      decide/verify which algo to run, so every node must hold identical, correct
+      entries. Therefore it MUST remain a synchronous consensus DB (as built) --
+      it is NOT an optional/background index, and an earlier note musing that it
+      could become one is WRONG. Consequently refcount correctness and startup
+      reconciliation DO matter for consensus (wrong entry -> wrong assembly ->
+      wrong algo verification -> chain split).
+    * STARTUP RECONCILIATION DONE (2026-07-23): Chainstate::ReconcileCodeDB()
+      (validation.cpp), called once from node/chainstate.cpp LoadChainstate
+      after LoadChainTip, against the active chainstate, under cs_main. Logic:
+      no-op if OP_PUSHCODE isn't active at the tip (code DB legitimately empty)
+      or if code-DB-best == tip; if the code DB is AHEAD of the tip on the same
+      chain (best.GetAncestor(tip.height) == tip -- the crash case, code DB
+      written every block vs coins DB flushed periodically), roll it back by
+      reading each block from best down to tip and UndoBlock-ing its outputs;
+      any other divergence (behind / wiped / forked) returns false -> load
+      fails asking for -reindex (which wipes blocks/code and rebuilds via normal
+      ConnectBlock). CollectPushCodeHashes() helper shared by DisconnectBlock
+      and reconciliation so both scan identically. ReconcileCodeDB SKIPS
+      snapshot (assumeutxo) chainstates (m_from_snapshot_blockhash set): a
+      snapshot trusts the UTXO set at its base height without connecting the
+      historical blocks, so it never populates the code DB for that history --
+      the fully-validated (background) chainstate owns that. Without the skip,
+      snapshot chainstate load fails (validation_chainstatemanager tests).
+    * ASSUMEUTXO + CODE INDEX (limitation to carry into the execution phase):
+      currently only testnet/regtest configure m_assumeutxo_data (mainnet is
+      empty, so mainnet always full-validates from genesis and its code DB is
+      always complete -- the safe case). IF a mainnet snapshot is ever shipped
+      for fast sync, a node that loads it lacks PRE-SNAPSHOT code entries until
+      the background chainstate validates from genesis; during that window a
+      dynamic algo referencing pre-snapshot code is incomplete/unassemblable
+      (handled by "incomplete != invalid", but it cannot be RUN yet). Design
+      item for the execution phase: ship code entries as part of / alongside the
+      snapshot, or gate dynamic-algo assembly on background validation reaching
+      the referenced blocks.
+    * 3b COMPLETE (2026-07-23): functional test test/functional/feature_pushcode.py
+      passes -- MiniWallet + generateblock drives real scrypt PoW across the
+      activation boundary and asserts: pre-activation malformed PUSHCODE ignored
+      (block accepted); post-activation well-formed NEW accepted; forward
+      reference (codehash not yet on chain) accepted; malformed 31-byte codehash
+      rejected (bad-pushcode-codehash). Framework adaptations for Bitmark:
+      renamed bitcoin.conf->bitmark.conf and bitcoind->bitmarkd binaries;
+      test_framework/blocktools.py COINBASE_MATURITY 100->720 and
+      MAX_FUTURE_BLOCK_TIME 2h->12min (mirrors the *enforced* CheckBlock rule at
+      validation.cpp:4232, not the shadowed chain.h MAX_FUTURE_BLOCK_TIME=2h used
+      in ContextualCheckBlockHeader).
 - 3c: full assembly (walk parents / replay ops), the MAX_PUSHCODE_* limits
   (step 3), and code_pos materialization; unit tests for insert/replace/delete,
   cycle/dangling rejection, canonical selection.

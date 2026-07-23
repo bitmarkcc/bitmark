@@ -287,6 +287,7 @@ BITCOIN_CORE_H = \
   threadsafety.h \
   timedata.h \
   torcontrol.h \
+  pushcodedb.h \
   txdb.h \
   txmempool.h \
   txorphanage.h \
@@ -465,6 +466,7 @@ libbitcoin_node_a_SOURCES = \
   signet.cpp \
   timedata.cpp \
   torcontrol.cpp \
+  pushcodedb.cpp \
   txdb.cpp \
   txmempool.cpp \
   txorphanage.cpp \
@@ -1033,6 +1035,7 @@ libbitcoinkernel_la_SOURCES = \
   support/cleanse.cpp \
   support/lockedpool.cpp \
   sync.cpp \
+  pushcodedb.cpp \
   txdb.cpp \
   txmempool.cpp \
   uint256.cpp \

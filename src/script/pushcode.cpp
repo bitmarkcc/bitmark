@@ -27,9 +27,10 @@ bool DecodePushCodeNum(const std::vector<unsigned char>& vch, int64_t& out)
 }
 } // namespace
 
-bool CheckPushCodeGrammar(const std::vector<std::vector<unsigned char>>& sol,
-                          std::string& reason)
+bool ParsePushCode(const std::vector<std::vector<unsigned char>>& sol,
+                   PushCodeParams& out, std::string& reason)
 {
+    out = PushCodeParams{};
     const size_t n = sol.size();
     if (n < 1 || n > 5) { reason = "bad-pushcode-nparams"; return false; }
     const std::vector<unsigned char>& code = sol.back();
@@ -37,12 +38,14 @@ bool CheckPushCodeGrammar(const std::vector<std::vector<unsigned char>>& sol,
     // NEW (n==1): a root entry that seeds a branch; it needs an initial chunk.
     if (n == 1) {
         if (code.empty()) { reason = "bad-pushcode-empty"; return false; }
-        return true;
+        return true; // op INSERT, no parent, no parts
     }
 
     // n>=2: a reference form. The content hash lives at index 0 (n==2) or 1.
     const size_t hash_idx = (n == 2) ? 0 : 1;
     if (sol[hash_idx].size() != 32) { reason = "bad-pushcode-codehash"; return false; }
+    out.has_parent = true;
+    out.parent_hash = uint256(sol[hash_idx]);
 
     int64_t pushtype = 0; // n==2 has no explicit pushtype => INSERT
     if (n >= 3) {
@@ -50,13 +53,16 @@ bool CheckPushCodeGrammar(const std::vector<std::vector<unsigned char>>& sol,
             reason = "bad-pushcode-pushtype"; return false;
         }
     }
-    const bool is_replace = (pushtype & 1) != 0;
+    out.op = static_cast<uint8_t>(pushtype & 1);
+    const bool is_replace = out.op != 0;
 
     int64_t nPart = 0, nPart2 = 0;
     if (n >= 4) {
         if (!DecodePushCodeNum(sol[2], nPart) || nPart < 0) {
             reason = "bad-pushcode-npart"; return false;
         }
+        out.has_part = true;
+        out.nPart = static_cast<uint32_t>(nPart);
     }
     if (n == 5) {
         if (!DecodePushCodeNum(sol[3], nPart2) || nPart2 < 0) {
@@ -64,11 +70,20 @@ bool CheckPushCodeGrammar(const std::vector<std::vector<unsigned char>>& sol,
         }
         if (!is_replace) { reason = "bad-pushcode-range-insert"; return false; } // range => REPLACE
         if (nPart2 < nPart) { reason = "bad-pushcode-range"; return false; }
+        out.has_part2 = true;
+        out.nPart2 = static_cast<uint32_t>(nPart2);
     }
 
     // Only REPLACE may carry an empty code chunk (that is the delete operation).
     if (!is_replace && code.empty()) { reason = "bad-pushcode-empty"; return false; }
     return true;
+}
+
+bool CheckPushCodeGrammar(const std::vector<std::vector<unsigned char>>& sol,
+                          std::string& reason)
+{
+    PushCodeParams parsed;
+    return ParsePushCode(sol, parsed, reason);
 }
 
 bool CheckPushCodeOutputs(const CTransaction& tx, std::string& reason)

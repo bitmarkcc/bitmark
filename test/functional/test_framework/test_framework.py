@@ -230,11 +230,12 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
     def set_binary_paths(self):
         """Update self.options with the paths of all binaries from environment variables or their default values"""
 
+        # Bitmark binary names (src/bitmarkd etc.); env vars still override.
         binaries = {
-            "bitcoind": ("bitcoind", "BITCOIND"),
-            "bitcoin-cli": ("bitcoincli", "BITCOINCLI"),
-            "bitcoin-util": ("bitcoinutil", "BITCOINUTIL"),
-            "bitcoin-wallet": ("bitcoinwallet", "BITCOINWALLET"),
+            "bitmarkd": ("bitcoind", "BITCOIND"),
+            "bitmark-cli": ("bitcoincli", "BITCOINCLI"),
+            "bitmark-util": ("bitcoinutil", "BITCOINUTIL"),
+            "bitmark-wallet": ("bitcoinwallet", "BITCOINWALLET"),
         }
         for binary, [attribute_name, env_variable_name] in binaries.items():
             default_filename = os.path.join(

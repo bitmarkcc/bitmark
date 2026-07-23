@@ -9,6 +9,7 @@
 #include <chain.h>
 #include <dbwrapper.h>
 #include <flatfile.h>
+#include <pushcodedb.h>
 #include <kernel/blockmanager_opts.h>
 #include <kernel/chainparams.h>
 #include <kernel/cs_main.h>
@@ -284,6 +285,11 @@ public:
     std::multimap<CBlockIndex*, CBlockIndex*> m_blocks_unlinked;
 
     std::unique_ptr<BlockTreeDB> m_block_tree_db GUARDED_BY(::cs_main);
+
+    //! OP_PUSHCODE code-entry consensus store (Bitmark). Updated synchronously
+    //! in ConnectBlock/DisconnectBlock; read during ConnectBlock to resolve
+    //! content-hash references. See src/pushcodedb.h.
+    std::unique_ptr<CCodeDB> m_code_db GUARDED_BY(::cs_main);
 
     bool WriteBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     bool LoadBlockIndexDB(const std::optional<uint256>& snapshot_blockhash)
