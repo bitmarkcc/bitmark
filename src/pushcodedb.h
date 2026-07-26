@@ -11,6 +11,8 @@
 #include <uint256.h>
 
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -89,5 +91,48 @@ public:
     bool ReadBestBlock(uint256& best_block) const;
     bool WriteBestBlock(const uint256& best_block);
 };
+
+// ---- Code assembly (phase 3c) ------------------------------------------------
+//
+// The materialized code of a branch tip H is a pure function of the entry DAG:
+// walk parent_hash from H back to the NEW root, then replay the ops root->tip to
+// build an ordered list of parts, and concatenate them. Nothing mutable is
+// stored -- assembly is recomputable from the code DB (op/parent/part fields)
+// plus the code chunks fetched from the block files (code_pos).
+
+// MAX_PUSHCODE_* consensus limits (from dev2024 main.h). Both are BLOCK-HEIGHT
+// distances -- they bound the branch's own shape, not byte sizes:
+//   DEPTH  -- per parent edge: |E.height - parent.height| blocks (how far a single
+//             reference reaches, either direction now that forward refs exist).
+//   LENGTH -- per entry vs. the tip: |tip.height - E.height| blocks (the branch's
+//             internal block span). (Later, dynamic-algo activation will add its
+//             own "how far back was this defined" bounds, relative to the invoking
+//             block; those are NOT these.)
+// dev2024's MAX_PUSHCODE_PART_DEPTH was defined but never used (dropped), and
+// MAX_PUSHCODE_SIZE was int64max (no effective byte bound; omitted).
+static constexpr int64_t MAX_PUSHCODE_DEPTH = 33638400;  // max blocks per reference edge
+static constexpr int64_t MAX_PUSHCODE_LENGTH = 33638400; // max block span of a branch
+
+/** Outcome of assembling a branch tip's code. */
+enum class PushCodeStatus {
+    COMPLETE,    // `out` holds the fully-assembled code
+    INCOMPLETE,  // a referenced ancestor entry (or its chunk) is not available yet
+    INVALID,     // a consensus limit was exceeded or an op index was out of range
+};
+
+/** Fetch the raw code chunk of an entry (the code param of the PUSHCODE output at
+ *  entry.code_pos / entry.vout). Returns false if unavailable (e.g. pruned). */
+using PushCodeChunkFetcher =
+    std::function<bool(const CCodeEntry& entry, std::vector<unsigned char>& chunk)>;
+
+/** Assemble the code of branch tip `hash`: walk parent_hash back to the NEW root,
+ *  then replay insert/replace/delete ops root->tip, concatenating the parts.
+ *  A missing ancestor or unavailable chunk yields INCOMPLETE (references are
+ *  commitments -- a part may arrive in a later block, or never); an out-of-range
+ *  op index or a blown MAX_PUSHCODE_DEPTH/LENGTH limit yields INVALID. Pure
+ *  w.r.t. (db, fetch); holds no lock of its own. */
+PushCodeStatus AssemblePushCode(const CCodeDB& db, const uint256& hash,
+                                const PushCodeChunkFetcher& fetch,
+                                std::vector<unsigned char>& out, std::string& reason);
 
 #endif // BITCOIN_PUSHCODEDB_H

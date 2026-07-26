@@ -2543,6 +2543,39 @@ bool Chainstate::ReconcileCodeDB()
     return false;
 }
 
+PushCodeStatus Chainstate::AssemblePushCode(const uint256& hash, std::vector<unsigned char>& out,
+                                            std::string& reason)
+{
+    AssertLockHeld(cs_main);
+    CCodeDB* codedb = m_blockman.m_code_db.get();
+    if (!codedb) { reason = "pushcode-no-db"; return PushCodeStatus::INCOMPLETE; }
+
+    // Materialize a part's code chunk by reading its containing tx from the block
+    // files (code_pos is that tx's on-disk position, as in the tx index) and
+    // taking the code param of its PUSHCODE output vout. Unavailable (e.g. pruned)
+    // => the branch is incomplete, handled by the assembler as INCOMPLETE.
+    auto fetch = [this](const CCodeEntry& e, std::vector<unsigned char>& chunk) -> bool {
+        AutoFile file{m_blockman.OpenBlockFile(e.code_pos, /*fReadOnly=*/true)};
+        if (file.IsNull()) return false;
+        CBlockHeader header;
+        CMutableTransaction tx;
+        try {
+            file >> header;
+            if (fseek(file.Get(), e.code_pos.nTxOffset, SEEK_CUR)) return false;
+            file >> TX_WITH_WITNESS(tx);
+        } catch (const std::exception&) {
+            return false;
+        }
+        if (e.vout >= tx.vout.size()) return false;
+        std::vector<std::vector<unsigned char>> sol;
+        if (Solver(tx.vout[e.vout].scriptPubKey, sol) != TxoutType::PUSHCODE) return false;
+        chunk = sol.back();
+        return true;
+    };
+
+    return ::AssemblePushCode(*codedb, hash, fetch, out, reason);
+}
+
 
 static SteadyClock::duration time_check{};
 static SteadyClock::duration time_forks{};

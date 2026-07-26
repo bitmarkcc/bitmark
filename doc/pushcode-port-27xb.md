@@ -331,14 +331,50 @@ DeploymentActiveAt), per PUSHCODE output:
       MAX_FUTURE_BLOCK_TIME 2h->12min (mirrors the *enforced* CheckBlock rule at
       validation.cpp:4232, not the shadowed chain.h MAX_FUTURE_BLOCK_TIME=2h used
       in ContextualCheckBlockHeader).
-- 3c: full assembly (walk parents / replay ops), the MAX_PUSHCODE_* limits
-  (step 3), and code_pos materialization; unit tests for insert/replace/delete,
-  cycle/dangling rejection, canonical selection.
+- 3c COMPLETE (2026-07-26): full assembly (walk parents / replay ops), the
+  MAX_PUSHCODE_* limits, and code_pos materialization.
+    * Core (pure) in pushcodedb.{h,cpp}: AssemblePushCode(db, hash, fetch, out,
+      reason) -> PushCodeStatus {COMPLETE, INCOMPLETE, INVALID}. Walks parent_hash
+      tip->root (linear -- a tip's history is a chain, so the content-hash
+      redesign replaces dev2024's 5 mutable spliced indexes with one walk + a
+      replay), then replays ops root->tip into an ordered part list and
+      concatenates. Op semantics match dev2024: NEW seeds [chunk]; no part index
+      appends at the end (whatever the op); INSERT+nPart inserts before nPart;
+      REPLACE over [nPart,nPart2] overwrites (empty chunk = delete). Chunk bytes
+      are supplied by a PushCodeChunkFetcher callback (injectable => unit-testable
+      with no chain state).
+    * INCOMPLETE vs INVALID: a missing ancestor entry or an unavailable chunk
+      (pruned) => INCOMPLETE (references are commitments; the part may arrive
+      later or never -- a dangling branch is unassemblable, NOT consensus-invalid).
+      An out-of-range insert/replace index or a blown limit => INVALID.
+    * MAX_PUSHCODE_* semantics CORRECTED (user, 2026-07-26): DEPTH and LENGTH are
+      BLOCK-HEIGHT distances, not byte/ancestor counts (dev2024 checked them vs
+      pindex->nHeight). Redesign choice (Option B): assemble self-contained with
+      the TIP as the vantage point, so the limits bound the branch's own shape:
+      DEPTH = per parent edge |child.height - parent.height| (both directions,
+      since forward refs are allowed); LENGTH = per entry |tip.height - E.height|
+      (the branch's internal block span). MAX_PUSHCODE_PART_DEPTH was DEAD in
+      dev2024 (defined, never used) -> dropped; MAX_PUSHCODE_SIZE was int64max
+      (no byte bound) -> omitted. Staleness relative to the block USING an algo is
+      deliberately NOT enforced here; the future dynamic-algo voting/activation
+      system will carry its own "how far back was this defined" bounds.
+    * Node glue: Chainstate::AssemblePushCode(hash, out, reason) (validation.cpp,
+      cs_main) builds the real fetcher -- OpenBlockFile(code_pos) + read tx (as
+      the tx index does) + Solver the vout => code param -- and calls the core.
+    * Unit tests (test/pushcodedb_tests.cpp): NEW/append, insert-at-index,
+      replace, delete; dangling ref + unavailable chunk => INCOMPLETE; insert/
+      replace index out of range => INVALID; DEPTH edge and LENGTH span limits,
+      incl. a forward reference (parent confirmed later) within DEPTH => COMPLETE.
+    * No consensus consumer yet: assembly is invoked by nothing in the connect
+      path (execution/verification is phase 6). 3c ships the library + glue +
+      tests only.
 
 ### Open questions for review
-- MAX_PUSHCODE_* values: keep dev2024's (huge) or retune for the wasm-module
-  use case (llm.c verifier ~100 KB assembled from MAX_CODE_RELAY=256 chunks =>
-  ~400 parts; depth/length caps should comfortably exceed that)?
+- MAX_PUSHCODE_* values: RESOLVED (2026-07-26) -- kept dev2024's DEPTH/LENGTH
+  (33638400 blocks each), reinterpreted as block-height distances (see 3c). Both
+  are ~64 years of blocks, so they comfortably exceed any realistic wasm-module
+  branch (llm.c verifier ~100 KB from MAX_CODE_RELAY=256 chunks => ~400 parts).
+  PART_DEPTH/SIZE dropped. Revisit only if a tighter DoS bound is wanted.
 - Authorization model (from phase-1 doc): still "anyone proposes, PoW-vote
   decides"? If so, no per-entry spend auth is needed and content-hash refs are
   fully sufficient. Confirm before 3b.

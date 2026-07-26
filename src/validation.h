@@ -771,6 +771,13 @@ public:
      *  the divergence cannot be reconciled and a -reindex is required. */
     bool ReconcileCodeDB() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
+    /** Bitmark: assemble the code of OP_PUSHCODE branch tip `hash` from the code
+     *  DB, materializing each part's chunk from the block files. Returns
+     *  INCOMPLETE if a referenced ancestor entry or its chunk is unavailable, or
+     *  INVALID on an out-of-range op / MAX_PUSHCODE_* violation. */
+    PushCodeStatus AssemblePushCode(const uint256& hash, std::vector<unsigned char>& out,
+                                    std::string& reason) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
     //! Dictates whether we need to flush the cache to disk or not.
     //!
     //! @return the state of the size of the coins cache.
