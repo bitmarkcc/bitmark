@@ -340,9 +340,11 @@ DeploymentActiveAt), per PUSHCODE output:
       replay), then replays ops root->tip into an ordered part list and
       concatenates. Op semantics match dev2024: NEW seeds [chunk]; no part index
       appends at the end (whatever the op); INSERT+nPart inserts before nPart;
-      REPLACE over [nPart,nPart2] overwrites (empty chunk = delete). Chunk bytes
-      are supplied by a PushCodeChunkFetcher callback (injectable => unit-testable
-      with no chain state).
+      REPLACE over [nPart,nPart2] overwrites; DELETE erases that range (see the
+      DELETE pushtype-bit section below -- originally "empty chunk = delete", but
+      an empty chunk is not representable, so delete became an explicit bit).
+      Chunk bytes are supplied by a PushCodeChunkFetcher callback (injectable =>
+      unit-testable with no chain state).
     * INCOMPLETE vs INVALID: a missing ancestor entry or an unavailable chunk
       (pruned) => INCOMPLETE (references are commitments; the part may arrive
       later or never -- a dangling branch is unassemblable, NOT consensus-invalid).
@@ -368,6 +370,52 @@ DeploymentActiveAt), per PUSHCODE output:
     * No consensus consumer yet: assembly is invoked by nothing in the connect
       path (execution/verification is phase 6). 3c ships the library + glue +
       tests only.
+
+## DELETE pushtype bit (consensus grammar, 2026-08-06)
+
+Correction to the original "empty code on REPLACE = delete" plan: an empty code
+chunk is NOT representable as a script param -- a zero-length push serializes to
+the byte 0x00, which is OP_0, which MatchPushCode normalizes to {0x00} (a 1-byte
+chunk), never an empty vector. So `code.empty()` was unreachable and delete had
+no on-chain encoding. Fixed with an explicit DELETE bit (user-approved):
+- pushtype bit 0 = REPLACE (vs INSERT); pushtype bit 1 = DELETE. DELETE requires
+  the REPLACE bit (delete IS a replace with no replacement), so pushtype 3 =
+  delete, and pushtype 2 (delete without replace) is rejected.
+- A DELETE carries NO code param. Forms: [pushtype][codehash][nPart] (delete one
+  part) or [pushtype][codehash][nPart][nPart2] (delete a range). ParsePushCode
+  branches on the delete bit before treating the last push as code.
+- PushCodeParams/CCodeEntry gained `is_delete` (serialized); the assembler skips
+  the chunk fetch for a delete and erases [nPart,nPart2] (no insert). A non-delete
+  REPLACE may no longer carry empty code (`!is_delete && code.empty()` rejected),
+  so removal is delete-only -- one canonical way.
+- Not a canonicalization fix: numeric params still accept non-minimal encodings
+  (fRequireMinimal=false), so two encodings of the same logical entry get
+  different content hashes. Not a correctness bug (the hash IS the identity; a
+  child references exactly one), just possible duplicate-meaning entries. Enforcing
+  one canonical push encoding is a separate open question if ever wanted.
+
+## Phase 4 COMPLETE (2026-08-06): wallet-free RPCs
+
+New src/rpc/pushcode.cpp (category "op_pushcode"; registered in rpc/register.h,
+Makefile.am, and rpc/client.cpp for the JSON arg). Wallet funding stays in
+phase 5 -- dev2024's wallet-funded `pushcode`/`pushcodefile` are NOT ported here.
+- createpushcodescript {code, parent?, op?, part?, part2?} -> {hex, hash, op,
+  is_new, parent?, part?, part2?}: builds the PUSHCODE scriptPubKey in the minimal
+  grammar form (small ints as OP_N via the int64_t overload), supports
+  op=insert/replace/delete, and round-trips through Solver+ParsePushCode as the
+  final gate. Does NOT fund/sign/broadcast -- caller drops the hex into a raw tx
+  output. "" code means empty (not a bad-hex error).
+- getpushcode <codehash> -> {status, code?, length?, reason?} via
+  Chainstate::AssemblePushCode.
+- getpushcodeentry <codehash> -> raw code-DB entry {op, is_new, parent?, part?,
+  part2?, height, vout, refcount}.
+- Tests: grammar unit tests extended for the DELETE bit (pushcode_tests.cpp);
+  assembly delete test now driven by is_delete and asserts the delete chunk is
+  NOT fetched (pushcodedb_tests.cpp); functional rpc_pushcode.py (registered in
+  test_runner.py) round-trips NEW/insert/replace/delete build->mine->assemble plus
+  a forward reference => incomplete. rpc_pushcode.py passes.
+- Deferred: no decode enrichment (decodescript/decoderawtransaction structured
+  pushcode sub-object) -- user opted out for phase 4.
 
 ### Open questions for review
 - MAX_PUSHCODE_* values: RESOLVED (2026-07-26) -- kept dev2024's DEPTH/LENGTH
