@@ -177,10 +177,12 @@ BOOST_FIXTURE_TEST_CASE(assemble_replace_and_delete, AssemblyFixture)
     BOOST_CHECK(Assemble(h3, out) == PushCodeStatus::COMPLETE);
     BOOST_CHECK((out == std::vector<unsigned char>{0xAA, 0xAA, 0xCC}));
 
-    // DELETE range [0,1] (REPLACE with empty chunk) => [C]
+    // DELETE range [0,1] (op=replace, is_delete, no chunk fetched) => [C]
     CCodeEntry del = Child(h2, PUSHCODE_OP_REPLACE);
+    del.is_delete = true;
     del.has_part = true; del.nPart = 0; del.has_part2 = true; del.nPart2 = 1;
     uint256 h4 = Add(4, del, {});
+    unavailable.insert(last_vout); // prove the assembler does NOT fetch a delete's chunk
     BOOST_CHECK(Assemble(h4, out) == PushCodeStatus::COMPLETE);
     BOOST_CHECK((out == std::vector<unsigned char>{0xCC}));
 }

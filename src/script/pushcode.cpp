@@ -54,7 +54,30 @@ bool ParsePushCode(const std::vector<std::vector<unsigned char>>& sol,
         }
     }
     out.op = static_cast<uint8_t>(pushtype & 1);
+    out.is_delete = (pushtype & 2) != 0;
+    const bool is_delete = out.is_delete;
     const bool is_replace = out.op != 0;
+
+    // DELETE (pushtype bit 1) is a REPLACE with no replacement: it carries NO code
+    // param, so the trailing pushes are the part range being removed. Forms:
+    //   n==3: [pushtype][codehash][nPart]           delete single part nPart
+    //   n==4: [pushtype][codehash][nPart][nPart2]   delete range [nPart, nPart2]
+    if (out.is_delete) {
+        if (!is_replace) { reason = "bad-pushcode-delete-requires-replace"; return false; }
+        if (n < 3 || n > 4) { reason = "bad-pushcode-delete-nparams"; return false; }
+        int64_t nPart = 0;
+        if (!DecodePushCodeNum(sol[2], nPart) || nPart < 0) { reason = "bad-pushcode-npart"; return false; }
+        out.has_part = true;
+        out.nPart = static_cast<uint32_t>(nPart);
+        if (n == 4) {
+            int64_t nPart2 = 0;
+            if (!DecodePushCodeNum(sol[3], nPart2) || nPart2 < 0) { reason = "bad-pushcode-npart2"; return false; }
+            if (nPart2 < nPart) { reason = "bad-pushcode-range"; return false; }
+            out.has_part2 = true;
+            out.nPart2 = static_cast<uint32_t>(nPart2);
+        }
+        return true; // no code chunk for a delete
+    }
 
     int64_t nPart = 0, nPart2 = 0;
     if (n >= 4) {
@@ -74,8 +97,11 @@ bool ParsePushCode(const std::vector<std::vector<unsigned char>>& sol,
         out.nPart2 = static_cast<uint32_t>(nPart2);
     }
 
-    // Only REPLACE may carry an empty code chunk (that is the delete operation).
-    if (!is_replace && code.empty()) { reason = "bad-pushcode-empty"; return false; }
+    // A non-delete op must carry a real code chunk: removal is expressed only via
+    // the DELETE bit (which returned above with no code), never via an empty chunk
+    // -- and an empty final push isn't even representable (it encodes as OP_0 =>
+    // {0x00}), so this also guards that.
+    if (!is_delete && code.empty()) { reason = "bad-pushcode-empty"; return false; }
     return true;
 }
 

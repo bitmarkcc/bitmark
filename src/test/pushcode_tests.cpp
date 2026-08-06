@@ -120,8 +120,9 @@ BOOST_AUTO_TEST_CASE(pushcode_grammar)
     BOOST_CHECK(ok({pnum(1), H, code}));                    // pushtype REPLACE, at end
     BOOST_CHECK(ok({pnum(0), H, pnum(3), code}));           // INSERT at part 3
     BOOST_CHECK(ok({pnum(1), H, pnum(2), pnum(5), code}));  // REPLACE range [2,5]
-    BOOST_CHECK(ok({pnum(1), H, pnum(2), pnum(5), empty})); // REPLACE delete (empty ok)
     BOOST_CHECK(ok({pnum(1), H, pnum(4), pnum(4), code}));  // single-element range
+    BOOST_CHECK(ok({pnum(3), H, pnum(2)}));                 // DELETE single part 2 (pushtype 3, no code)
+    BOOST_CHECK(ok({pnum(3), H, pnum(2), pnum(5)}));        // DELETE range [2,5] (no code)
 
     // invalid forms
     BOOST_CHECK(!ok({}));                                   // 0 params
@@ -129,12 +130,16 @@ BOOST_AUTO_TEST_CASE(pushcode_grammar)
     BOOST_CHECK(!ok({empty}));                              // NEW with empty code
     BOOST_CHECK(!ok({H, empty}));                           // INSERT with empty code
     BOOST_CHECK(!ok({pnum(0), H, empty}));                  // explicit INSERT, empty code
+    BOOST_CHECK(!ok({pnum(1), H, pnum(2), pnum(5), empty})); // REPLACE (non-delete) empty code: removal is delete-only now
     BOOST_CHECK(!ok({pbytes(31), code}));                   // ref hash not 32 bytes
     BOOST_CHECK(!ok({pbytes(33), code}));                   // ref hash not 32 bytes
     BOOST_CHECK(!ok({pnum(0), H, pnum(2), pnum(5), code})); // part range with INSERT
     BOOST_CHECK(!ok({pnum(1), H, pnum(5), pnum(2), code})); // nPart2 < nPart
     BOOST_CHECK(!ok({pnum(-1), H, code}));                  // negative pushtype
     BOOST_CHECK(!ok({pbytes(5), H, code}));                 // pushtype param > 4 bytes
+    BOOST_CHECK(!ok({pnum(2), H, pnum(2)}));                // delete bit without replace bit (pushtype 2)
+    BOOST_CHECK(!ok({pnum(3), H, pnum(2), pnum(5), code})); // delete takes no code (5 params)
+    BOOST_CHECK(!ok({pnum(3), H, pnum(5), pnum(2)}));       // delete range nPart2 < nPart
     BOOST_CHECK(!reason.empty());                           // a reason was set on the last failure
 }
 

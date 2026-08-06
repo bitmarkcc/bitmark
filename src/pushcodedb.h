@@ -41,12 +41,13 @@ enum PushCodeOp : uint8_t {
 /** A confirmed code entry, keyed by its content hash H in the store. */
 struct CCodeEntry {
     uint8_t op{PUSHCODE_OP_INSERT};
+    bool is_delete{false};      // REPLACE with no replacement: erase the part range
     bool has_parent{false};     // false for a NEW root entry
     uint256 parent_hash;        // content hash of the referenced entry (if has_parent)
-    uint32_t nPart{0};          // part index (INSERT) or range start (REPLACE)
-    uint32_t nPart2{0};         // range end (REPLACE); == nPart when single
+    uint32_t nPart{0};          // part index (INSERT) or range start (REPLACE/DELETE)
+    uint32_t nPart2{0};         // range end (REPLACE/DELETE); == nPart when single
     bool has_part{false};       // whether nPart was specified
-    bool has_part2{false};      // whether nPart2 was specified (REPLACE range)
+    bool has_part2{false};      // whether nPart2 was specified (range)
     int32_t height{0};          // block height the entry was confirmed at
     CDiskTxPos code_pos;        // position of the containing transaction in the block file
     uint32_t vout{0};           // index of the PUSHCODE output within that transaction
@@ -54,7 +55,7 @@ struct CCodeEntry {
 
     SERIALIZE_METHODS(CCodeEntry, obj)
     {
-        READWRITE(obj.op, obj.has_parent, obj.parent_hash, VARINT(obj.nPart),
+        READWRITE(obj.op, obj.is_delete, obj.has_parent, obj.parent_hash, VARINT(obj.nPart),
                   VARINT(obj.nPart2), obj.has_part, obj.has_part2,
                   obj.height, obj.code_pos, VARINT(obj.vout), VARINT(obj.refcount));
     }

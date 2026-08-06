@@ -17,6 +17,7 @@ class CTransaction;
  *  code chunk itself is solutions.back() and is not copied here. */
 struct PushCodeParams {
     uint8_t op{0};            // low bit of pushtype: 0 INSERT, 1 REPLACE
+    bool is_delete{false};    // pushtype bit 1: delete a range (a REPLACE with no code)
     bool has_parent{false};   // false only for a NEW root entry
     uint256 parent_hash;      // content hash of the referenced entry (if has_parent)
     bool has_part{false};
@@ -30,13 +31,19 @@ struct PushCodeParams {
 // the code chunk, and a referenced entry is a single 32-byte content hash
 // (Hash() of the referenced scriptPubKey), not a txid+nOutput outpoint.
 //
-// Forms by param count:
+// Forms by param count (non-delete: the last param is always the code chunk):
 //   1: [code]                                     NEW branch (root, no parent)
 //   2: [codehash][code]                           INSERT code at end of branch
 //   3: [pushtype][codehash][code]                 op on branch, at end
 //   4: [pushtype][codehash][nPart][code]          op at part index nPart
 //   5: [pushtype][codehash][nPart][nPart2][code]  REPLACE range [nPart,nPart2]
-// pushtype low bit: 0 = INSERT, 1 = REPLACE (empty code on REPLACE = delete).
+// pushtype bit 0: 0 = INSERT, 1 = REPLACE.
+//
+// pushtype bit 1 = DELETE (requires the REPLACE bit; delete IS a replace with no
+// replacement). A delete carries NO code param -- the trailing pushes are the
+// part range being removed:
+//   3: [pushtype][codehash][nPart]                DELETE single part nPart
+//   4: [pushtype][codehash][nPart][nPart2]        DELETE range [nPart,nPart2]
 //
 // These functions validate STRUCTURE, sizes and consistency only (phase 3a).
 // Reference resolution (the content hash must name a confirmed entry) and code

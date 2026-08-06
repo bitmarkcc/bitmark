@@ -134,15 +134,17 @@ PushCodeStatus AssemblePushCode(const CCodeDB& db, const uint256& hash,
         }
     }
 
-    // 2. Replay ops root -> tip to build the ordered part list. Op semantics
-    //    (matching dev2024): NEW seeds [chunk]; no part index appends at the end
-    //    (whatever the op); INSERT+nPart inserts before index nPart; REPLACE with
-    //    a [nPart,nPart2] range overwrites it (an empty chunk deletes the range).
+    // 2. Replay ops root -> tip to build the ordered part list. Op semantics:
+    //    NEW seeds [chunk]; no part index appends at the end (whatever the op);
+    //    INSERT+nPart inserts before index nPart; REPLACE over [nPart,nPart2]
+    //    overwrites it; DELETE (a REPLACE with no code chunk) erases that range.
     std::vector<std::vector<unsigned char>> parts;
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         const CCodeEntry& e = *it;
+        // A delete carries no code param, so there is nothing to fetch; every other
+        // op materializes its chunk from the block files (unavailable => INCOMPLETE).
         std::vector<unsigned char> chunk;
-        if (!fetch(e, chunk)) {
+        if (!e.is_delete && !fetch(e, chunk)) {
             reason = "pushcode-chunk-unavailable";
             return PushCodeStatus::INCOMPLETE;
         }
@@ -153,14 +155,14 @@ PushCodeStatus AssemblePushCode(const CCodeDB& db, const uint256& hash,
         } else if (e.op == PUSHCODE_OP_INSERT) {
             if (e.nPart > parts.size()) { reason = "pushcode-insert-oob"; return PushCodeStatus::INVALID; }
             parts.insert(parts.begin() + e.nPart, std::move(chunk));
-        } else { // PUSHCODE_OP_REPLACE over [nPart, nPart2]
+        } else { // REPLACE / DELETE over [nPart, nPart2]
             const uint32_t start = e.nPart;
             const uint32_t end = e.has_part2 ? e.nPart2 : e.nPart;
             if (end < start || start >= parts.size() || end >= parts.size()) {
                 reason = "pushcode-replace-oob"; return PushCodeStatus::INVALID;
             }
             parts.erase(parts.begin() + start, parts.begin() + end + 1);
-            if (!chunk.empty()) parts.insert(parts.begin() + start, std::move(chunk)); // empty => delete
+            if (!e.is_delete) parts.insert(parts.begin() + start, std::move(chunk)); // delete => erase only
         }
     }
 

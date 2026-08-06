@@ -2457,6 +2457,7 @@ static bool ProcessPushCodeBlock(const CBlock& block, const CBlockIndex& block_i
             if (compute_entries) {
                 CCodeEntry e;
                 e.op = p.op;
+                e.is_delete = p.is_delete;
                 e.has_parent = p.has_parent;
                 e.parent_hash = p.parent_hash;
                 e.has_part = p.has_part;
