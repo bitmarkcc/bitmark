@@ -131,8 +131,17 @@ void BlockAssembler::resetBlock()
 
     //pblock->nVersion = m_chainstate.m_chainman.m_versionbitscache.ComputeBlockVersion(pindexPrev, chainparams.GetConsensus());
     pblock->nVersion = CPureBlockHeader::CURRENT_VERSION;
-    //bool onMultiPoWFork = nHeight >= 200 && pindexPrev->IsSuperMajority(4, 75, 100);
     bool onMultiPoWFork = nHeight >= 450947;
+    if (chainparams.IsTestChain()) {
+	pblock->nVersion = 3;
+	if (nHeight >= 301) {
+	    pblock->nVersion = 4;
+	}
+	else if (nHeight >= 1001) {
+	    pblock->nVersion = 5;
+	}
+	onMultiPoWFork = nHeight >= 376;
+    }
 
     if (onMultiPoWFork)
 	pblock->SetAlgo(algo);
