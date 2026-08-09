@@ -43,6 +43,9 @@
 #include <validationinterface.h>
 #include <warnings.h>
 
+#include <crypto/equihash/equihash.h>
+#include <crypto/tromp/equi_miner.h>
+
 #include <memory>
 #include <stdint.h>
 
@@ -146,14 +149,66 @@ static RPCHelpMan getnetworkhashps()
     };
 }
 
+static std::vector<std::vector<unsigned char>> GetEquihashSolutions(crypto_generichash_blake2b_state* pstate)
+{
+    std::vector<std::vector<unsigned char>> sols;
+    equi eq(1);
+    eq.setstate(pstate);
+    eq.digit0(0);
+    eq.xfull = eq.bfull = eq.hfull = 0;
+    eq.showbsizes(0);
+    for (u32 r = 1; r < WK; r++) {
+        (r & 1) ? eq.digitodd(r, 0) : eq.digiteven(r, 0);
+        eq.xfull = eq.bfull = eq.hfull = 0;
+        eq.showbsizes(r);
+    }
+    eq.digitK(0);
+    for (size_t s = 0; s < eq.nsols; s++) {
+        std::vector<eh_index> index_vector(PROOFSIZE);
+        for (size_t i = 0; i < PROOFSIZE; i++) index_vector[i] = eq.sols[s][i];
+        std::vector<unsigned char> sol_char = GetMinimalFromIndices(index_vector, DIGITBITS);
+        sols.push_back(sol_char);
+    }
+    return sols;
+}
+
 static bool GenerateBlock(ChainstateManager& chainman, CBlock& block, uint64_t& max_tries, std::shared_ptr<const CBlock>& block_out, bool process_new_block)
 {
     block_out.reset();
     block.hashMerkleRoot = BlockMerkleRoot(block);
 
-    while (max_tries > 0 && block.nNonce < std::numeric_limits<uint32_t>::max() && !CheckProofOfWork(block.GetPoWHash(), block.nBits, chainman.GetConsensus(), block.GetAlgo()) && !chainman.m_interrupt) {
-        ++block.nNonce;
-        --max_tries;
+    if (block.GetAlgo() == Algo::EQUIHASH) {
+        unsigned int n = chainman.GetConsensus().EquihashN();
+        unsigned int k = chainman.GetConsensus().EquihashK();
+        crypto_generichash_blake2b_state state;
+        EhInitialiseState(n, k, state);
+        CEquihashInput I{block};
+        DataStream ss;
+        ss << I;
+        crypto_generichash_blake2b_update(&state, (unsigned char*)&ss[0], ss.size());
+        while (true) {
+            crypto_generichash_blake2b_state curr_state = state;
+            crypto_generichash_blake2b_update(&curr_state, block.nNonce256.begin(), block.nNonce256.size());
+            std::vector<std::vector<unsigned char>> sols = GetEquihashSolutions(&curr_state);
+            bool solved = false;
+            for (size_t i = 0; i < sols.size(); i++) {
+                block.nSolution = sols[i];
+                if (CheckProofOfWork(block.GetPoWHash(), block.nBits, chainman.GetConsensus(), block.GetAlgo())) {
+                    solved = true;
+                    break;
+                }
+            }
+            if (solved) break;
+            block.nNonce256 = (CBigNum(block.nNonce256) + 1).getuint256();
+            max_tries--;
+            if (!max_tries || block.nNonce256 == uint256(std::vector<unsigned char>(32, 255)) || chainman.m_interrupt) break;
+        }
+    }
+    else {
+        while (max_tries > 0 && block.nNonce < std::numeric_limits<uint32_t>::max() && !CheckProofOfWork(block.GetPoWHash(), block.nBits, chainman.GetConsensus(), block.GetAlgo()) && !chainman.m_interrupt) {
+            ++block.nNonce;
+            --max_tries;
+        }
     }
     if (max_tries == 0 || chainman.m_interrupt) {
         return false;
