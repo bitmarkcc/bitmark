@@ -132,13 +132,18 @@ void BlockAssembler::resetBlock()
     //pblock->nVersion = m_chainstate.m_chainman.m_versionbitscache.ComputeBlockVersion(pindexPrev, chainparams.GetConsensus());
     pblock->nVersion = CPureBlockHeader::CURRENT_VERSION;
     bool onMultiPoWFork = nHeight >= 450947;
-    if (chainparams.IsTestChain()) {
-	pblock->nVersion = 3;
-	if (nHeight >= 301) {
+    // Testnet-only version schedule (NOT regtest -- IsTestChain() would also match
+    // regtest and mine version-3 blocks that consensus rejects): v3 for the first
+    // 300 blocks, v4 for 301-1000, v5 from 1001 so the PUSHCODE fork can activate.
+    if (chainparams.GetChainType() == ChainType::TESTNET) {
+	if (nHeight >= 1001) {
+	    pblock->nVersion = 5;
+	}
+	else if (nHeight >= 301) {
 	    pblock->nVersion = 4;
 	}
-	else if (nHeight >= 1001) {
-	    pblock->nVersion = 5;
+	else {
+	    pblock->nVersion = 3;
 	}
 	onMultiPoWFork = nHeight >= 376;
     }
