@@ -11,10 +11,22 @@ with getpushcodeentry. Exercises NEW / insert / replace / delete ops and a
 forward reference (which assembles as "incomplete").
 """
 
+from io import BytesIO
+
 from test_framework.blocktools import COINBASE_MATURITY
+from test_framework.messages import CTransaction
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 from test_framework.wallet import MiniWallet, MiniWalletMode
+
+
+def tx_vout_scripts(raw_hex):
+    """Deserialize a raw tx and return its output scriptPubKeys as hex strings.
+    (Avoids decoderawtransaction, whose scriptPubKey carries an undocumented
+    Bitmark 'marking' field that trips the node's RPC doc self-check.)"""
+    tx = CTransaction()
+    tx.deserialize(BytesIO(bytes.fromhex(raw_hex)))
+    return [out.scriptPubKey.hex() for out in tx.vout]
 
 
 class PushCodeRPCTest(BitcoinTestFramework):
@@ -54,6 +66,19 @@ class PushCodeRPCTest(BitcoinTestFramework):
                                 node.createpushcodescript, {"op": "delete", "parent": "aa" * 32, "part": 0, "code": "01"})
         assert_raises_rpc_error(-8, "delete needs a part",
                                 node.createpushcodescript, {"op": "delete", "parent": "aa" * 32})
+
+        # ---- createpushcoderawtransaction: appends a PUSHCODE output (no chain needed) ----
+        spk = node.createpushcodescript({"code": "0102"})["hex"]
+        raw = node.createpushcoderawtransaction(
+            [{"txid": "00" * 32, "vout": 0}], [], {"amount": 1.0, "code": "0102"})
+        assert_equal(tx_vout_scripts(raw), [spk])
+        # the pushcode output is appended after any standard outputs
+        raw2 = node.createpushcoderawtransaction(
+            [{"txid": "00" * 32, "vout": 0}], [{"data": "beef"}], {"amount": 1.0, "code": "0102"})
+        vouts = tx_vout_scripts(raw2)
+        assert_equal(len(vouts), 2)
+        assert_equal(vouts[0], "6a02beef")  # OP_RETURN "beef" (standard output first)
+        assert_equal(vouts[1], spk)         # PUSHCODE output appended last
 
         # ---- NEW root: seeds [0102] ----
         new = self.create_and_mine({"code": "0102"})

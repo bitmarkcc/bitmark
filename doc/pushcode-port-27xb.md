@@ -405,6 +405,12 @@ phase 5 -- dev2024's wallet-funded `pushcode`/`pushcodefile` are NOT ported here
   op=insert/replace/delete, and round-trips through Solver+ParsePushCode as the
   final gate. Does NOT fund/sign/broadcast -- caller drops the hex into a raw tx
   output. "" code means empty (not a bad-hex error).
+- createpushcoderawtransaction inputs outputs {amount,code,parent?,op?,part?,
+  part2?} (locktime replaceable) -> raw tx hex (added 2026-08-09): mirrors
+  createrawtransaction (reuses ConstructTransaction) and appends ONE PUSHCODE
+  output last, since stock createrawtransaction only takes address/data outputs.
+  Still wallet-free -- unsigned; caller signs+sends. The pushcode script builder
+  is shared with createpushcodescript (BuildPushCodeScript).
 - getpushcode <codehash> -> {status, code?, length?, reason?} via
   Chainstate::AssemblePushCode.
 - getpushcodeentry <codehash> -> raw code-DB entry {op, is_new, parent?, part?,

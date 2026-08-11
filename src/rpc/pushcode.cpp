@@ -2,9 +2,14 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <consensus/amount.h>
+#include <core_io.h>
 #include <node/blockstorage.h>
+#include <policy/feerate.h>
+#include <primitives/transaction.h>
 #include <pushcodedb.h>
 #include <rpc/protocol.h>
+#include <rpc/rawtransaction_util.h>
 #include <rpc/request.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
@@ -66,6 +71,91 @@ void PushEntryFields(UniValue& o, uint8_t op, bool is_delete, bool has_parent,
     if (has_part2) o.pushKV("part2", (uint64_t)part2);
 }
 
+// Build a PUSHCODE scriptPubKey from a {code, parent?, op?, part?, part2?} object
+// (unknown extra keys such as "amount" are ignored), validating against the
+// consensus grammar. Fills `parsed` from a Solver+ParsePushCode round-trip, which
+// is the final gate. Throws JSONRPCError on any inconsistency.
+CScript BuildPushCodeScript(const UniValue& o, PushCodeParams& parsed)
+{
+    RPCTypeCheckObj(o, {
+        {"code", UniValueType(UniValue::VSTR)},
+        {"parent", UniValueType(UniValue::VSTR)},
+        {"op", UniValueType(UniValue::VSTR)},
+        {"part", UniValueType(UniValue::VNUM)},
+        {"part2", UniValueType(UniValue::VNUM)},
+    }, /*fAllowNull=*/true);
+
+    const UniValue& op_v = o.find_value("op");
+    const uint8_t pushtype = op_v.isNull() ? 0 : ParsePushCodePushtype(op_v.get_str());
+    const uint8_t op = pushtype & 1;
+    const bool is_delete = (pushtype & 2) != 0;
+
+    const UniValue& code_v = o.find_value("code");
+    const bool has_code = !code_v.isNull();
+    if (has_code && !code_v.isStr()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "code must be a hex string");
+    }
+    const std::string code_str = has_code ? code_v.get_str() : "";
+    if (!code_str.empty() && !IsHex(code_str)) { // "" is empty code, not a bad hex string
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "code must be a hex string");
+    }
+    const std::vector<unsigned char> code = ParseHex(code_str);
+
+    const UniValue& parent_v = o.find_value("parent");
+    const bool has_parent = !parent_v.isNull();
+    uint256 parent;
+    if (has_parent) parent = ParseHashV(parent_v, "parent");
+
+    const UniValue& part_v = o.find_value("part");
+    const bool has_part = !part_v.isNull();
+    const uint32_t part = has_part ? ParsePartIndex(part_v, "part") : 0;
+
+    const UniValue& part2_v = o.find_value("part2");
+    const bool has_part2 = !part2_v.isNull();
+    const uint32_t part2 = has_part2 ? ParsePartIndex(part2_v, "part2") : 0;
+
+    // Consistency checks (mirroring the consensus grammar) before building.
+    if (has_part2 && !has_part) throw JSONRPCError(RPC_INVALID_PARAMETER, "part2 requires part");
+    if (has_part2 && part2 < part) throw JSONRPCError(RPC_INVALID_PARAMETER, "part2 must be >= part");
+    if (!has_parent) {
+        if (pushtype != 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "a NEW entry must be an insert (no parent)");
+        if (has_part || has_part2) throw JSONRPCError(RPC_INVALID_PARAMETER, "a NEW entry takes no part index");
+        if (code.empty()) throw JSONRPCError(RPC_INVALID_PARAMETER, "a NEW entry needs a non-empty code chunk");
+    } else if (is_delete) {
+        if (!has_part) throw JSONRPCError(RPC_INVALID_PARAMETER, "delete needs a part (or part range) to remove");
+        if (has_code) throw JSONRPCError(RPC_INVALID_PARAMETER, "delete takes no code chunk");
+    } else {
+        if (has_part2 && op != PUSHCODE_OP_REPLACE) throw JSONRPCError(RPC_INVALID_PARAMETER, "a range (part2) requires op=replace or op=delete");
+        if (code.empty()) throw JSONRPCError(RPC_INVALID_PARAMETER, "insert/replace needs a non-empty code chunk");
+    }
+
+    // Build the scriptPubKey in the minimal grammar form for these params, pushing
+    // small integers as OP_N (one byte) via the int64_t overload.
+    CScript script;
+    if (!has_parent) {
+        script << code; // form 1: NEW [code]
+    } else if (is_delete) {
+        script << (int64_t)pushtype << ToByteVector(parent) << (int64_t)part; // [pushtype][codehash][nPart]
+        if (has_part2) script << (int64_t)part2;                              // [nPart2]
+    } else if (op == PUSHCODE_OP_INSERT && !has_part) {
+        script << ToByteVector(parent) << code; // form 2: [codehash][code]
+    } else {
+        script << (int64_t)pushtype << ToByteVector(parent); // form 3: [pushtype][codehash]
+        if (has_part) script << (int64_t)part;              // form 4: [nPart]
+        if (has_part2) script << (int64_t)part2;            // form 5: [nPart2]
+        script << code;
+    }
+    script << OP_PUSHCODE;
+
+    // Round-trip through the consensus classifier/parser as the final gate.
+    std::vector<std::vector<unsigned char>> sol;
+    std::string reason;
+    if (Solver(script, sol) != TxoutType::PUSHCODE || !ParsePushCode(sol, parsed, reason)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "constructed script is not a valid PUSHCODE output: " + reason);
+    }
+    return script;
+}
+
 } // namespace
 
 static RPCHelpMan createpushcodescript()
@@ -107,84 +197,8 @@ static RPCHelpMan createpushcodescript()
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
         {
-            const UniValue& o = request.params[0].get_obj();
-            RPCTypeCheckObj(o, {
-                {"code", UniValueType(UniValue::VSTR)},
-                {"parent", UniValueType(UniValue::VSTR)},
-                {"op", UniValueType(UniValue::VSTR)},
-                {"part", UniValueType(UniValue::VNUM)},
-                {"part2", UniValueType(UniValue::VNUM)},
-            }, /*fAllowNull=*/true);
-
-            const UniValue& op_v = o.find_value("op");
-            const uint8_t pushtype = op_v.isNull() ? 0 : ParsePushCodePushtype(op_v.get_str());
-            const uint8_t op = pushtype & 1;
-            const bool is_delete = (pushtype & 2) != 0;
-
-            const UniValue& code_v = o.find_value("code");
-            const bool has_code = !code_v.isNull();
-            if (has_code && !code_v.isStr()) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "code must be a hex string");
-            }
-            const std::string code_str = has_code ? code_v.get_str() : "";
-            if (!code_str.empty() && !IsHex(code_str)) { // "" is empty code, not a bad hex string
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "code must be a hex string");
-            }
-            const std::vector<unsigned char> code = ParseHex(code_str);
-
-            const UniValue& parent_v = o.find_value("parent");
-            const bool has_parent = !parent_v.isNull();
-            uint256 parent;
-            if (has_parent) parent = ParseHashV(parent_v, "parent");
-
-            const UniValue& part_v = o.find_value("part");
-            const bool has_part = !part_v.isNull();
-            const uint32_t part = has_part ? ParsePartIndex(part_v, "part") : 0;
-
-            const UniValue& part2_v = o.find_value("part2");
-            const bool has_part2 = !part2_v.isNull();
-            const uint32_t part2 = has_part2 ? ParsePartIndex(part2_v, "part2") : 0;
-
-            // Consistency checks (mirroring the consensus grammar) before building.
-            if (has_part2 && !has_part) throw JSONRPCError(RPC_INVALID_PARAMETER, "part2 requires part");
-            if (has_part2 && part2 < part) throw JSONRPCError(RPC_INVALID_PARAMETER, "part2 must be >= part");
-            if (!has_parent) {
-                if (pushtype != 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "a NEW entry must be an insert (no parent)");
-                if (has_part || has_part2) throw JSONRPCError(RPC_INVALID_PARAMETER, "a NEW entry takes no part index");
-                if (code.empty()) throw JSONRPCError(RPC_INVALID_PARAMETER, "a NEW entry needs a non-empty code chunk");
-            } else if (is_delete) {
-                if (!has_part) throw JSONRPCError(RPC_INVALID_PARAMETER, "delete needs a part (or part range) to remove");
-                if (has_code) throw JSONRPCError(RPC_INVALID_PARAMETER, "delete takes no code chunk");
-            } else {
-                if (has_part2 && op != PUSHCODE_OP_REPLACE) throw JSONRPCError(RPC_INVALID_PARAMETER, "a range (part2) requires op=replace or op=delete");
-                if (code.empty()) throw JSONRPCError(RPC_INVALID_PARAMETER, "insert/replace needs a non-empty code chunk");
-            }
-
-            // Build the scriptPubKey in the minimal grammar form for these params,
-            // pushing small integers as OP_N (one byte) via the int64_t overload.
-            CScript script;
-            if (!has_parent) {
-                script << code; // form 1: NEW [code]
-            } else if (is_delete) {
-                script << (int64_t)pushtype << ToByteVector(parent) << (int64_t)part; // [pushtype][codehash][nPart]
-                if (has_part2) script << (int64_t)part2;                              // [nPart2]
-            } else if (op == PUSHCODE_OP_INSERT && !has_part) {
-                script << ToByteVector(parent) << code; // form 2: [codehash][code]
-            } else {
-                script << (int64_t)pushtype << ToByteVector(parent); // form 3: [pushtype][codehash]
-                if (has_part) script << (int64_t)part;              // form 4: [nPart]
-                if (has_part2) script << (int64_t)part2;            // form 5: [nPart2]
-                script << code;
-            }
-            script << OP_PUSHCODE;
-
-            // Round-trip through the consensus classifier/parser as the final gate.
-            std::vector<std::vector<unsigned char>> sol;
-            std::string reason;
             PushCodeParams parsed;
-            if (Solver(script, sol) != TxoutType::PUSHCODE || !ParsePushCode(sol, parsed, reason)) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "constructed script is not a valid PUSHCODE output: " + reason);
-            }
+            const CScript script = BuildPushCodeScript(request.params[0].get_obj(), parsed);
 
             UniValue result(UniValue::VOBJ);
             result.pushKV("hex", HexStr(script));
@@ -299,10 +313,71 @@ static RPCHelpMan getpushcodeentry()
     };
 }
 
+static RPCHelpMan createpushcoderawtransaction()
+{
+    return RPCHelpMan{
+        "createpushcoderawtransaction",
+        "\nCreate an unsigned raw transaction spending the given inputs to the given\n"
+        "standard outputs PLUS one OP_PUSHCODE output (appended last). Like\n"
+        "createrawtransaction, this only serializes the transaction -- it does not\n"
+        "sign it, fund it, check its validity, or broadcast it. The caller balances\n"
+        "inputs against outputs + the pushcode amount to leave a fee, then signs and\n"
+        "sends it.\n",
+        {
+            {"inputs", RPCArg::Type::ARR, RPCArg::Optional::NO, "The inputs",
+                {
+                    {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+                        {
+                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
+                            {"sequence", RPCArg::Type::NUM, RPCArg::DefaultHint{"depends on the value of the 'replaceable' and 'locktime' arguments"}, "The sequence number"},
+                        }},
+                }},
+            {"outputs", RPCArg::Type::ARR, RPCArg::Optional::NO, "Standard outputs (address/data), as in createrawtransaction; may be empty ([]).",
+                {
+                    {"", RPCArg::Type::OBJ_USER_KEYS, RPCArg::Optional::OMITTED, "", {{"address", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "A key-value pair. The key (string) is the address, the value (float or string) is the amount in " + CURRENCY_UNIT}}},
+                    {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "", {{"data", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "A key-value pair. The key must be \"data\", the value is hex-encoded data"}}},
+                },
+                RPCArgOptions{.skip_type_check = true}},
+            {"pushcode", RPCArg::Type::OBJ, RPCArg::Optional::NO, "The OP_PUSHCODE output to append",
+                {
+                    {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The value of the pushcode output in " + CURRENCY_UNIT},
+                    {"code", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The code chunk, in hex (required except for op=delete)"},
+                    {"parent", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte content hash of the referenced entry; omit for a NEW (root) entry"},
+                    {"op", RPCArg::Type::STR, RPCArg::Default{"insert"}, "\"insert\", \"replace\", or \"delete\""},
+                    {"part", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Part index"},
+                    {"part2", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "End of a replace/delete range"},
+                }},
+            {"locktime", RPCArg::Type::NUM, RPCArg::Default{0}, "Raw locktime. Non-0 value also locktime-activates inputs"},
+            {"replaceable", RPCArg::Type::BOOL, RPCArg::Default{true}, "Marks this transaction as BIP125-replaceable"},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"},
+        RPCExamples{
+            HelpExampleCli("createpushcoderawtransaction", "'[{\"txid\":\"myid\",\"vout\":0}]' '[]' '{\"amount\":0.01,\"code\":\"0102\"}'") +
+            HelpExampleRpc("createpushcoderawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\", \"[]\", \"{\\\"amount\\\":0.01,\\\"code\\\":\\\"0102\\\"}\"")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+            std::optional<bool> rbf;
+            if (!request.params[4].isNull()) rbf = request.params[4].get_bool();
+            CMutableTransaction rawTx = ConstructTransaction(request.params[0], request.params[1], request.params[3], rbf);
+
+            const UniValue& pc = request.params[2].get_obj();
+            const CAmount amount = AmountFromValue(pc.find_value("amount"));
+            PushCodeParams parsed;
+            const CScript script = BuildPushCodeScript(pc, parsed);
+            rawTx.vout.emplace_back(amount, script);
+
+            return EncodeHexTx(CTransaction(rawTx));
+        },
+    };
+}
+
 void RegisterPushCodeRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
         {"op_pushcode", &createpushcodescript},
+        {"op_pushcode", &createpushcoderawtransaction},
         {"op_pushcode", &getpushcode},
         {"op_pushcode", &getpushcodeentry},
     };
