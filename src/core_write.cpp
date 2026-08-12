@@ -12,8 +12,10 @@
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <consensus/validation.h>
+#include <hash.h>
 #include <key_io.h>
 #include <script/descriptor.h>
+#include <script/pushcode.h>
 #include <script/script.h>
 #include <script/solver.h>
 #include <serialize.h>
@@ -387,6 +389,26 @@ void ScriptToUniv(const CScript& script, UniValue& out, bool include_hex, bool i
         out.pushKV("address", EncodeDestination(address));
     }
     out.pushKV("type", GetTxnOutputType(type));
+
+    // Bitmark: for an OP_PUSHCODE output, surface its content hash -- what a child
+    // entry puts in its "parent" to reference it -- plus the parsed params. The
+    // content hash is Hash(scriptPubKey) (== PushCodeHash), the same value
+    // createpushcodescript returns. Reuses the solns already produced by Solver.
+    if (type == TxoutType::PUSHCODE) {
+        PushCodeParams p;
+        std::string reason;
+        if (ParsePushCode(solns, p, reason)) {
+            UniValue pc(UniValue::VOBJ);
+            pc.pushKV("hash", Hash(script).GetHex());
+            pc.pushKV("op", p.is_delete ? "delete" : (p.op ? "replace" : "insert"));
+            pc.pushKV("is_new", !p.has_parent);
+            if (p.has_parent) pc.pushKV("parent", p.parent_hash.GetHex());
+            if (p.has_part) pc.pushKV("part", (uint64_t)p.nPart);
+            if (p.has_part2) pc.pushKV("part2", (uint64_t)p.nPart2);
+            if (!p.is_delete && !solns.empty()) pc.pushKV("code", HexStr(solns.back()));
+            out.pushKV("pushcode", pc);
+        }
+    }
 
     if (include_marking && ExtractMarking(script, type, marking))
 	out.pushKV("marking", marking);
