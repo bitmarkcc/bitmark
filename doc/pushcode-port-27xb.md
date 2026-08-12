@@ -423,6 +423,39 @@ phase 5 -- dev2024's wallet-funded `pushcode`/`pushcodefile` are NOT ported here
 - Deferred: no decode enrichment (decodescript/decoderawtransaction structured
   pushcode sub-object) -- user opted out for phase 4.
 
+## FORMAT CHANGE: unspendable OP_RETURN outputs (2026-08-11)
+
+PUSHCODE outputs are now provably UNSPENDABLE, like OP_RETURN data outputs:
+they create no UTXO and carry no (required) value. Motivation: a bare
+"<params> OP_PUSHCODE" output ends in OP_NOP4 (a no-op), so it was anyone-can-
+spend and value-carrying -- it bloated the UTXO set and was subject to dust
+rules. Making the script unspendable fixes both for free via existing machinery.
+
+New format:  OP_RETURN OP_PUSHCODE <params...>   (was: <params...> OP_PUSHCODE)
+- The leading OP_RETURN makes CScript::IsUnspendable() true, so
+  CCoinsViewCache::AddCoin skips it (no UTXO) and GetDustThreshold returns 0
+  (0-value allowed / dust-exempt). No new consensus rule needed -- IsUnspendable
+  is already agreed by all nodes, so this needs no activation gating (unlike
+  special-casing PUSHCODE in AddCoins, which would be a soft-fork tightening).
+- OP_RETURN OP_PUSHCODE is a 2-byte protocol-MAGIC prefix: the Solver decides in
+  O(1) on the first two opcodes instead of scanning for a trailing OP_PUSHCODE,
+  and OP_PUSHCODE now earns its keep as the discriminator vs. a plain nulldata
+  output (which requires push-only after OP_RETURN; ours has OP_PUSHCODE next, so
+  it is never NULL_DATA).
+- The params after the magic are unchanged (1..5, code last), so ParsePushCode /
+  the vSolutions layout / the grammar / DELETE bit are all untouched. Only
+  MatchPushCode reframes: require the OP_RETURN OP_PUSHCODE prefix, then read the
+  remaining opcodes as params (each a push/small-int), >=1 and <=5.
+- Any value placed on a PUSHCODE output is BURNED (unspendable), so
+  createpushcoderawtransaction's amount now defaults to 0.
+- Breaking: PushCodeHash changes (hash of the new scriptPubKey), so pre-existing
+  PUSHCODE outputs are unrecognized -- fine pre-launch (isolated testnet re-mine).
+- The interpreter's OP_PUSHCODE case (NOP/discourage) is now unreachable for
+  PUSHCODE outputs (OP_RETURN aborts first) but is kept for the opcode generally.
+- Touched: solver.cpp MatchPushCode + solver.h doc; rpc/pushcode.cpp
+  (BuildPushCodeScript prefix, amount default 0); tests script_standard_tests.cpp,
+  pushcodedb_tests.cpp, feature_pushcode.py.
+
 ### Open questions for review
 - MAX_PUSHCODE_* values: RESOLVED (2026-07-26) -- kept dev2024's DEPTH/LENGTH
   (33638400 blocks each), reinterpreted as block-height distances (see 3c). Both

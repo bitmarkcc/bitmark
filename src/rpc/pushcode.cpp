@@ -129,9 +129,11 @@ CScript BuildPushCodeScript(const UniValue& o, PushCodeParams& parsed)
         if (code.empty()) throw JSONRPCError(RPC_INVALID_PARAMETER, "insert/replace needs a non-empty code chunk");
     }
 
-    // Build the scriptPubKey in the minimal grammar form for these params, pushing
-    // small integers as OP_N (one byte) via the int64_t overload.
+    // Build the scriptPubKey: the OP_RETURN OP_PUSHCODE magic prefix (making the
+    // output provably unspendable) followed by the params in minimal grammar form,
+    // pushing small integers as OP_N (one byte) via the int64_t overload.
     CScript script;
+    script << OP_RETURN << OP_PUSHCODE; // magic prefix
     if (!has_parent) {
         script << code; // form 1: NEW [code]
     } else if (is_delete) {
@@ -145,7 +147,6 @@ CScript BuildPushCodeScript(const UniValue& o, PushCodeParams& parsed)
         if (has_part2) script << (int64_t)part2;            // form 5: [nPart2]
         script << code;
     }
-    script << OP_PUSHCODE;
 
     // Round-trip through the consensus classifier/parser as the final gate.
     std::vector<std::vector<unsigned char>> sol;
@@ -341,7 +342,7 @@ static RPCHelpMan createpushcoderawtransaction()
                 RPCArgOptions{.skip_type_check = true}},
             {"pushcode", RPCArg::Type::OBJ, RPCArg::Optional::NO, "The OP_PUSHCODE output to append",
                 {
-                    {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The value of the pushcode output in " + CURRENCY_UNIT},
+                    {"amount", RPCArg::Type::AMOUNT, RPCArg::Default{0}, "The value of the pushcode output in " + CURRENCY_UNIT + ". The output is provably unspendable (OP_RETURN), so any value here is BURNED; leave it 0."},
                     {"code", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The code chunk, in hex (required except for op=delete)"},
                     {"parent", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte content hash of the referenced entry; omit for a NEW (root) entry"},
                     {"op", RPCArg::Type::STR, RPCArg::Default{"insert"}, "\"insert\", \"replace\", or \"delete\""},
@@ -363,7 +364,8 @@ static RPCHelpMan createpushcoderawtransaction()
             CMutableTransaction rawTx = ConstructTransaction(request.params[0], request.params[1], request.params[3], rbf);
 
             const UniValue& pc = request.params[2].get_obj();
-            const CAmount amount = AmountFromValue(pc.find_value("amount"));
+            const UniValue& amount_v = pc.find_value("amount");
+            const CAmount amount = amount_v.isNull() ? 0 : AmountFromValue(amount_v);
             PushCodeParams parsed;
             const CScript script = BuildPushCodeScript(pc, parsed);
             rawTx.vout.emplace_back(amount, script);

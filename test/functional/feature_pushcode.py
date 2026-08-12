@@ -19,7 +19,7 @@ validation are exercised.
 
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.script import CScript, OP_NOP4  # OP_PUSHCODE == OP_NOP4 == 0xb3
+from test_framework.script import CScript, OP_NOP4, OP_RETURN  # OP_PUSHCODE == OP_NOP4 == 0xb3
 from test_framework.util import assert_raises_rpc_error
 from test_framework.wallet import MiniWallet, MiniWalletMode
 
@@ -32,9 +32,10 @@ class PushCodeTest(BitcoinTestFramework):
         self.extra_args = [["-blockversion=4"]]
 
     def pushcode_rawtx(self, wallet, params):
-        """A raw tx spending one wallet UTXO into a single <params> OP_PUSHCODE output."""
+        """A raw tx spending one wallet UTXO into a single unspendable
+        OP_RETURN OP_PUSHCODE <params...> output."""
         tx = wallet.create_self_transfer()["tx"]
-        tx.vout[0].scriptPubKey = CScript(list(params) + [OP_NOP4])
+        tx.vout[0].scriptPubKey = CScript([OP_RETURN, OP_NOP4] + list(params))
         return tx.serialize().hex()
 
     def generateblock_with(self, wallet, params):

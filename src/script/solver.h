@@ -31,7 +31,7 @@ enum class TxoutType {
     WITNESS_V0_KEYHASH,
     WITNESS_V1_TAPROOT,
     WITNESS_UNKNOWN, //!< Only for Witness versions not already defined above
-    PUSHCODE, //!< Bitmark: <up to 6 params> OP_PUSHCODE, carries dynamic-algo code
+    PUSHCODE, //!< Bitmark: OP_RETURN OP_PUSHCODE <up to 5 params>, carries dynamic-algo code (unspendable)
 };
 
 /** Get the name of a TxoutType as a string */

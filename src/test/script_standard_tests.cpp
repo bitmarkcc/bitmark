@@ -128,11 +128,11 @@ BOOST_AUTO_TEST_CASE(script_standard_Solver_success)
     BOOST_CHECK(solutions[0] == std::vector<unsigned char>{16});
     BOOST_CHECK(solutions[1] == ToByteVector(uint256::ONE));
 
-    // TxoutType::PUSHCODE (Bitmark): <params> OP_PUSHCODE
+    // TxoutType::PUSHCODE (Bitmark): OP_RETURN OP_PUSHCODE <params...>
     // data-push param + a 32-byte content-hash reference + a small-int param
     s.clear();
     std::vector<unsigned char> code_ref(32, 0xab);
-    s << std::vector<unsigned char>{0x01, 0x02, 0x03} << code_ref << OP_2 << OP_PUSHCODE;
+    s << OP_RETURN << OP_PUSHCODE << std::vector<unsigned char>{0x01, 0x02, 0x03} << code_ref << OP_2;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::PUSHCODE);
     BOOST_CHECK_EQUAL(solutions.size(), 3U);
     BOOST_CHECK(solutions[0] == (std::vector<unsigned char>{0x01, 0x02, 0x03}));
@@ -142,23 +142,28 @@ BOOST_AUTO_TEST_CASE(script_standard_Solver_success)
     // PUSHCODE with the maximum 5 params is accepted
     // (maximal form: pushtype, codehash, nPart, nPart2, code)
     s.clear();
-    s << OP_1 << OP_2 << OP_3 << OP_4 << OP_5 << OP_PUSHCODE;
+    s << OP_RETURN << OP_PUSHCODE << OP_1 << OP_2 << OP_3 << OP_4 << OP_5;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::PUSHCODE);
     BOOST_CHECK_EQUAL(solutions.size(), 5U);
 
     // 6 params is too many -> not a PUSHCODE match
     s.clear();
-    s << OP_1 << OP_2 << OP_3 << OP_4 << OP_5 << OP_6 << OP_PUSHCODE;
+    s << OP_RETURN << OP_PUSHCODE << OP_1 << OP_2 << OP_3 << OP_4 << OP_5 << OP_6;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
 
-    // OP_PUSHCODE with no params is not a match
+    // the OP_RETURN OP_PUSHCODE magic with no params is not a match
     s.clear();
-    s << OP_PUSHCODE;
+    s << OP_RETURN << OP_PUSHCODE;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
 
-    // trailing opcode after OP_PUSHCODE is not a match
+    // OP_PUSHCODE without the leading OP_RETURN is not a match
     s.clear();
-    s << OP_2 << OP_PUSHCODE << OP_1;
+    s << OP_PUSHCODE << OP_2;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // a non-push opcode among the params is not a match
+    s.clear();
+    s << OP_RETURN << OP_PUSHCODE << OP_2 << OP_DUP;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
 
     // TxoutType::NONSTANDARD

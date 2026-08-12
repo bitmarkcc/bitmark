@@ -21,8 +21,8 @@ BOOST_FIXTURE_TEST_SUITE(pushcodedb_tests, BasicTestingSetup)
 // Content identity: deterministic and content-sensitive.
 BOOST_AUTO_TEST_CASE(content_hash)
 {
-    const CScript a = CScript() << std::vector<unsigned char>{1, 2, 3} << OP_PUSHCODE;
-    const CScript b = CScript() << std::vector<unsigned char>{1, 2, 4} << OP_PUSHCODE;
+    const CScript a = CScript() << OP_RETURN << OP_PUSHCODE << std::vector<unsigned char>{1, 2, 3};
+    const CScript b = CScript() << OP_RETURN << OP_PUSHCODE << std::vector<unsigned char>{1, 2, 4};
     BOOST_CHECK(PushCodeHash(a) == PushCodeHash(a));
     BOOST_CHECK(PushCodeHash(a) != PushCodeHash(b));
 }

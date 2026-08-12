@@ -138,12 +138,16 @@ std::optional<std::pair<int, std::vector<Span<const unsigned char>>>> MatchMulti
     return std::pair{*threshold, std::move(keyspans)};
 }
 
-// Bitmark: match a PUSHCODE output: 1..5 push params followed by OP_PUSHCODE and
-// nothing else. Data pushes become their bytes; small integers (OP_0, OP_1..OP_16)
-// become a single byte holding 0..16, matching the dev2024 param decoding.
-// Maximal form: <pushtype> <codehash(32B)> <nPart> <nPart2> <code>. This is 5,
-// down from dev2024's 6, because a referenced entry is now identified by a single
-// 32-byte content hash instead of a (txid, nOutput) outpoint pair.
+// Bitmark: match a PUSHCODE output. The script is a provably-unspendable
+// OP_RETURN carrying a 2-byte protocol-magic prefix (OP_RETURN OP_PUSHCODE)
+// followed by 1..5 push params. Data pushes become their bytes; small integers
+// (OP_0, OP_1..OP_16) become a single byte holding 0..16, matching the dev2024
+// param decoding. Maximal form:
+//   OP_RETURN OP_PUSHCODE <pushtype> <codehash(32B)> <nPart> <nPart2> <code>
+// This is 5 params, down from dev2024's 6, because a referenced entry is now
+// identified by a single 32-byte content hash instead of a (txid, nOutput) pair.
+// The leading OP_RETURN makes the output unspendable (no UTXO, dust-exempt), and
+// OP_PUSHCODE as the magic byte distinguishes it from a plain nulldata output.
 static const unsigned int MAX_PUSHCODE_PARAMS = 5;
 static bool MatchPushCode(const CScript& script, std::vector<valtype>& params)
 {
@@ -151,12 +155,12 @@ static bool MatchPushCode(const CScript& script, std::vector<valtype>& params)
     CScript::const_iterator it = script.begin();
     opcodetype opcode;
     valtype vch;
+    // Require the OP_RETURN OP_PUSHCODE magic prefix.
+    if (!script.GetOp(it, opcode, vch) || opcode != OP_RETURN) return false;
+    if (!script.GetOp(it, opcode, vch) || opcode != OP_PUSHCODE) return false;
+    // Everything after the prefix is params (pushes / small integers), 1..5 of them.
     while (it < script.end()) {
         if (!script.GetOp(it, opcode, vch)) return false;
-        if (opcode == OP_PUSHCODE) {
-            // OP_PUSHCODE must be the final opcode, with at least one param
-            return it == script.end() && !params.empty();
-        }
         if (params.size() >= MAX_PUSHCODE_PARAMS) return false;
         if (!vch.empty()) {
             params.push_back(std::move(vch));
@@ -168,7 +172,7 @@ static bool MatchPushCode(const CScript& script, std::vector<valtype>& params)
             return false; // only pushes / small integers are valid params
         }
     }
-    return false; // reached end without OP_PUSHCODE
+    return !params.empty(); // at least one param (the code chunk, or a delete range)
 }
 
 TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned char>>& vSolutionsRet)
