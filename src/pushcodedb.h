@@ -111,8 +111,16 @@ public:
 //             block; those are NOT these.)
 // dev2024's MAX_PUSHCODE_PART_DEPTH was defined but never used (dropped), and
 // MAX_PUSHCODE_SIZE was int64max (no effective byte bound; omitted).
-static constexpr int64_t MAX_PUSHCODE_DEPTH = 33638400;  // max blocks per reference edge
-static constexpr int64_t MAX_PUSHCODE_LENGTH = 33638400; // max block span of a branch
+// Max block span of a branch (tip -> oldest part). Also the pruned-node keep
+// window: a node with pruning enabled keeps at least this many blocks below the
+// tip (via a "pushcode" prune lock) so code assembly, which reads chunks from the
+// block files, works. 525600 ~= 2 years at 720 blocks/day.
+static constexpr int64_t MAX_PUSHCODE_LENGTH = 525600;
+// Max blocks per single reference edge (|child.height - parent.height|). Set
+// equal to LENGTH for now: a single hop may span the whole allowed branch length.
+// (Lower it below LENGTH to make individual references reach less far than the
+// branch total.)
+static constexpr int64_t MAX_PUSHCODE_DEPTH = MAX_PUSHCODE_LENGTH;
 
 /** Outcome of assembling a branch tip's code. */
 enum class PushCodeStatus {

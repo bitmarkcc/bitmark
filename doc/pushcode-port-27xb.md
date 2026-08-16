@@ -456,6 +456,32 @@ New format:  OP_RETURN OP_PUSHCODE <params...>   (was: <params...> OP_PUSHCODE)
   (BuildPushCodeScript prefix, amount default 0); tests script_standard_tests.cpp,
   pushcodedb_tests.cpp, feature_pushcode.py.
 
+## PRUNING SUPPORT via prune lock (2026-08-16)
+
+The code DB stores only code_pos (a pointer into the block files), so assembly
+reads chunks off disk -- previously incompatible with pruning. Now supported by
+keeping a trailing window of blocks:
+- MAX_PUSHCODE_LENGTH reduced 33638400 -> 525600 (~2 years at 720 blocks/day).
+  It doubles as the pruned-node keep window. It bounds a branch's block span
+  (tip -> oldest part), so it is effectively consensus once phase-6 execution
+  consumes assembly; the value caps how far back a part may be referenced from a
+  tip (long-lived branches re-publish a fresh NEW root rather than extending an
+  ancient one). MAX_PUSHCODE_DEPTH (per single reference edge) set equal to
+  LENGTH: not redundant, since forward refs let heights zigzag around the tip so
+  an edge between a below-tip child and an above-tip parent can reach 2*LENGTH --
+  DEPTH now caps any single hop at LENGTH. Lower it below LENGTH later if
+  individual references should reach less far than the branch total.
+- FlushStateToDisk (validation.cpp): while OP_PUSHCODE is active at the tip,
+  refresh a "pushcode" prune lock to height_first = tip - MAX_PUSHCODE_LENGTH
+  before the prune-height is computed, so pruning never deletes blocks a tip-near
+  branch needs. Set only on the non-snapshot chainstate (the background full-
+  validation chain owns historical code-DB population). Not consensus -- purely a
+  local storage policy. A branch whose tip is older than the window still returns
+  INCOMPLETE on a pruned node (expected; the active algo is recent).
+- Prune locks are not persisted, but pruning only runs inside the same block that
+  refreshes the lock, so there is no window where a prune runs without it; reorgs
+  move the lock back via the existing DisconnectBlock prune-lock bookkeeping.
+
 ### Open questions for review
 - MAX_PUSHCODE_* values: RESOLVED (2026-07-26) -- kept dev2024's DEPTH/LENGTH
   (33638400 blocks each), reinterpreted as block-height distances (see 3c). Both

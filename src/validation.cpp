@@ -3077,6 +3077,19 @@ bool Chainstate::FlushStateToDisk(
         CoinsCacheSizeState cache_state = GetCoinsCacheSizeState();
         LOCK(m_blockman.cs_LastBlockFile);
         if (m_blockman.IsPruneMode() && (m_blockman.m_check_for_pruning || nManualPruneHeight > 0) && !fReindex) {
+            // Bitmark: once OP_PUSHCODE is active, keep at least MAX_PUSHCODE_LENGTH
+            // blocks below the tip so code assembly (which reads chunks from the
+            // block files) works under pruning. Refresh the "pushcode" prune lock
+            // from the current tip before the locks are applied below. The snapshot
+            // chainstate does not populate the code DB for its history (the
+            // background full-validation chainstate does), so it does not set this.
+            if (const CBlockIndex* tip = m_chain.Tip();
+                tip && m_blockman.m_code_db && !m_from_snapshot_blockhash &&
+                (GetBlockScriptFlags(*tip, m_chainman) & SCRIPT_VERIFY_PUSHCODE)) {
+                const int keep_from{std::max(0, tip->nHeight - static_cast<int>(MAX_PUSHCODE_LENGTH))};
+                m_blockman.UpdatePruneLock("pushcode", node::PruneLockInfo{.height_first = keep_from});
+            }
+
             // make sure we don't prune above any of the prune locks bestblocks
             // pruning is height-based
             int last_prune{m_chain.Height()}; // last height we can prune
