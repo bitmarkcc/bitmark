@@ -154,6 +154,15 @@ static constexpr int64_t MAX_PUSHCODE_LENGTH = 525600;
 // branch total.)
 static constexpr int64_t MAX_PUSHCODE_DEPTH = MAX_PUSHCODE_LENGTH;
 
+// Per-slot pruned-node keep floor: keep at least this many of EACH mPoW slot's
+// OWN blocks on disk. A dynamic algo's input is the last n blocks of its slot, so
+// n must stay >= the DGW retarget window (25) and >= ~1 year (subsidy-scaling
+// peak-hashrate), even for a sluggishly-mined slot where n-within-
+// MAX_PUSHCODE_LENGTH could otherwise fall below 25. 90*365 = 32850 ~= 1 year of
+// one slot at 90 blocks/day (720 blocks/day / 8 slots). Normally MAX_PUSHCODE_
+// LENGTH keeps more than this; it only extends the window for sluggish slots.
+static constexpr int MIN_SLOT_BLOCKS_ON_DISK = 90 * 365;
+
 /** Outcome of assembling a branch tip's code. */
 enum class PushCodeStatus {
     COMPLETE,    // `out` holds the fully-assembled code

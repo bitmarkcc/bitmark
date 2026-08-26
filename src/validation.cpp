@@ -68,6 +68,7 @@
 #include <warnings.h>
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <deque>
@@ -3099,7 +3100,30 @@ bool Chainstate::FlushStateToDisk(
             if (const CBlockIndex* tip = m_chain.Tip();
                 tip && m_blockman.m_code_db && !m_from_snapshot_blockhash &&
                 (GetBlockScriptFlags(*tip, m_chainman) & SCRIPT_VERIFY_PUSHCODE)) {
-                const int keep_from{std::max(0, tip->nHeight - static_cast<int>(MAX_PUSHCODE_LENGTH))};
+                int keep_from{std::max(0, tip->nHeight - static_cast<int>(MAX_PUSHCODE_LENGTH))};
+
+                // Also keep at least MIN_SLOT_BLOCKS_ON_DISK of EACH mPoW slot's own
+                // blocks (extends the window only for sluggish slots, where that
+                // slot's Nth-newest block is older than tip - MAX_PUSHCODE_LENGTH).
+                // One backward pass, counting per-slot until every slot has enough
+                // or we reach the pre-fork base (slots short of the target keep all
+                // their blocks, i.e. back to the earliest fork block reached).
+                std::array<int, NUM_ALGOS> remaining;
+                remaining.fill(MIN_SLOT_BLOCKS_ON_DISK);
+                int satisfied{0};
+                int walked_to{tip->nHeight};
+                for (const CBlockIndex* p = tip; p && p->OnFork() && satisfied < NUM_ALGOS; p = p->pprev) {
+                    walked_to = p->nHeight;
+                    const int a{static_cast<int>(p->GetAlgo())};
+                    if (a < 0 || a >= NUM_ALGOS || remaining[a] == 0) continue;
+                    if (--remaining[a] == 0) {
+                        keep_from = std::min(keep_from, p->nHeight);
+                        ++satisfied;
+                    }
+                }
+                if (satisfied < NUM_ALGOS) keep_from = std::min(keep_from, walked_to);
+                keep_from = std::max(0, keep_from);
+
                 m_blockman.UpdatePruneLock("pushcode", node::PruneLockInfo{.height_first = keep_from});
             }
 
