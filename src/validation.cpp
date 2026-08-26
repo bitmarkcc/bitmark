@@ -2336,7 +2336,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
     // it does not find; the empty-hash case still retreats the code-DB best
     // block to the parent, keeping it in step with the chain tip.
     if (m_blockman.m_code_db) {
-        if (!m_blockman.m_code_db->UndoBlock(CollectPushCodeHashes(block), pindex->pprev->GetBlockHash())) {
+        if (!m_blockman.m_code_db->UndoBlock(CollectPushCodeHashes(block), pindex->nHeight, pindex->pprev->GetBlockHash())) {
             error("DisconnectBlock(): failed to undo OP_PUSHCODE entries");
             return DISCONNECT_FAILED;
         }
@@ -2464,10 +2464,11 @@ static bool ProcessPushCodeBlock(const CBlock& block, const CBlockIndex& block_i
                 e.nPart = p.nPart;
                 e.has_part2 = p.has_part2;
                 e.nPart2 = p.nPart2;
-                e.height = block_index.nHeight;
-                e.code_pos = pos;
-                e.vout = static_cast<uint32_t>(j);
-                e.refcount = 1;
+                CCodeLocation loc;
+                loc.height = block_index.nHeight;
+                loc.code_pos = pos;
+                loc.vout = static_cast<uint32_t>(j);
+                e.locations.push_back(loc);
                 out_entries.emplace_back(PushCodeHash(tx.vout[j].scriptPubKey), e);
             }
         }
@@ -2528,7 +2529,7 @@ bool Chainstate::ReconcileCodeDB()
                 return false; // require -reindex
             }
             const uint256 new_best = pindex->pprev ? pindex->pprev->GetBlockHash() : uint256();
-            if (!codedb->UndoBlock(CollectPushCodeHashes(block), new_best)) {
+            if (!codedb->UndoBlock(CollectPushCodeHashes(block), pindex->nHeight, new_best)) {
                 return false;
             }
         }
@@ -2551,27 +2552,39 @@ PushCodeStatus Chainstate::AssemblePushCode(const uint256& hash, std::vector<uns
     CCodeDB* codedb = m_blockman.m_code_db.get();
     if (!codedb) { reason = "pushcode-no-db"; return PushCodeStatus::INCOMPLETE; }
 
-    // Materialize a part's code chunk by reading its containing tx from the block
-    // files (code_pos is that tx's on-disk position, as in the tx index) and
-    // taking the code param of its PUSHCODE output vout. Unavailable (e.g. pruned)
-    // => the branch is incomplete, handled by the assembler as INCOMPLETE.
-    auto fetch = [this](const CCodeEntry& e, std::vector<unsigned char>& chunk) -> bool {
-        AutoFile file{m_blockman.OpenBlockFile(e.code_pos, /*fReadOnly=*/true)};
+    // Materialize a part's code chunk by reading one of its on-disk copies: the
+    // containing tx at a location's code_pos (as in the tx index), taking the code
+    // param of its PUSHCODE output vout. Copies are byte-identical, so try the
+    // most RECENT copy first (most likely still on disk under pruning) and fall
+    // back to older copies; if none is available (all pruned) the branch is
+    // INCOMPLETE.
+    auto read_at = [this](const CCodeLocation& loc, std::vector<unsigned char>& chunk) -> bool {
+        AutoFile file{m_blockman.OpenBlockFile(loc.code_pos, /*fReadOnly=*/true)};
         if (file.IsNull()) return false;
         CBlockHeader header;
         CMutableTransaction tx;
         try {
             file >> header;
-            if (fseek(file.Get(), e.code_pos.nTxOffset, SEEK_CUR)) return false;
+            if (fseek(file.Get(), loc.code_pos.nTxOffset, SEEK_CUR)) return false;
             file >> TX_WITH_WITNESS(tx);
         } catch (const std::exception&) {
             return false;
         }
-        if (e.vout >= tx.vout.size()) return false;
+        if (loc.vout >= tx.vout.size()) return false;
         std::vector<std::vector<unsigned char>> sol;
-        if (Solver(tx.vout[e.vout].scriptPubKey, sol) != TxoutType::PUSHCODE) return false;
+        if (Solver(tx.vout[loc.vout].scriptPubKey, sol) != TxoutType::PUSHCODE) return false;
         chunk = sol.back();
         return true;
+    };
+    auto fetch = [&read_at](const CCodeEntry& e, std::vector<unsigned char>& chunk) -> bool {
+        std::vector<const CCodeLocation*> locs;
+        for (const CCodeLocation& l : e.locations) locs.push_back(&l);
+        std::sort(locs.begin(), locs.end(),
+                  [](const CCodeLocation* a, const CCodeLocation* b) { return a->height > b->height; });
+        for (const CCodeLocation* l : locs) {
+            if (read_at(*l, chunk)) return true;
+        }
+        return false;
     };
 
     return ::AssemblePushCode(*codedb, hash, fetch, out, reason);

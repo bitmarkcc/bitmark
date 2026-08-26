@@ -38,7 +38,25 @@ enum PushCodeOp : uint8_t {
     PUSHCODE_OP_REPLACE = 1, // REPLACE/DELETE a part range
 };
 
-/** A confirmed code entry, keyed by its content hash H in the store. */
+/** One on-disk copy of a code entry: a confirmed PUSHCODE output backing H. The
+ *  same content hash H can be pushed more than once (content dedup) -- e.g. an
+ *  active algo re-pushed to keep a recent copy inside the pruned-node keep window.
+ *  Each copy records where to read its (byte-identical) code chunk from disk. */
+struct CCodeLocation {
+    int32_t height{0};          // block height of this copy
+    CDiskTxPos code_pos;        // position of the containing transaction in the block file
+    uint32_t vout{0};           // index of the PUSHCODE output within that transaction
+
+    SERIALIZE_METHODS(CCodeLocation, obj)
+    {
+        READWRITE(obj.height, obj.code_pos, VARINT(obj.vout));
+    }
+};
+
+/** A confirmed code entry, keyed by its content hash H in the store. The content-
+ *  derived fields (op/parent/parts) are identical for every copy of H, since H is
+ *  the hash of the whole output script that encodes them; only the on-disk
+ *  location differs per copy, so those are held in a per-copy list. */
 struct CCodeEntry {
     uint8_t op{PUSHCODE_OP_INSERT};
     bool is_delete{false};      // REPLACE with no replacement: erase the part range
@@ -48,16 +66,28 @@ struct CCodeEntry {
     uint32_t nPart2{0};         // range end (REPLACE/DELETE); == nPart when single
     bool has_part{false};       // whether nPart was specified
     bool has_part2{false};      // whether nPart2 was specified (range)
-    int32_t height{0};          // block height the entry was confirmed at
-    CDiskTxPos code_pos;        // position of the containing transaction in the block file
-    uint32_t vout{0};           // index of the PUSHCODE output within that transaction
-    uint32_t refcount{1};       // number of confirmed outputs backing this H
+    std::vector<CCodeLocation> locations; // one per confirmed output backing H
 
     SERIALIZE_METHODS(CCodeEntry, obj)
     {
         READWRITE(obj.op, obj.is_delete, obj.has_parent, obj.parent_hash, VARINT(obj.nPart),
-                  VARINT(obj.nPart2), obj.has_part, obj.has_part2,
-                  obj.height, obj.code_pos, VARINT(obj.vout), VARINT(obj.refcount));
+                  VARINT(obj.nPart2), obj.has_part, obj.has_part2, obj.locations);
+    }
+
+    /** Number of confirmed outputs backing H (the old "refcount"). */
+    uint32_t refcount() const { return static_cast<uint32_t>(locations.size()); }
+
+    /** Canonical (logical) height for the DEPTH/LENGTH limits = the entry's first
+     *  appearance = the lowest copy height. Re-pushing a recent copy adds
+     *  availability without changing the entry's position in the DAG. */
+    int32_t Height() const
+    {
+        int32_t h{0};
+        bool first{true};
+        for (const CCodeLocation& l : locations) {
+            if (first || l.height < h) { h = l.height; first = false; }
+        }
+        return h;
     }
 };
 
@@ -78,16 +108,18 @@ public:
     bool ReadEntry(const uint256& hash, CCodeEntry& entry) const;
     bool HaveEntry(const uint256& hash) const;
 
-    /** Connect a block's PUSHCODE outputs: for each (H, entry), create the entry
-     *  or bump its refcount if H already exists (content dedup, including
-     *  duplicates within this same block). Written with the new best block in a
-     *  single atomic batch. */
+    /** Connect a block's PUSHCODE outputs: for each (H, entry) append the copy's
+     *  location to H's entry (creating it if new; content dedup, including
+     *  duplicates within this same block). Each incoming entry carries exactly one
+     *  location. Written with the new best block in a single atomic batch. */
     bool ApplyBlock(const std::vector<std::pair<uint256, CCodeEntry>>& entries,
                     const uint256& best_block);
-    /** Disconnect a block's PUSHCODE outputs: for each H, decrement its refcount
-     *  and erase when it reaches zero. Written with the new best block (the
-     *  block's parent) in a single atomic batch. */
-    bool UndoBlock(const std::vector<uint256>& hashes, const uint256& best_block);
+    /** Disconnect the block at `height`: for each H, drop the copy locations
+     *  confirmed at that height (one active-chain block per height), and erase the
+     *  entry when no locations remain. Written with the new best block (the block's
+     *  parent) in a single atomic batch. */
+    bool UndoBlock(const std::vector<uint256>& hashes, int32_t height,
+                   const uint256& best_block);
 
     bool ReadBestBlock(uint256& best_block) const;
     bool WriteBestBlock(const uint256& best_block);
@@ -129,8 +161,10 @@ enum class PushCodeStatus {
     INVALID,     // a consensus limit was exceeded or an op index was out of range
 };
 
-/** Fetch the raw code chunk of an entry (the code param of the PUSHCODE output at
- *  entry.code_pos / entry.vout). Returns false if unavailable (e.g. pruned). */
+/** Fetch the raw code chunk of an entry (the code param of one of the PUSHCODE
+ *  outputs in entry.locations). The chunk is byte-identical across copies, so the
+ *  fetcher may read any location on disk -- it should prefer a recent copy for
+ *  availability under pruning. Returns false if no copy is available (all pruned). */
 using PushCodeChunkFetcher =
     std::function<bool(const CCodeEntry& entry, std::vector<unsigned char>& chunk)>;
 

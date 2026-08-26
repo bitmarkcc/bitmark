@@ -7,8 +7,10 @@
 #include <hash.h>
 #include <script/script.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <map>
+#include <set>
 
 namespace {
 // key prefixes in the code DB
@@ -39,26 +41,28 @@ bool CCodeDB::HaveEntry(const uint256& hash) const
 bool CCodeDB::ApplyBlock(const std::vector<std::pair<uint256, CCodeEntry>>& entries,
                          const uint256& best_block)
 {
-    // Aggregate by H so byte-identical outputs (even within this one block) bump
-    // one entry's refcount rather than clobbering it. Keep the first-seen entry
-    // fields as canonical (lowest height / earliest position).
-    std::map<uint256, std::pair<CCodeEntry, uint32_t>> agg;
+    // Aggregate the block's copies by H (each incoming entry carries exactly one
+    // location) so byte-identical outputs -- even within this one block -- append
+    // to a single entry's location list rather than clobbering it. Content fields
+    // are identical across copies of H, so the first-seen entry supplies them.
+    std::map<uint256, CCodeEntry> agg;
     for (const auto& [h, e] : entries) {
         auto it = agg.find(h);
-        if (it == agg.end()) agg.emplace(h, std::make_pair(e, uint32_t{1}));
-        else it->second.second += 1;
+        if (it == agg.end()) {
+            agg.emplace(h, e); // content fields + this one location
+        } else {
+            it->second.locations.insert(it->second.locations.end(),
+                                        e.locations.begin(), e.locations.end());
+        }
     }
     CDBBatch batch{m_db};
-    for (const auto& [h, ec] : agg) {
-        const uint32_t added = ec.second;
-        CCodeEntry existing;
+    for (const auto& [h, incoming] : agg) {
         CCodeEntry stored;
-        if (m_db.Read(std::make_pair(DB_CODE_ENTRY, h), existing)) {
-            stored = existing;
-            stored.refcount = existing.refcount + added;
+        if (!m_db.Read(std::make_pair(DB_CODE_ENTRY, h), stored)) {
+            stored = incoming; // new entry: content fields + its locations
         } else {
-            stored = ec.first;
-            stored.refcount = added;
+            stored.locations.insert(stored.locations.end(),
+                                    incoming.locations.begin(), incoming.locations.end());
         }
         batch.Write(std::make_pair(DB_CODE_ENTRY, h), stored);
     }
@@ -66,20 +70,25 @@ bool CCodeDB::ApplyBlock(const std::vector<std::pair<uint256, CCodeEntry>>& entr
     return m_db.WriteBatch(batch);
 }
 
-bool CCodeDB::UndoBlock(const std::vector<uint256>& hashes, const uint256& best_block)
+bool CCodeDB::UndoBlock(const std::vector<uint256>& hashes, int32_t height,
+                        const uint256& best_block)
 {
-    std::map<uint256, uint32_t> agg;
-    for (const auto& h : hashes) agg[h] += 1;
+    // Drop the copy locations that this block (at `height`) contributed. Since
+    // there is one active-chain block per height, removing every location at that
+    // height removes exactly this block's copies (including intra-block dups).
+    std::set<uint256> uniq(hashes.begin(), hashes.end());
     CDBBatch batch{m_db};
-    for (const auto& [h, removed] : agg) {
+    for (const uint256& h : uniq) {
         CCodeEntry existing;
-        if (m_db.Read(std::make_pair(DB_CODE_ENTRY, h), existing)) {
-            if (existing.refcount > removed) {
-                existing.refcount -= removed;
-                batch.Write(std::make_pair(DB_CODE_ENTRY, h), existing);
-            } else {
-                batch.Erase(std::make_pair(DB_CODE_ENTRY, h));
-            }
+        if (!m_db.Read(std::make_pair(DB_CODE_ENTRY, h), existing)) continue;
+        auto& locs = existing.locations;
+        locs.erase(std::remove_if(locs.begin(), locs.end(),
+                                  [height](const CCodeLocation& l) { return l.height == height; }),
+                   locs.end());
+        if (locs.empty()) {
+            batch.Erase(std::make_pair(DB_CODE_ENTRY, h));
+        } else {
+            batch.Write(std::make_pair(DB_CODE_ENTRY, h), existing);
         }
     }
     batch.Write(DB_CODE_BESTBLOCK, best_block);
@@ -115,9 +124,11 @@ PushCodeStatus AssemblePushCode(const CCodeDB& db, const uint256& hash,
             return PushCodeStatus::INCOMPLETE;
         }
         // DEPTH: each reference edge (child -> parent) spans a bounded number of
-        // blocks, in either direction (forward references are allowed).
+        // blocks, in either direction (forward references are allowed). Use the
+        // canonical (first-appearance) height so a re-pushed recent copy does not
+        // change the edge.
         if (!chain.empty()) {
-            const int64_t edge = std::abs(int64_t{chain.back().height} - int64_t{e.height});
+            const int64_t edge = std::abs(int64_t{chain.back().Height()} - int64_t{e.Height()});
             if (edge > MAX_PUSHCODE_DEPTH) { reason = "pushcode-depth"; return PushCodeStatus::INVALID; }
         }
         chain.push_back(e);
@@ -127,9 +138,9 @@ PushCodeStatus AssemblePushCode(const CCodeDB& db, const uint256& hash,
 
     // LENGTH: every entry lies within a bounded block span of the tip (the
     // branch's internal length in blocks).
-    const int64_t tip_height = chain.front().height;
+    const int64_t tip_height = chain.front().Height();
     for (const CCodeEntry& e : chain) {
-        if (std::abs(tip_height - int64_t{e.height}) > MAX_PUSHCODE_LENGTH) {
+        if (std::abs(tip_height - int64_t{e.Height()}) > MAX_PUSHCODE_LENGTH) {
             reason = "pushcode-length"; return PushCodeStatus::INVALID;
         }
     }

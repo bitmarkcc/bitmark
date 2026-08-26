@@ -279,9 +279,16 @@ static RPCHelpMan getpushcodeentry()
                 {RPCResult::Type::STR_HEX, "parent", /*optional=*/true, "The referenced content hash, if any"},
                 {RPCResult::Type::NUM, "part", /*optional=*/true, "The part index, if given"},
                 {RPCResult::Type::NUM, "part2", /*optional=*/true, "The replace-range end, if given"},
-                {RPCResult::Type::NUM, "height", "Block height at which the entry was confirmed"},
-                {RPCResult::Type::NUM, "vout", "Output index of the PUSHCODE output in its transaction"},
-                {RPCResult::Type::NUM, "refcount", "Number of confirmed outputs backing this content hash"},
+                {RPCResult::Type::NUM, "height", "Canonical (first-appearance) block height of the entry"},
+                {RPCResult::Type::NUM, "refcount", "Number of confirmed outputs (copies) backing this content hash"},
+                {RPCResult::Type::ARR, "copies", "Each confirmed copy backing this content hash",
+                    {
+                        {RPCResult::Type::OBJ, "", "",
+                            {
+                                {RPCResult::Type::NUM, "height", "Block height of this copy"},
+                                {RPCResult::Type::NUM, "vout", "Output index of the PUSHCODE output in its transaction"},
+                            }},
+                    }},
             }
         },
         RPCExamples{
@@ -306,9 +313,16 @@ static RPCHelpMan getpushcodeentry()
             UniValue result(UniValue::VOBJ);
             PushEntryFields(result, e.op, e.is_delete, e.has_parent, e.parent_hash,
                             e.has_part, e.nPart, e.has_part2, e.nPart2);
-            result.pushKV("height", (int64_t)e.height);
-            result.pushKV("vout", (uint64_t)e.vout);
-            result.pushKV("refcount", (uint64_t)e.refcount);
+            result.pushKV("height", (int64_t)e.Height());
+            result.pushKV("refcount", (uint64_t)e.refcount());
+            UniValue copies(UniValue::VARR);
+            for (const CCodeLocation& loc : e.locations) {
+                UniValue c(UniValue::VOBJ);
+                c.pushKV("height", (int64_t)loc.height);
+                c.pushKV("vout", (uint64_t)loc.vout);
+                copies.push_back(c);
+            }
+            result.pushKV("copies", copies);
             return result;
         },
     };

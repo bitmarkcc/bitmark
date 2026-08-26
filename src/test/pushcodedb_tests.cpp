@@ -27,7 +27,23 @@ BOOST_AUTO_TEST_CASE(content_hash)
     BOOST_CHECK(PushCodeHash(a) != PushCodeHash(b));
 }
 
-// Entry round-trip, content dedup / refcount, and best-block tracking.
+namespace {
+// A one-location entry at a given height/vout (content fields don't matter here).
+CCodeEntry EntryAt(int32_t height, uint32_t vout)
+{
+    CCodeEntry e;
+    e.op = PUSHCODE_OP_INSERT;
+    e.has_parent = false;
+    CCodeLocation loc;
+    loc.height = height;
+    loc.vout = vout;
+    e.locations.assign(1, loc);
+    return e;
+}
+} // namespace
+
+// Entry round-trip, content dedup (multiple copies at distinct heights), height-
+// based undo, canonical Height(), and best-block tracking.
 BOOST_AUTO_TEST_CASE(entry_refcount_bestblock)
 {
     CCodeDB db{DBParams{.path = m_args.GetDataDirBase() / "codedb",
@@ -38,48 +54,45 @@ BOOST_AUTO_TEST_CASE(entry_refcount_bestblock)
     const uint256 blk1 = uint256S("0x01");
     const uint256 blk2 = uint256S("0x02");
 
-    CCodeEntry e;
-    e.op = PUSHCODE_OP_INSERT;
-    e.has_parent = false;
-    e.height = 730;
-    e.refcount = 1;
-
     BOOST_CHECK(!db.HaveEntry(H));
 
-    // apply a block with one entry -> exists, readable, best block set
-    BOOST_CHECK(db.ApplyBlock({{H, e}}, blk1));
+    // apply a block (height 730) with one copy -> exists, readable, best block set
+    BOOST_CHECK(db.ApplyBlock({{H, EntryAt(730, 0)}}, blk1));
     BOOST_CHECK(db.HaveEntry(H));
     CCodeEntry got;
     BOOST_CHECK(db.ReadEntry(H, got));
-    BOOST_CHECK_EQUAL(got.height, 730);
-    BOOST_CHECK_EQUAL(got.refcount, 1U);
+    BOOST_CHECK_EQUAL(got.Height(), 730);
+    BOOST_CHECK_EQUAL(got.refcount(), 1U);
     uint256 best;
     BOOST_CHECK(db.ReadBestBlock(best));
     BOOST_CHECK(best == blk1);
 
-    // dedup across blocks: same H again -> refcount 2, best block advances
-    BOOST_CHECK(db.ApplyBlock({{H, e}}, blk2));
+    // re-push at a LATER height (731) -> 2 copies, canonical Height() stays 730
+    BOOST_CHECK(db.ApplyBlock({{H, EntryAt(731, 1)}}, blk2));
     BOOST_CHECK(db.ReadEntry(H, got));
-    BOOST_CHECK_EQUAL(got.refcount, 2U);
+    BOOST_CHECK_EQUAL(got.refcount(), 2U);
+    BOOST_CHECK_EQUAL(got.Height(), 730); // first appearance, not the re-push
     BOOST_CHECK(db.ReadBestBlock(best));
     BOOST_CHECK(best == blk2);
 
-    // undo once -> refcount 1, still present
-    BOOST_CHECK(db.UndoBlock({H}, blk1));
+    // undo the height-731 block -> only that copy drops; entry (and 730) remain
+    BOOST_CHECK(db.UndoBlock({H}, 731, blk1));
     BOOST_CHECK(db.HaveEntry(H));
     BOOST_CHECK(db.ReadEntry(H, got));
-    BOOST_CHECK_EQUAL(got.refcount, 1U);
+    BOOST_CHECK_EQUAL(got.refcount(), 1U);
+    BOOST_CHECK_EQUAL(got.Height(), 730);
 
-    // undo again -> erased
-    BOOST_CHECK(db.UndoBlock({H}, uint256S("0x00")));
+    // undo the height-730 block -> erased
+    BOOST_CHECK(db.UndoBlock({H}, 730, uint256S("0x00")));
     BOOST_CHECK(!db.HaveEntry(H));
     BOOST_CHECK(!db.ReadEntry(H, got));
 
-    // intra-block dedup: one block adding the same H twice -> refcount 2
-    BOOST_CHECK(db.ApplyBlock({{H, e}, {H, e}}, blk1));
+    // intra-block dedup: one block (height 730) adds the same H twice -> 2 copies,
+    // both at height 730, so undoing that height removes both.
+    BOOST_CHECK(db.ApplyBlock({{H, EntryAt(730, 0)}, {H, EntryAt(730, 1)}}, blk1));
     BOOST_CHECK(db.ReadEntry(H, got));
-    BOOST_CHECK_EQUAL(got.refcount, 2U);
-    BOOST_CHECK(db.UndoBlock({H, H}, uint256S("0x00")));
+    BOOST_CHECK_EQUAL(got.refcount(), 2U);
+    BOOST_CHECK(db.UndoBlock({H, H}, 730, uint256S("0x00")));
     BOOST_CHECK(!db.HaveEntry(H));
 }
 
@@ -100,11 +113,16 @@ struct AssemblyFixture : public BasicTestingSetup {
 
     static uint256 MkHash(unsigned v) { return ArithToUint256(arith_uint256{v}); }
 
-    // Add an entry keyed by H; its chunk is stored under a fresh vout. Returns H.
-    uint256 Add(unsigned id, CCodeEntry e, const std::vector<unsigned char>& chunk)
+    // Add an entry keyed by H with a single location at `height`; its chunk is
+    // stored under a fresh vout (standing in for the block-file read). Returns H.
+    uint256 Add(unsigned id, CCodeEntry e, const std::vector<unsigned char>& chunk,
+                int32_t height = 0)
     {
-        last_vout = e.vout = next_vout++;
-        chunks[e.vout] = chunk;
+        CCodeLocation loc;
+        loc.height = height;
+        loc.vout = last_vout = next_vout++;
+        e.locations.assign(1, loc);
+        chunks[loc.vout] = chunk;
         const uint256 H = MkHash(id);
         BOOST_REQUIRE(db.ApplyBlock({{H, e}}, uint256::ONE));
         return H;
@@ -113,11 +131,15 @@ struct AssemblyFixture : public BasicTestingSetup {
     PushCodeChunkFetcher fetcher()
     {
         return [this](const CCodeEntry& e, std::vector<unsigned char>& out) {
-            if (unavailable.count(e.vout)) return false;
-            auto it = chunks.find(e.vout);
-            if (it == chunks.end()) return false;
-            out = it->second;
-            return true;
+            // Try each copy (highest height first, as the real fetcher does).
+            for (auto it = e.locations.rbegin(); it != e.locations.rend(); ++it) {
+                if (unavailable.count(it->vout)) continue;
+                auto c = chunks.find(it->vout);
+                if (c == chunks.end()) continue;
+                out = c->second;
+                return true;
+            }
+            return false;
         };
     }
 
@@ -200,6 +222,31 @@ BOOST_FIXTURE_TEST_CASE(assemble_incomplete, AssemblyFixture)
     BOOST_CHECK(Assemble(h0, out) == PushCodeStatus::INCOMPLETE);
 }
 
+BOOST_FIXTURE_TEST_CASE(assemble_repush_survives_prune, AssemblyFixture)
+{
+    // Root pushed at height 10, then RE-PUSHED (same content H) at height 1000.
+    uint256 h0 = Add(0, NewRoot(), A, /*height=*/10);
+    const uint32_t old_vout = last_vout;
+    // Re-push: same H (MkHash(0)) with a fresh, recent copy (its own vout/chunk).
+    CCodeLocation recent;
+    recent.height = 1000;
+    recent.vout = next_vout++;
+    chunks[recent.vout] = A; // byte-identical copy
+    CCodeEntry re = NewRoot();
+    re.locations.assign(1, recent);
+    BOOST_REQUIRE(db.ApplyBlock({{h0, re}}, uint256::ONE));
+
+    std::vector<unsigned char> out;
+    // Prune the ORIGINAL copy: assembly must fall back to the recent copy.
+    unavailable.insert(old_vout);
+    BOOST_CHECK(Assemble(h0, out) == PushCodeStatus::COMPLETE);
+    BOOST_CHECK(out == A);
+
+    // Both copies gone -> INCOMPLETE (nothing on disk).
+    unavailable.insert(recent.vout);
+    BOOST_CHECK(Assemble(h0, out) == PushCodeStatus::INCOMPLETE);
+}
+
 BOOST_FIXTURE_TEST_CASE(assemble_out_of_range, AssemblyFixture)
 {
     uint256 h0 = Add(0, NewRoot(), A); // parts == [A], size 1
@@ -222,28 +269,20 @@ BOOST_FIXTURE_TEST_CASE(assemble_depth_and_length_limits, AssemblyFixture)
 
     // Forward reference within DEPTH: parent confirmed in a LATER block than the
     // child (negative raw distance, bounded by |.|) is fine.
-    CCodeEntry root_late = NewRoot(); root_late.height = 1000;
-    uint256 fh0 = Add(0, root_late, A);
-    CCodeEntry fchild = Child(fh0, PUSHCODE_OP_INSERT); fchild.height = 10; // 990 blocks < DEPTH
-    uint256 fh1 = Add(1, fchild, B);
+    uint256 fh0 = Add(0, NewRoot(), A, /*height=*/1000);
+    uint256 fh1 = Add(1, Child(fh0, PUSHCODE_OP_INSERT), B, /*height=*/10); // 990 blocks < DEPTH
     BOOST_CHECK(Assemble(fh1, out) == PushCodeStatus::COMPLETE);
 
     // DEPTH: a single reference edge farther than MAX_PUSHCODE_DEPTH blocks.
-    CCodeEntry r = NewRoot(); r.height = 0;
-    uint256 dh0 = Add(2, r, A);
-    CCodeEntry deep = Child(dh0, PUSHCODE_OP_INSERT);
-    deep.height = MAX_PUSHCODE_DEPTH + 1; // edge exceeds DEPTH
-    uint256 dh1 = Add(3, deep, B);
+    uint256 dh0 = Add(2, NewRoot(), A, /*height=*/0);
+    uint256 dh1 = Add(3, Child(dh0, PUSHCODE_OP_INSERT), B, /*height=*/MAX_PUSHCODE_DEPTH + 1);
     BOOST_CHECK(Assemble(dh1, out) == PushCodeStatus::INVALID);
 
     // LENGTH: edges within DEPTH but the tip-to-root block span exceeds LENGTH.
     const int32_t mid = MAX_PUSHCODE_LENGTH / 2 + 1;
-    CCodeEntry lr = NewRoot(); lr.height = 0;
-    uint256 lh0 = Add(4, lr, A);
-    CCodeEntry lmid = Child(lh0, PUSHCODE_OP_INSERT); lmid.height = mid;
-    uint256 lh1 = Add(5, lmid, B);
-    CCodeEntry ltip = Child(lh1, PUSHCODE_OP_INSERT); ltip.height = 2 * mid; // span 2*mid > LENGTH
-    uint256 lh2 = Add(6, ltip, C);
+    uint256 lh0 = Add(4, NewRoot(), A, /*height=*/0);
+    uint256 lh1 = Add(5, Child(lh0, PUSHCODE_OP_INSERT), B, /*height=*/mid);
+    uint256 lh2 = Add(6, Child(lh1, PUSHCODE_OP_INSERT), C, /*height=*/2 * mid); // span 2*mid > LENGTH
     BOOST_CHECK(Assemble(lh2, out) == PushCodeStatus::INVALID);
 }
 
