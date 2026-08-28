@@ -458,6 +458,7 @@ libbitcoin_node_a_SOURCES = \
   rpc/node.cpp \
   rpc/output_script.cpp \
   rpc/pushcode.cpp \
+  rpc/vote.cpp \
   rpc/rawtransaction.cpp \
   rpc/server.cpp \
   rpc/server_util.cpp \

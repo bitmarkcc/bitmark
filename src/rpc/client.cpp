@@ -117,6 +117,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "getrawtransaction", 1, "verbosity" },
     { "getrawtransaction", 1, "verbose" },
     { "createpushcodescript", 0, "params" },
+    { "getalgovote", 0, "slot" },
+    { "getalgovote", 1, "height" },
     { "createpushcoderawtransaction", 0, "inputs" },
     { "createpushcoderawtransaction", 1, "outputs" },
     { "createpushcoderawtransaction", 2, "pushcode" },

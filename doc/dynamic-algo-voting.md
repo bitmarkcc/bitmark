@@ -60,6 +60,18 @@ creation time without waiting for the spend. This template is made relay-standar
 confirmation, so they cannot re-vote within any window that includes this vote,
 and locking imposes a real opportunity cost (Sybil resistance for stake).
 
+CSV ACTIVATION (2026-08-27): CSV (BIP68/112/113) is NOT active on Bitmark
+mainnet/testnet as shipped (CSVHeight = INT_MAX) -- OP_CHECKSEQUENCEVERIFY would be
+a no-op and the coins would not actually lock. So CSV is ACTIVATED as part of THIS
+dynamic-algo soft fork, gated on the SAME miner-signalled base-version-5
+supermajority that already enables OP_PUSHCODE (no hardcoded height). Wiring: OR
+the pushcode-supermajority condition into the SCRIPT_VERIFY_CHECKSEQUENCEVERIFY
+(BIP112) gate in GetBlockScriptFlags, and into the BIP68 sequence-lock / BIP113 MTP
+gates. CLTV (BIP65) is already active and was the fallback if CSV were not bundled
+(absolute L with the tally checking L - B >= VOTING_PERIOD); CSV is preferred as it
+makes the relative lock automatic from confirmation. Since CSV shares the PUSHCODE
+gate, it becomes active at the same height PUSHCODE did.
+
 Only outputs in a tx that ALSO carries an OP_VOTE, and that match the stake
 template, count as stake.
 

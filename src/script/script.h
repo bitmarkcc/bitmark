@@ -200,7 +200,8 @@ enum opcodetype
     OP_NOP3 = OP_CHECKSEQUENCEVERIFY,
     OP_PUSHCODE = 0xb3, // Bitmark: push wasm code to the chain (dynamic PoW algo)
     OP_NOP4 = OP_PUSHCODE,
-    OP_NOP5 = 0xb4,
+    OP_VOTE = 0xb4,     // Bitmark: vote a dynamic-algo branch into an mPoW slot
+    OP_NOP5 = OP_VOTE,
     OP_NOP6 = 0xb5,
     OP_NOP7 = 0xb6,
     OP_NOP8 = 0xb7,

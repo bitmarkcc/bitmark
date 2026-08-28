@@ -21,6 +21,7 @@ void RegisterNodeRPCCommands(CRPCTable&);
 void RegisterNetRPCCommands(CRPCTable&);
 void RegisterOutputScriptRPCCommands(CRPCTable&);
 void RegisterPushCodeRPCCommands(CRPCTable&);
+void RegisterVoteRPCCommands(CRPCTable&);
 void RegisterRawTransactionRPCCommands(CRPCTable &tableRPC);
 void RegisterSignMessageRPCCommands(CRPCTable&);
 void RegisterSignerRPCCommands(CRPCTable &tableRPC);
@@ -36,6 +37,7 @@ static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
     RegisterNetRPCCommands(t);
     RegisterOutputScriptRPCCommands(t);
     RegisterPushCodeRPCCommands(t);
+    RegisterVoteRPCCommands(t);
     RegisterRawTransactionRPCCommands(t);
     RegisterSignMessageRPCCommands(t);
 #ifdef ENABLE_EXTERNAL_SIGNER
