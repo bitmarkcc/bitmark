@@ -108,6 +108,8 @@ IsMineResult IsMineInner(const LegacyScriptPubKeyMan& keystore, const CScript& s
     case TxoutType::NONSTANDARD:
     case TxoutType::NULL_DATA:
     case TxoutType::PUSHCODE:
+    case TxoutType::FEE_VOTE:
+    case TxoutType::STAKE_VOTE:
     case TxoutType::WITNESS_UNKNOWN:
     case TxoutType::WITNESS_V1_TAPROOT:
         break;

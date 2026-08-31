@@ -29,6 +29,8 @@ std::string GetTxnOutputType(TxoutType t)
     case TxoutType::WITNESS_V1_TAPROOT: return "witness_v1_taproot";
     case TxoutType::WITNESS_UNKNOWN: return "witness_unknown";
     case TxoutType::PUSHCODE: return "pushcode";
+    case TxoutType::FEE_VOTE: return "fee_vote";
+    case TxoutType::STAKE_VOTE: return "stake_vote";
     } // no default case, so the compiler can warn about missing cases
     assert(false);
 }
@@ -175,6 +177,81 @@ static bool MatchPushCode(const CScript& script, std::vector<valtype>& params)
     return !params.empty(); // at least one param (the code chunk, or a delete range)
 }
 
+// Decode one pushed value that is a small number: a data push of <= max_bytes, or
+// a small-int opcode (OP_0 / OP_1..OP_16). Normalizes to a byte vector holding the
+// value's little-endian bytes (as MatchPushCode does for params).
+static bool NextNum(const CScript& s, CScript::const_iterator& it, unsigned max_bytes, valtype& out)
+{
+    opcodetype opcode;
+    valtype vch;
+    if (!s.GetOp(it, opcode, vch)) return false;
+    if (!vch.empty()) {
+        if (vch.size() > max_bytes) return false;
+        out = std::move(vch);
+    } else if (opcode == OP_0) {
+        out = valtype();
+    } else if (opcode >= OP_1 && opcode <= OP_16) {
+        out = valtype(1, (unsigned char)(opcode - OP_RESERVED));
+    } else {
+        return false;
+    }
+    return true;
+}
+
+static bool NextOp(const CScript& s, CScript::const_iterator& it, opcodetype want)
+{
+    opcodetype opcode;
+    valtype vch;
+    return s.GetOp(it, opcode, vch) && opcode == want;
+}
+
+// Bitmark FEE_VOTE: OP_RETURN OP_VOTE <branch:32> <slot>, unspendable. Its
+// (fee-based) weight comes from the transaction, not the output; the output just
+// declares the vote. vSolutions = [branch(32), slot(<=1 byte)].
+static bool MatchFeeVote(const CScript& script, std::vector<valtype>& sols)
+{
+    sols.clear();
+    CScript::const_iterator it = script.begin();
+    if (!NextOp(script, it, OP_RETURN)) return false;
+    if (!NextOp(script, it, OP_VOTE)) return false;
+    opcodetype opcode; valtype branch;
+    if (!script.GetOp(it, opcode, branch) || branch.size() != 32) return false;
+    valtype slot;
+    if (!NextNum(script, it, 1, slot)) return false;
+    if (it != script.end()) return false;
+    sols.push_back(std::move(branch));
+    sols.push_back(std::move(slot));
+    return true;
+}
+
+// Bitmark STAKE_VOTE: a spendable, CSV-timelocked output that self-describes the
+// vote:  <lock> OP_CSV OP_DROP OP_VOTE <branch:32> OP_DROP <slot> OP_DROP <payout>.
+// Its (stake-based) weight is the output's value (counted when lock >= the voting
+// period). vSolutions = [branch(32), slot(<=1 byte), lock(<=5 bytes), payout].
+static bool MatchStakeVote(const CScript& script, std::vector<valtype>& sols)
+{
+    sols.clear();
+    CScript::const_iterator it = script.begin();
+    valtype lock;
+    if (!NextNum(script, it, 5, lock)) return false;              // <lock>
+    if (!NextOp(script, it, OP_CHECKSEQUENCEVERIFY)) return false;
+    if (!NextOp(script, it, OP_DROP)) return false;
+    if (!NextOp(script, it, OP_VOTE)) return false;
+    opcodetype opcode; valtype branch;
+    if (!script.GetOp(it, opcode, branch) || branch.size() != 32) return false; // <branch:32>
+    if (!NextOp(script, it, OP_DROP)) return false;
+    valtype slot;
+    if (!NextNum(script, it, 1, slot)) return false;             // <slot>
+    if (!NextOp(script, it, OP_DROP)) return false;
+    if (it >= script.end()) return false;                        // <payout> (non-empty)
+    valtype payout(it, script.end());
+    sols.push_back(std::move(branch));
+    sols.push_back(std::move(slot));
+    sols.push_back(std::move(lock));
+    sols.push_back(std::move(payout));
+    return true;
+}
+
 TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned char>>& vSolutionsRet)
 {
     vSolutionsRet.clear();
@@ -244,6 +321,14 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
     if (MatchPushCode(scriptPubKey, params)) {
         vSolutionsRet = std::move(params);
         return TxoutType::PUSHCODE;
+    }
+    if (MatchFeeVote(scriptPubKey, params)) {
+        vSolutionsRet = std::move(params);
+        return TxoutType::FEE_VOTE;
+    }
+    if (MatchStakeVote(scriptPubKey, params)) {
+        vSolutionsRet = std::move(params);
+        return TxoutType::STAKE_VOTE;
     }
 
     vSolutionsRet.clear();

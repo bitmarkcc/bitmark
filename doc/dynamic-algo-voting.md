@@ -23,66 +23,67 @@ later; "the algo for slot S at height h" is a deterministic function of the chai
 
 ## OP_VOTE encoding
 
-Mirror the PUSHCODE pattern. A vote is an unspendable OP_RETURN output:
+Votes are PER-OUTPUT, not per-transaction (REVISED 2026-08-30): a vote is fully
+specified by a single output, so one transaction -- e.g. a COINJOIN -- can carry
+any number of independent votes (fee or stake, different branches/slots, different
+people) mixed with ordinary outputs. There is NO "one vote per tx" rule. A vote's
+weight comes from that output alone. OP_VOTE = OP_NOP5 (0xb4) is the marker opcode;
+branch_hash = the content hash (PushCodeHash) of the algo branch being voted for
+(need not be assemblable yet); slot = the target mPoW slot.
 
-    OP_RETURN OP_VOTE <branch_hash:32> <slot:1..>
+Two output types, two constituencies:
 
-- OP_VOTE = a NOP opcode used as the 2-byte magic (OP_RETURN OP_VOTE), so the
-  Solver classifies it as TxoutType::VOTE and it is never confused with nulldata.
-- branch_hash = the content hash (PushCodeHash) of the algo branch tip being
-  voted for. Need not be assemblable/complete yet (it becomes relevant only if it
-  wins and, at activation, must assemble + pass resource limits).
-- slot = the target mPoW slot (small int).
-- Exactly ONE OP_VOTE output per tx (a tx with 0 or >1 is not a vote). Coinbase
-  txs cannot vote (no real inputs / negative fee).
+### FEE_VOTE (the "user"/fee-payer constituency) -- unspendable
+    OP_RETURN OP_VOTE <branch_hash:32> <slot>          (TxoutType::FEE_VOTE)
+    weight = tx_fee / num_outputs
+tx_fee = sum(inputs) - sum(outputs), divided by num_outputs so a coinjoin's shared
+fee is not over-credited; each FEE_VOTE output in the tx gets that share. Computing
+it needs the spent-input values (block undo data; no -txindex required). Under
+OP_RETURN the output is unspendable and OP_VOTE is never executed.
 
-## Vote weights
+### STAKE_VOTE (the "investor"/stake constituency) -- spendable after the lock
+    <lock> OP_CHECKSEQUENCEVERIFY OP_DROP OP_VOTE <branch:32> OP_DROP <slot> OP_DROP <payout>
+                                                       (TxoutType::STAKE_VOTE)
+    weight = the output's value, counted only when lock >= VOTING_PERIOD (5760)
+Self-describing and spendable: `<lock> OP_CSV OP_DROP` is the relative timelock;
+OP_VOTE marks it as a vote; branch and slot are pushed-and-dropped so they are
+readable in the scriptPubKey without affecting the spend; `<payout>` (a standard
+script) receives the coins back after the lock. So the voter's stake is LOCKED
+(BIP68) for >= VOTING_PERIOD from confirmation -- real opportunity cost, Sybil
+resistance -- but recoverable, unlike a burn. The CSV/branch/slot are visible in
+the scriptPubKey (NOT behind P2SH) so the tally reads them at creation time.
 
-A voting tx contributes to TWO independent tallies for its (slot, branch_hash):
+Why not the OP_VOTE opcode inside a spendable script by default: OP_NOP5 is a
+discouraged upgradable NOP (policy), so a spend would be non-standard. Fixed by
+giving OP_VOTE a DEFINED-no-op case in the interpreter (removed from the
+discouraged set) -- a pure policy relaxation (consensus already treats OP_NOP5 as a
+no-op), which permanently claims OP_NOP5 as OP_VOTE (no future upgrade of it).
 
-### Fee weight (the "user"/fee-payer constituency)
-    fee_weight(tx) = tx_fee / num_outputs
-tx_fee = sum(input values) - sum(output values). Divided by the number of outputs
-so a coinjoin's shared fee is not over-credited to one embedded vote; a dedicated
-voter uses a minimal-output tx (vote + change => fee/2). Computing this needs the
-spent-input values (block undo data / txindex).
-
-### Stake weight (the "investor"/stake constituency)
-    stake_weight(tx) = sum of the tx's STAKE OUTPUTS
-A STAKE OUTPUT is an output whose scriptPubKey is the self-describing template
-
-    <lock:CScriptNum> OP_CHECKSEQUENCEVERIFY OP_DROP <payout scriptPubKey>
-
-with a RELATIVE timelock lock >= VOTING_PERIOD (5760). The CSV must be visible in
-the scriptPubKey (NOT hidden behind P2SH/P2WSH) so the tally reads the lock at
-creation time without waiting for the spend. This template is made relay-standard
-(as PUSHCODE was). The coins are thereby locked >= VOTING_PERIOD blocks from
-confirmation, so they cannot re-vote within any window that includes this vote,
-and locking imposes a real opportunity cost (Sybil resistance for stake).
+Standardness: FEE_VOTE and STAKE_VOTE are recognized by Solver (MatchFeeVote /
+MatchStakeVote) and made relay-standard in policy (STAKE_VOTE only if its embedded
+payout is itself a standard type). So votes relay/mine without -acceptnonstdtxn.
 
 CSV ACTIVATION (2026-08-27): CSV (BIP68/112/113) is NOT active on Bitmark
 mainnet/testnet as shipped (CSVHeight = INT_MAX) -- OP_CHECKSEQUENCEVERIFY would be
-a no-op and the coins would not actually lock. So CSV is ACTIVATED as part of THIS
+a no-op and the stake would not actually lock. So CSV is ACTIVATED as part of THIS
 dynamic-algo soft fork, gated on the SAME miner-signalled base-version-5
-supermajority that already enables OP_PUSHCODE (no hardcoded height). Wiring: OR
-the pushcode-supermajority condition into the SCRIPT_VERIFY_CHECKSEQUENCEVERIFY
-(BIP112) gate in GetBlockScriptFlags, and into the BIP68 sequence-lock / BIP113 MTP
-gates. CLTV (BIP65) is already active and was the fallback if CSV were not bundled
-(absolute L with the tally checking L - B >= VOTING_PERIOD); CSV is preferred as it
-makes the relative lock automatic from confirmation. Since CSV shares the PUSHCODE
-gate, it becomes active at the same height PUSHCODE did.
-
-Only outputs in a tx that ALSO carries an OP_VOTE, and that match the stake
-template, count as stake.
+supermajority that already enables OP_PUSHCODE (no hardcoded height). Wiring
+(validation.cpp, via a shared DynamicForkActive helper): OR the pushcode-
+supermajority into the SCRIPT_VERIFY_CHECKSEQUENCEVERIFY / BIP112 gate
+(GetBlockScriptFlags), the BIP68 LOCKTIME_VERIFY_SEQUENCE gate (ConnectBlock), and
+the BIP113 MTP gate (ContextualCheckBlock). So CSV, OP_PUSHCODE and OP_VOTE all go
+live together at the same height. (CLTV/BIP65 is already active; it was the
+absolute-timelock fallback if CSV were not bundled -- CSV is preferred as the
+relative lock is automatic from confirmation.)
 
 ## Window, denominators, thresholds
 
 - VOTING_PERIOD = 720 * 8 = 5760 blocks (~8 days at 720 blocks/day). Sliding
   window: it may start at any height.
-- Tally for a window ending at height E and slot S: over all voting txs confirmed
+- Tally for a window ending at height E and slot S: over all vote OUTPUTS confirmed
   in [E - 5759, E] targeting slot S,
-    F(H)  = sum of fee_weight   of votes for branch H
-    K(H)  = sum of stake_weight of votes for branch H
+    F(H)  = sum of fee_weight   of FEE_VOTE outputs for branch H
+    K(H)  = sum of stake_weight of STAKE_VOTE outputs for branch H
     Ftot  = sum over all H of F(H)      (total fee-weight cast for slot S)
     Ktot  = sum over all H of K(H)      (total stake cast for slot S)
 - Supermajority: branch H wins the window iff
@@ -152,8 +153,8 @@ A dynamic algo is a deterministic function evaluated by every validating node:
     4. the hash of the immediately-previous block on the CHAIN (any slot) -- the
        fresh, hard-to-grind half of the seed (a miner cannot influence it without
        redoing that block's PoW)
-    (also required, see gaps: the current block header / difficulty target, so
-     the algo has the threshold to compare against)
+    5. the current block's nBits -- the difficulty/threshold the algo compares
+       against (for the LLM case, mapped to the max-loss bound)
   output:
     a single integer return value; 0 == success (the solution meets the current
     per-slot difficulty), non-zero == failure -> the block's dynamic solution is
@@ -196,21 +197,28 @@ cold reconstruction always succeeds. Consequences:
     the resident weight state (~2 GB/instance) and applies only the new delta; a
     cold node (fresh sync / deep reorg within the window) replays from base once.
 
-Difficulty is DERIVED, not a separate input: Bitmark retargets each slot with Dark
-Gravity Wave over the last ~25 slot blocks. Since input (1) contains n slot blocks
-with n >= 25 in steady state, the algo recomputes the current block's nBits itself
-via the same DGW formula, then maps nBits -> max-loss threshold by a fixed
-monotonic function (harder difficulty -> tighter loss bound). The retarget dynamics
-are unchanged; only the target->loss mapping is new. Bootstrap: for the first < 25
-slot blocks after activation, use an initial difficulty. (This closes the earlier
-"difficulty must be a separate input" gap -- it is derivable from input 1.)
+Difficulty is PASSED DIRECTLY as input 5 (nBits), NOT rederived (decided
+2026-08-29): Bitmark retargets each slot with Dark Gravity Wave over the last ~25
+slot blocks AND a "resurrector" that uses the timestamp of the LAST chain block
+(any slot, the most recent time reference) to measure how long the slot has been
+dormant and drop difficulty accordingly. Rederiving nBits inside the algo would
+force every dynamic algo to re-implement that cross-slot resurrector timing in
+untrusted wasm -- duplicated consensus difficulty logic with divergence risk. So
+the node passes the block's already-computed nBits directly; the algo maps it to
+its threshold (for LLM, nBits -> max-loss bound by a fixed monotonic function).
+This is safe from grinding: nBits is consensus-validated for the block
+independently (a wrong nBits makes the block invalid), so the algo can trust it.
+(This supersedes the earlier "derive via DGW" note and closes the difficulty gap.)
 
 Per-slot prune floor (sluggish slots): n = slot-blocks-in-MAX_PUSHCODE_LENGTH can
-fall below the DGW window (25) if a slot is barely mined. So keep, per slot, at
-least the last 90*365 = 32850 slot-blocks (90 blocks/day/slot * 365 = ~1 year per
-slot). This guarantees (a) n >= 32850 >> 25 so DGW always has its window whatever
-the slot speed, and (b) the 365-day peak-hashrate history the subsidy-scaling
-factor needs. Composition: overall prune floor = min(tip - MAX_PUSHCODE_LENGTH,
+be very small if a slot is barely mined. So keep, per slot, at least the last
+90*365 = 32850 slot-blocks (90 blocks/day/slot * 365 = ~1 year per slot). This
+guarantees a minimum of on-disk slot history for the algo's replay input (input 1),
+even for a sluggish slot -- a sensible ~1-year floor. (The DGW-window justification
+is now moot since nBits is passed directly as input 5, not rederived; and the
+365-day subsidy peak-hashrate uses the block INDEX, not on-disk data, so it does
+not itself drive this keep -- the on-disk keep exists for the algo's model-history
+replay.) Composition: overall prune floor = min(tip - MAX_PUSHCODE_LENGTH,
 min over slots of each slot's 32850th-newest-block height). Cost: a genuinely
 sluggish slot pulls the floor far down (keeps a long chain span) -- bounded by
 actual block production, rare, accepted. n for the model = the slot blocks from
@@ -271,6 +279,47 @@ Open gaps to close in the execution doc:
    by re-pushing the winner on-chain; dataset committed as a merkle root in the
    algo definition; data availability solved by inline merkle branch proofs.)
 
+## Execution runtime & ABI (decided/prototyped 2026-08-29)
+
+Runtime: wasm3 (pure C, no Rust dependency -- matches bitmarkd's C/C++ build),
+chosen over wasmtime specifically to avoid a Rust toolchain in the consensus
+build. Determinism is fine: dynamic algos are integer-only (the reference
+Whirlpool algo is), so no float-nondeterminism concerns. A prototype C host
+(wasm3: m3_ParseModule/LoadModule/FindFunction/Call) has been validated to run
+the reference module and produce results BIT-IDENTICAL to native, confirming the
+runtime + ABI end to end. (WAMR is the likely upgrade later for AOT speed / richer
+sandboxing; the ABI and gas approach are runtime-independent, so swapping is a
+non-consensus change.)
+
+Host <-> module ABI (as prototyped): the algo is a wasm module exporting `verify`
+plus its linear `memory` and `__heap_base`. Pointer inputs are BYTE OFFSETS into
+the module's exported linear memory: the host writes each input array into memory
+starting at __heap_base (free space above the module's static data + stack), then
+calls verify passing those offsets plus lengths/nBits as i32 values, and reads the
+i32 return (0 = success). Reference signature (input order fixed 2026-08-29):
+  verify(prev_hash, payout, payout_len, nbits, txs, txs_len,
+         last_n_blocks, last_n_len, nonce, nonce_len) -> i32
+For the Whirlpool reference algo: preimage = prev_hash || payout || nonce; target =
+nBits decoded as the Bitcoin compact form; success iff the TOP 256 bits of the
+512-bit Whirlpool digest <= target. (txs / last_n_blocks are accepted but unused by
+this hash algo.)
+
+Resource limits:
+- Memory: a cap on linear-memory pages, enforced by the runtime at instantiation
+  (wasm3 supports this directly) -- simple, no instrumentation.
+- CPU: GAS METERING BY BYTECODE INSTRUMENTATION, replacing wasmtime's built-in
+  fuel (which we lose by not using wasmtime). The module is rewritten before
+  execution to decrement an in-module gas counter at each basic block against a
+  fixed consensus cost table and trap at zero, so the count is identical on every
+  node regardless of runtime -- arguably more consensus-safe than trusting an
+  engine's internal fuel. Likely applied at ALGO ACTIVATION (instrument the
+  materialized winning module once), so the pushed module stays clean and the
+  transform is consensus-controlled, not author-controlled.
+  STILL UNCLEAR / SUBJECT TO CHANGE: the exact mechanism is not settled -- the cost
+  table, where/when instrumentation runs (activation vs. required in the pushed
+  module), how a no-Rust C toolchain performs the transform, and whether a
+  different bound is used instead. Treat this as a design sketch, not a final rule.
+
 ## Cross-refs (not in this note)
 
 - Reward split & enforcement (dynamic-algo-mining.md): base PoW (old nodes) + a
@@ -283,10 +332,11 @@ Open gaps to close in the execution doc:
   forward to future solution-providing miners. Solution seeded by
   Hash256(payout_scriptPubKey || prev_block_hash) to bind it to the dynamic
   miner's payout (non-transferable); coinbase must pay that scriptPubKey r/2.
-- Resource limits & determinism (execution): fuel (deterministic instruction
-  count) and max linear-memory pages, enforced per execution; validation-set
-  selection must be grinding-resistant since the miner controls part of the seed
-  (the payout scriptPubKey).
+- Resource limits & determinism (execution): see "Execution runtime & ABI" above
+  -- CPU via gas-by-instrumentation (NOT wasmtime fuel, since the runtime is now
+  wasm3), memory via a linear-memory page cap; validation-set selection must be
+  grinding-resistant since the miner controls part of the seed (the payout
+  scriptPubKey).
 
 ## Open items to confirm
 

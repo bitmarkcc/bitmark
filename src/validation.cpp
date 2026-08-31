@@ -2375,6 +2375,18 @@ public:
     }
 };
 
+// Bitmark: the dynamic-algo soft fork (OP_PUSHCODE + CSV + OP_VOTE) activates
+// together, by miner-signalled base-version supermajority (no hardcoded height).
+// It is active for a block whose PARENT chain already has the supermajority (so a
+// block cannot self-activate). IsSuperMajority masks out the algo/auxpow/variant/
+// chainid bits via GetBlockVersion (& 255).
+static bool DynamicForkActive(const CBlockIndex* pprev, const Consensus::Params& params)
+{
+    return pprev && pprev->IsSuperMajority(params.nPushCodeVersion,
+                                           params.nPushCodeActivationThreshold,
+                                           params.nPushCodeActivationWindow);
+}
+
 static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const ChainstateManager& chainman)
 {
     const Consensus::Params& consensusparams = chainman.GetConsensus();
@@ -2403,8 +2415,11 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const Ch
         flags |= SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY;
     }
 
-    // Enforce CHECKSEQUENCEVERIFY (BIP112)
-    if (DeploymentActiveAt(block_index, chainman, Consensus::DEPLOYMENT_CSV)) {
+    // Enforce CHECKSEQUENCEVERIFY (BIP112). Bitmark: CSV was never buried-activated
+    // (CSVHeight = INT_MAX on main/testnet), so it activates together with the
+    // dynamic-algo fork on the base-version supermajority.
+    if (DeploymentActiveAt(block_index, chainman, Consensus::DEPLOYMENT_CSV) ||
+        DynamicForkActive(block_index.pprev, consensusparams)) {
         flags |= SCRIPT_VERIFY_CHECKSEQUENCEVERIFY;
     }
 
@@ -2413,14 +2428,9 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const Ch
         flags |= SCRIPT_VERIFY_NULLDUMMY;
     }
 
-    // Bitmark: enforce OP_PUSHCODE once miners have signalled a supermajority
-    // of the new base block version. No hardcoded height; the window ends at
-    // this block's parent so a block cannot self-activate. IsSuperMajority masks
-    // out the algo/auxpow/variant/chainid bits via GetBlockVersion (& 255).
-    if (block_index.pprev &&
-        block_index.pprev->IsSuperMajority(consensusparams.nPushCodeVersion,
-                                           consensusparams.nPushCodeActivationThreshold,
-                                           consensusparams.nPushCodeActivationWindow)) {
+    // Bitmark: enforce OP_PUSHCODE once miners have signalled the base-version
+    // supermajority (see DynamicForkActive).
+    if (DynamicForkActive(block_index.pprev, consensusparams)) {
         flags |= SCRIPT_VERIFY_PUSHCODE;
     }
 
@@ -2824,9 +2834,11 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         }
     }
 
-    // Enforce BIP68 (sequence locks)
+    // Enforce BIP68 (sequence locks). Bitmark: also on the dynamic-algo
+    // supermajority (CSV activates with the fork), so stake timelocks are real.
     int nLockTimeFlags = 0;
-    if (DeploymentActiveAt(*pindex, m_chainman, Consensus::DEPLOYMENT_CSV)) {
+    if (DeploymentActiveAt(*pindex, m_chainman, Consensus::DEPLOYMENT_CSV) ||
+        DynamicForkActive(pindex->pprev, m_chainman.GetConsensus())) {
         nLockTimeFlags |= LOCKTIME_VERIFY_SEQUENCE;
     }
 
@@ -4542,9 +4554,11 @@ static bool ContextualCheckBlock(const CBlock& block, BlockValidationState& stat
 {
     const int nHeight = pindexPrev == nullptr ? 0 : pindexPrev->nHeight + 1;
 
-    // Enforce BIP113 (Median Time Past).
+    // Enforce BIP113 (Median Time Past). Bitmark: also on the dynamic-algo
+    // supermajority (CSV activates with the fork).
     bool enforce_locktime_median_time_past{false};
-    if (DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_CSV)) {
+    if (DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_CSV) ||
+        DynamicForkActive(pindexPrev, chainman.GetConsensus())) {
         assert(pindexPrev != nullptr);
         enforce_locktime_median_time_past = true;
     }

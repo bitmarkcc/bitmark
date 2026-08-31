@@ -914,6 +914,8 @@ static std::string RecurseImportData(const CScript& script, ImportData& import_d
         return "unspendable script";
     case TxoutType::NONSTANDARD:
     case TxoutType::PUSHCODE:
+    case TxoutType::FEE_VOTE:
+    case TxoutType::STAKE_VOTE:
     case TxoutType::WITNESS_UNKNOWN:
     case TxoutType::WITNESS_V1_TAPROOT:
         return "unrecognized script";

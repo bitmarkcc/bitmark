@@ -94,6 +94,8 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
     case TxoutType::MULTISIG:
     case TxoutType::NULL_DATA:
     case TxoutType::PUSHCODE:
+    case TxoutType::FEE_VOTE:
+    case TxoutType::STAKE_VOTE:
     case TxoutType::NONSTANDARD:
         addressRet = CNoDestination(scriptPubKey);
         return false;

@@ -607,7 +607,20 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
                 }
                 break;
 
-                case OP_NOP1: case OP_NOP5:
+                case OP_VOTE: // OP_NOP5 (0xb4): Bitmark dynamic-algo vote marker
+                {
+                    // A DEFINED no-op: OP_VOTE marks vote outputs (TxoutType::VOTE
+                    // under OP_RETURN, and the spendable TxoutType::STAKE template).
+                    // It has no execution effect and is deliberately NOT a
+                    // discouraged upgradable NOP, so a stake-vote script stays
+                    // standard to spend (the voter can reclaim the locked coins).
+                    // Consensus already treats OP_NOP5 as a no-op; this only relaxes
+                    // the policy discouragement. OP_NOP5 is thereby permanently
+                    // claimed as OP_VOTE (no future soft-fork upgrade of it).
+                }
+                break;
+
+                case OP_NOP1:
                 case OP_NOP6: case OP_NOP7: case OP_NOP8: case OP_NOP9: case OP_NOP10:
                 {
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)

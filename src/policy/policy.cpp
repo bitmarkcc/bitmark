@@ -92,6 +92,19 @@ bool IsStandard(const CScript& scriptPubKey, const std::optional<unsigned>& max_
         if (vSolutions.empty() || vSolutions.back().size() > MAX_CODE_RELAY) {
             return false;
         }
+    } else if (whichType == TxoutType::FEE_VOTE) {
+        // Bitmark: a dynamic-algo fee vote (unspendable OP_RETURN); standard as-is.
+    } else if (whichType == TxoutType::STAKE_VOTE) {
+        // Bitmark: a stake vote is spendable after its CSV timelock, so it is
+        // standard only if the embedded payout script is itself a standard type
+        // (vSolutions[3] holds the payout bytes).
+        if (vSolutions.size() < 4) return false;
+        TxoutType payout_type;
+        std::vector<std::vector<unsigned char>> payout_solutions;
+        payout_type = Solver(CScript(vSolutions[3].begin(), vSolutions[3].end()), payout_solutions);
+        if (payout_type == TxoutType::NONSTANDARD || payout_type == TxoutType::STAKE_VOTE) {
+            return false;
+        }
     }
 
     return true;

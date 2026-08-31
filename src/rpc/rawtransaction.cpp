@@ -554,6 +554,8 @@ static RPCHelpMan decodescript()
             break;
         case TxoutType::NULL_DATA:
         case TxoutType::PUSHCODE:
+        case TxoutType::FEE_VOTE:
+        case TxoutType::STAKE_VOTE:
         case TxoutType::SCRIPTHASH:
         case TxoutType::WITNESS_UNKNOWN:
         case TxoutType::WITNESS_V1_TAPROOT:
@@ -595,6 +597,8 @@ static RPCHelpMan decodescript()
                 return true;
             case TxoutType::NULL_DATA:
             case TxoutType::PUSHCODE:
+            case TxoutType::FEE_VOTE:
+            case TxoutType::STAKE_VOTE:
             case TxoutType::SCRIPTHASH:
             case TxoutType::WITNESS_UNKNOWN:
             case TxoutType::WITNESS_V0_KEYHASH:

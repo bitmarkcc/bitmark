@@ -2,10 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <addresstype.h>
 #include <chain.h>
 #include <coins.h>
 #include <consensus/amount.h>
 #include <core_io.h>
+#include <key_io.h>
 #include <node/blockstorage.h>
 #include <primitives/algo.h>
 #include <primitives/block.h>
@@ -16,6 +18,7 @@
 #include <rpc/server_util.h>
 #include <rpc/util.h>
 #include <script/script.h>
+#include <script/solver.h>
 #include <sync.h>
 #include <tinyformat.h>
 #include <uint256.h>
@@ -39,51 +42,21 @@ namespace {
 constexpr int VOTING_PERIOD = 720 * 8;   // 5760 blocks (~8 days), the sliding window
 constexpr int ACTIVATION_DELAY = 720;    // blocks between a supermajority and activation
 
-// Decode a stack number pushed either as a small-int opcode (OP_0/OP_1..OP_16) or a
-// data push (<=len bytes). Returns false on anything else.
-bool DecodeNum(opcodetype op, const std::vector<unsigned char>& data, int max_bytes, int64_t& out)
-{
-    if (!data.empty()) {
-        if ((int)data.size() > max_bytes) return false;
-        out = CScriptNum(data, /*fRequireMinimal=*/false, max_bytes).getint();
-        return true;
-    }
-    if (op == OP_0) { out = 0; return true; }
-    if (op >= OP_1 && op <= OP_16) { out = op - (OP_1 - 1); return true; }
-    return false;
-}
+using valtype = std::vector<unsigned char>;
 
-// Match a vote output: OP_RETURN OP_VOTE <branch_hash:32> <slot> and nothing else.
-bool ParseVoteOutput(const CScript& spk, uint256& branch, int64_t& slot)
-{
-    CScript::const_iterator it = spk.begin();
-    opcodetype op;
-    std::vector<unsigned char> data;
-    if (!spk.GetOp(it, op, data) || op != OP_RETURN) return false;
-    if (!spk.GetOp(it, op, data) || op != OP_VOTE) return false;
-    if (!spk.GetOp(it, op, data) || data.size() != 32) return false;
-    branch = uint256(data);
-    if (!spk.GetOp(it, op, data) || !DecodeNum(op, data, 4, slot)) return false;
-    if (spk.GetOp(it, op, data)) return false; // trailing data => not a vote
-    return slot >= 0 && slot < NUM_ALGOS;
-}
+// Slot is stored as a 1-byte value in vSolutions (0..NUM_ALGOS-1).
+int DecodeSlot(const valtype& v) { return v.empty() ? 0 : v[0]; }
 
-// Match a stake output: <lock> OP_CHECKSEQUENCEVERIFY OP_DROP <payout scriptPubKey>.
-// Fills the relative timelock `lock`; the staked amount is the output's nValue.
-bool ParseStakeOutput(const CScript& spk, int64_t& lock)
+// Relative timelock (CScriptNum, up to 5 bytes) from a STAKE_VOTE's vSolutions.
+int64_t DecodeLock(const valtype& v)
 {
-    CScript::const_iterator it = spk.begin();
-    opcodetype op;
-    std::vector<unsigned char> data;
-    if (!spk.GetOp(it, op, data) || !DecodeNum(op, data, 5, lock)) return false;
-    if (!spk.GetOp(it, op, data) || op != OP_CHECKSEQUENCEVERIFY) return false;
-    if (!spk.GetOp(it, op, data) || op != OP_DROP) return false;
-    return it < spk.end(); // a non-empty payout scriptPubKey must follow
+    if (v.empty()) return 0;
+    return CScriptNum(v, /*fRequireMinimal=*/false, 5).getint();
 }
 
 struct Tally {
-    CAmount fee_weight{0}; // sum of floor(fee / num_outputs)
-    CAmount stake{0};      // sum of locked stake amounts
+    CAmount fee_weight{0}; // sum of floor(fee / num_outputs) over this branch's FEE_VOTE outputs
+    CAmount stake{0};      // sum of locked stake amounts over this branch's STAKE_VOTE outputs
 };
 
 } // namespace
@@ -96,9 +69,10 @@ static RPCHelpMan getalgovote()
         "window (the last " + strprintf("%d", VOTING_PERIOD) + " blocks ending at `height`). INFORMATIONAL and\n"
         "NON-CONSENSUS: reports the fee-weighted and stake-weighted support for each\n"
         "candidate branch and which (if any) clears the 75% supermajority on BOTH.\n"
-        "A vote is an output OP_RETURN OP_VOTE <branch> <slot>; fee weight is\n"
-        "floor(tx_fee / num_outputs); stake weight is the sum of the tx's outputs\n"
-        "locked (OP_CHECKSEQUENCEVERIFY) for at least the voting period.\n",
+        "Votes are PER-OUTPUT (so a coinjoin can carry many): a FEE_VOTE output\n"
+        "(OP_RETURN OP_VOTE <branch> <slot>) gets fee weight floor(tx_fee/num_outputs);\n"
+        "a STAKE_VOTE output (CSV-locked, self-describing) gets stake weight equal to\n"
+        "its value when its timelock is at least the voting period.\n",
         {
             {"slot", RPCArg::Type::NUM, RPCArg::Optional::NO, "The mPoW slot (0.." + strprintf("%d", NUM_ALGOS - 1) + ")"},
             {"height", RPCArg::Type::NUM, RPCArg::DefaultHint{"tip"}, "End height of the voting window"},
@@ -169,45 +143,33 @@ static RPCHelpMan getalgovote()
                     for (size_t i = 1; i < block.vtx.size(); ++i) { // skip coinbase (i==0)
                         const CTransaction& tx = *block.vtx[i];
 
-                        // exactly one OP_VOTE output, targeting this slot
-                        uint256 branch;
-                        int votes{0};
-                        bool for_slot{false};
-                        for (const CTxOut& o : tx.vout) {
-                            uint256 b;
-                            int64_t s;
-                            if (ParseVoteOutput(o.scriptPubKey, b, s)) {
-                                ++votes;
-                                branch = b;
-                                for_slot = (s == slot);
-                            }
-                        }
-                        if (votes != 1 || !for_slot) continue;
-
-                        // fee weight = floor(fee / num_outputs)
-                        CAmount fw{0};
-                        if (have_undo && i - 1 < undo.vtxundo.size()) {
+                        // Votes are per-OUTPUT (so a coinjoin can carry many). The
+                        // fee-share each FEE_VOTE output gets is floor(fee/num_outputs).
+                        CAmount fee_share{0};
+                        if (have_undo && i - 1 < undo.vtxundo.size() && !tx.vout.empty()) {
                             CAmount in{0}, out{0};
                             for (const Coin& c : undo.vtxundo[i - 1].vprevout) in += c.out.nValue;
                             for (const CTxOut& o : tx.vout) out += o.nValue;
                             const CAmount fee{in - out};
-                            if (fee > 0 && !tx.vout.empty()) fw = fee / (CAmount)tx.vout.size();
+                            if (fee > 0) fee_share = fee / (CAmount)tx.vout.size();
                         }
 
-                        // stake = sum of outputs locked >= VOTING_PERIOD
-                        CAmount stake{0};
                         for (const CTxOut& o : tx.vout) {
-                            int64_t lock;
-                            if (ParseStakeOutput(o.scriptPubKey, lock) && lock >= VOTING_PERIOD) {
-                                stake += o.nValue;
+                            std::vector<valtype> sols;
+                            const TxoutType type{Solver(o.scriptPubKey, sols)};
+                            if (type == TxoutType::FEE_VOTE) {
+                                if (DecodeSlot(sols[1]) != slot) continue;
+                                const uint256 branch{sols[0]};
+                                cand[branch].fee_weight += fee_share;
+                                fee_total += fee_share;
+                            } else if (type == TxoutType::STAKE_VOTE) {
+                                if (DecodeSlot(sols[1]) != slot) continue;
+                                if (DecodeLock(sols[2]) < VOTING_PERIOD) continue; // not locked long enough
+                                const uint256 branch{sols[0]};
+                                cand[branch].stake += o.nValue;
+                                stake_total += o.nValue;
                             }
                         }
-
-                        Tally& t = cand[branch];
-                        t.fee_weight += fw;
-                        t.stake += stake;
-                        fee_total += fw;
-                        stake_total += stake;
                     }
                 }
             }
@@ -267,9 +229,99 @@ static RPCHelpMan getalgovote()
     };
 }
 
+static RPCHelpMan createfeevotescript()
+{
+    return RPCHelpMan{
+        "createfeevotescript",
+        "\nBuild a FEE_VOTE output scriptPubKey (OP_RETURN OP_VOTE <branch> <slot>) and\n"
+        "return its hex. This is an unspendable output whose fee-weight in a vote tally\n"
+        "comes from the transaction's fee (fee / num_outputs). Drop the hex into a raw\n"
+        "transaction output; it does not need to hold value.\n",
+        {
+            {"branch", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "32-byte content hash of the algo branch to vote for"},
+            {"slot", RPCArg::Type::NUM, RPCArg::Optional::NO, "The mPoW slot (0.." + strprintf("%d", NUM_ALGOS - 1) + ")"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "hex", "The FEE_VOTE scriptPubKey"},
+        }},
+        RPCExamples{HelpExampleCli("createfeevotescript", "\"<branch>\" 5")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+            const uint256 branch{ParseHashV(request.params[0], "branch")};
+            const int slot{request.params[1].getInt<int>()};
+            if (slot < 0 || slot >= NUM_ALGOS) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("slot out of range (0..%d)", NUM_ALGOS - 1));
+            }
+            CScript script;
+            script << OP_RETURN << OP_VOTE << ToByteVector(branch) << (int64_t)slot;
+            std::vector<valtype> sols;
+            if (Solver(script, sols) != TxoutType::FEE_VOTE) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "constructed script is not a valid FEE_VOTE output");
+            }
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("hex", HexStr(script));
+            return result;
+        },
+    };
+}
+
+static RPCHelpMan createstakevotescript()
+{
+    return RPCHelpMan{
+        "createstakevotescript",
+        "\nBuild a STAKE_VOTE output scriptPubKey:\n"
+        "  <locktime> OP_CHECKSEQUENCEVERIFY OP_DROP OP_VOTE <branch> OP_DROP <slot> OP_DROP <payout>\n"
+        "It is spendable back to `address` after `locktime` relative blocks (BIP68), and\n"
+        "its stake-weight in a vote tally is the output's value (counted only when\n"
+        "locktime >= the voting period, " + strprintf("%d", VOTING_PERIOD) + " blocks). Put a real value on this output.\n",
+        {
+            {"branch", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "32-byte content hash of the algo branch to vote for"},
+            {"slot", RPCArg::Type::NUM, RPCArg::Optional::NO, "The mPoW slot (0.." + strprintf("%d", NUM_ALGOS - 1) + ")"},
+            {"locktime", RPCArg::Type::NUM, RPCArg::Optional::NO, "Relative timelock in blocks (>= " + strprintf("%d", VOTING_PERIOD) + " to count as stake)"},
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The address the locked coins return to"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "hex", "The STAKE_VOTE scriptPubKey"},
+        }},
+        RPCExamples{HelpExampleCli("createstakevotescript", "\"<branch>\" 5 5760 \"<address>\"")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+            const uint256 branch{ParseHashV(request.params[0], "branch")};
+            const int slot{request.params[1].getInt<int>()};
+            if (slot < 0 || slot >= NUM_ALGOS) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("slot out of range (0..%d)", NUM_ALGOS - 1));
+            }
+            const int64_t locktime{request.params[2].getInt<int64_t>()};
+            if (locktime < 0 || locktime > 0x0000ffff) { // BIP68 relative-height locks are 16-bit
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "locktime out of BIP68 relative-height range (0..65535)");
+            }
+            const CTxDestination dest{DecodeDestination(request.params[3].get_str())};
+            if (!IsValidDestination(dest)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "invalid address");
+            }
+            const CScript payout{GetScriptForDestination(dest)};
+
+            CScript script;
+            script << CScriptNum(locktime) << OP_CHECKSEQUENCEVERIFY << OP_DROP << OP_VOTE
+                   << ToByteVector(branch) << OP_DROP << (int64_t)slot << OP_DROP;
+            script.insert(script.end(), payout.begin(), payout.end());
+
+            std::vector<valtype> sols;
+            if (Solver(script, sols) != TxoutType::STAKE_VOTE) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "constructed script is not a valid STAKE_VOTE output");
+            }
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("hex", HexStr(script));
+            return result;
+        },
+    };
+}
+
 void RegisterVoteRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
+        {"voting", &createfeevotescript},
+        {"voting", &createstakevotescript},
         {"voting", &getalgovote},
     };
     for (const auto& c : commands) {
