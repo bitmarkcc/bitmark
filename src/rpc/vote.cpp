@@ -40,7 +40,8 @@
 namespace {
 
 constexpr int VOTING_PERIOD = 720 * 8;   // 5760 blocks (~8 days), the sliding window
-constexpr int ACTIVATION_DELAY = 720;    // blocks between a supermajority and activation
+constexpr int ACTIVATION_DELAY = 720;    // blocks between a qualifying window and activation
+constexpr int YEAR_BLOCKS = 720 * 365;   // 262800 blocks (~1 year), for the fee floor
 
 using valtype = std::vector<unsigned char>;
 
@@ -54,6 +55,21 @@ int64_t DecodeLock(const valtype& v)
     return CScriptNum(v, /*fRequireMinimal=*/false, 5).getint();
 }
 
+// Total transaction fees in a block (sum of inputs - outputs over non-coinbase
+// txs). Needs the block's undo data for the spent-input values.
+CAmount BlockTotalFees(const CBlock& block, const CBlockUndo& undo)
+{
+    CAmount fees{0};
+    for (size_t i = 1; i < block.vtx.size(); ++i) {
+        if (i - 1 >= undo.vtxundo.size()) break;
+        CAmount in{0}, out{0};
+        for (const Coin& c : undo.vtxundo[i - 1].vprevout) in += c.out.nValue;
+        for (const CTxOut& o : block.vtx[i]->vout) out += o.nValue;
+        if (in > out) fees += in - out;
+    }
+    return fees;
+}
+
 struct Tally {
     CAmount fee_weight{0}; // sum of floor(fee / num_outputs) over this branch's FEE_VOTE outputs
     CAmount stake{0};      // sum of locked stake amounts over this branch's STAKE_VOTE outputs
@@ -65,29 +81,38 @@ static RPCHelpMan getalgovote()
 {
     return RPCHelpMan{
         "getalgovote",
-        "\nTally the dynamic-algo votes for an mPoW slot over its sliding voting\n"
-        "window (the last " + strprintf("%d", VOTING_PERIOD) + " blocks ending at `height`). INFORMATIONAL and\n"
-        "NON-CONSENSUS: reports the fee-weighted and stake-weighted support for each\n"
-        "candidate branch and which (if any) clears the 75% supermajority on BOTH.\n"
+        "\nFind the winning dynamic-algo vote for an mPoW slot. INFORMATIONAL and\n"
+        "NON-CONSENSUS. Searches the last MAX_PUSHCODE_DEPTH blocks for the LATEST\n"
+        "'anchored' voting window: a sequence of " + strprintf("%d", VOTING_PERIOD) + " blocks whose FIRST block\n"
+        "carries a vote for slot s and branch b, where b wins that window (>=75% of the\n"
+        "fee-weight AND >=75% of the stake AND the total fee-weight meets the fee floor).\n"
+        "The winner's activation block is that window's LAST block + " + strprintf("%d", ACTIVATION_DELAY) + " + 1.\n"
         "Votes are PER-OUTPUT (so a coinjoin can carry many): a FEE_VOTE output\n"
         "(OP_RETURN OP_VOTE <branch> <slot>) gets fee weight floor(tx_fee/num_outputs);\n"
         "a STAKE_VOTE output (CSV-locked, self-describing) gets stake weight equal to\n"
-        "its value when its timelock is at least the voting period.\n",
+        "its value when its timelock is at least the voting period. The fee floor is\n"
+        "6.25% of an average window's total fees over the prior year.\n",
         {
             {"slot", RPCArg::Type::NUM, RPCArg::Optional::NO, "The mPoW slot (0.." + strprintf("%d", NUM_ALGOS - 1) + ")"},
-            {"height", RPCArg::Type::NUM, RPCArg::DefaultHint{"tip"}, "End height of the voting window"},
+            {"height", RPCArg::Type::NUM, RPCArg::DefaultHint{"tip"}, "Evaluate as of this chain height (top of the search range)"},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "",
             {
                 {RPCResult::Type::NUM, "slot", "The slot tallied"},
-                {RPCResult::Type::OBJ, "window", "", {
-                    {RPCResult::Type::NUM, "from", "First block height in the window"},
-                    {RPCResult::Type::NUM, "to", "Last block height in the window (== height)"},
+                {RPCResult::Type::OBJ, "search", "The block range searched for a winning anchored window", {
+                    {RPCResult::Type::NUM, "from", "First block height searched (>= tip - MAX_PUSHCODE_DEPTH)"},
+                    {RPCResult::Type::NUM, "to", "Last block height searched (the tip, or `height`)"},
                 }},
-                {RPCResult::Type::STR_AMOUNT, "fee_total", "Total fee weight cast for this slot"},
-                {RPCResult::Type::STR_AMOUNT, "stake_total", "Total stake cast for this slot"},
-                {RPCResult::Type::ARR, "candidates", "Per-branch tallies, most fee-weight first", {
+                {RPCResult::Type::OBJ, "window", /*optional=*/true, "The reported voting window (the winning one, else the latest vote-anchored complete window); null if none", {
+                    {RPCResult::Type::NUM, "from", "First block of the 5760-block window (anchor)"},
+                    {RPCResult::Type::NUM, "to", "Last block of the window"},
+                }},
+                {RPCResult::Type::STR_AMOUNT, "fee_total", /*optional=*/true, "Total fee weight cast in the window"},
+                {RPCResult::Type::STR_AMOUNT, "stake_total", /*optional=*/true, "Total stake cast in the window"},
+                {RPCResult::Type::STR_AMOUNT, "fee_floor", /*optional=*/true, "Minimum fee_total to qualify: 6.25% of an average window's fees over the prior year"},
+                {RPCResult::Type::BOOL, "fee_floor_met", /*optional=*/true, "Whether fee_total >= fee_floor"},
+                {RPCResult::Type::ARR, "candidates", /*optional=*/true, "Per-branch tallies for the window", {
                     {RPCResult::Type::OBJ, "", "", {
                         {RPCResult::Type::STR_HEX, "branch", "The voted branch content hash"},
                         {RPCResult::Type::STR_AMOUNT, "fee_weight", "Fee weight for this branch"},
@@ -97,8 +122,8 @@ static RPCHelpMan getalgovote()
                         {RPCResult::Type::BOOL, "assemblable", "Whether the branch currently assembles (getpushcode complete)"},
                     }},
                 }},
-                {RPCResult::Type::STR_HEX, "winner", /*optional=*/true, "Branch clearing 75% of BOTH tallies, or null"},
-                {RPCResult::Type::NUM, "would_activate_at", /*optional=*/true, "Height the winner would take effect (height + delay), or null"},
+                {RPCResult::Type::STR_HEX, "winner", /*optional=*/true, "Branch of the latest anchored window it wins (75% of both + fee floor, and voted in the window's first block), or null"},
+                {RPCResult::Type::NUM, "activation_block", /*optional=*/true, "Height the winner takes effect: window last block + 720 + 1, or null"},
             }
         },
         RPCExamples{
@@ -113,38 +138,43 @@ static RPCHelpMan getalgovote()
             }
             ChainstateManager& chainman = EnsureAnyChainman(request.context);
 
-            std::map<uint256, Tally> cand;
-            CAmount fee_total{0}, stake_total{0};
-            int win_from{0}, win_to{0};
+            // Result of the search (filled under cs_main).
+            bool have_winner{false};
+            uint256 winner;
+            int win_f{-1};           // start of the winning anchored window
+            // The window whose tally we report: the winning one, else the latest
+            // vote-anchored complete window (for diagnostics).
+            std::map<uint256, Tally> rep_cand;
+            CAmount rep_fee_total{0}, rep_stake_total{0}, rep_fee_floor{0};
+            int rep_f{-1};
+            int E{0}, search_lo{0};
 
             {
                 LOCK(cs_main);
                 const CChain& chain = chainman.ActiveChain();
                 const int tip_height{chain.Height()};
-                int E{tip_height};
+                E = tip_height;
                 if (!request.params[1].isNull()) {
                     E = request.params[1].getInt<int>();
-                    if (E < 0 || E > tip_height) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, "height out of range");
-                    }
+                    if (E < 0 || E > tip_height) throw JSONRPCError(RPC_INVALID_PARAMETER, "height out of range");
                 }
-                win_to = E;
-                win_from = std::max(0, E - (VOTING_PERIOD - 1));
+                search_lo = std::max(0, E - (int)MAX_PUSHCODE_DEPTH + 1);
 
-                for (int h = win_from; h <= E; ++h) {
+                // Pass 1: read [search_lo, E] once, collecting per-block vote data for
+                // slot s (sparse) and per-block total fees (dense, for the floor).
+                std::map<int, std::map<uint256, Tally>> votes; // height -> branch -> {fee,stake}
+                std::vector<CAmount> fees(E - search_lo + 1, 0);
+                for (int h = search_lo; h <= E; ++h) {
                     const CBlockIndex* pindex = chain[h];
                     if (!pindex) continue;
                     CBlock block;
                     if (!chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) continue;
                     CBlockUndo undo;
-                    const bool have_undo{pindex->nHeight > 0 &&
-                                         chainman.m_blockman.UndoReadFromDisk(undo, *pindex)};
+                    const bool have_undo{pindex->nHeight > 0 && chainman.m_blockman.UndoReadFromDisk(undo, *pindex)};
+                    if (have_undo) fees[h - search_lo] = BlockTotalFees(block, undo);
 
-                    for (size_t i = 1; i < block.vtx.size(); ++i) { // skip coinbase (i==0)
+                    for (size_t i = 1; i < block.vtx.size(); ++i) { // skip coinbase
                         const CTransaction& tx = *block.vtx[i];
-
-                        // Votes are per-OUTPUT (so a coinjoin can carry many). The
-                        // fee-share each FEE_VOTE output gets is floor(fee/num_outputs).
                         CAmount fee_share{0};
                         if (have_undo && i - 1 < undo.vtxundo.size() && !tx.vout.empty()) {
                             CAmount in{0}, out{0};
@@ -153,76 +183,118 @@ static RPCHelpMan getalgovote()
                             const CAmount fee{in - out};
                             if (fee > 0) fee_share = fee / (CAmount)tx.vout.size();
                         }
-
                         for (const CTxOut& o : tx.vout) {
                             std::vector<valtype> sols;
                             const TxoutType type{Solver(o.scriptPubKey, sols)};
-                            if (type == TxoutType::FEE_VOTE) {
-                                if (DecodeSlot(sols[1]) != slot) continue;
-                                const uint256 branch{sols[0]};
-                                cand[branch].fee_weight += fee_share;
-                                fee_total += fee_share;
-                            } else if (type == TxoutType::STAKE_VOTE) {
-                                if (DecodeSlot(sols[1]) != slot) continue;
-                                if (DecodeLock(sols[2]) < VOTING_PERIOD) continue; // not locked long enough
-                                const uint256 branch{sols[0]};
-                                cand[branch].stake += o.nValue;
-                                stake_total += o.nValue;
+                            if (type == TxoutType::FEE_VOTE && DecodeSlot(sols[1]) == slot) {
+                                votes[h][uint256(sols[0])].fee_weight += fee_share;
+                            } else if (type == TxoutType::STAKE_VOTE && DecodeSlot(sols[1]) == slot
+                                       && DecodeLock(sols[2]) >= VOTING_PERIOD) {
+                                votes[h][uint256(sols[0])].stake += o.nValue;
                             }
                         }
                     }
                 }
-            }
 
-            // winner: 4*F(H) >= 3*Ftot AND 4*K(H) >= 3*Ktot (75% of each cast total)
-            uint256 winner;
-            bool have_winner{false};
-            for (const auto& [h, t] : cand) {
-                const bool fee_ok{(__int128)4 * t.fee_weight >= (__int128)3 * fee_total};
-                const bool stake_ok{(__int128)4 * t.stake >= (__int128)3 * stake_total};
-                // With empty totals the >=75% test is vacuously true; require some support.
-                if (fee_ok && stake_ok && (t.fee_weight > 0 || t.stake > 0)) {
-                    winner = h;
-                    have_winner = true;
-                    break;
+                // Prefix sums of block fees -> O(1) year-fee (the fee floor's basis).
+                std::vector<CAmount> pref(fees.size() + 1, 0);
+                for (size_t i = 0; i < fees.size(); ++i) pref[i + 1] = pref[i] + fees[i];
+                auto fee_floor_at = [&](int f) -> CAmount {
+                    // 6.25% of an avg window's fees over the YEAR_BLOCKS ending at f-1
+                    // == year_fees / 730. (year fees may be truncated to search_lo.)
+                    const int ye{f - 1};
+                    if (ye < search_lo) return 0;
+                    const int ys{std::max(search_lo, ye - YEAR_BLOCKS + 1)};
+                    return (pref[ye - search_lo + 1] - pref[ys - search_lo]) / 730;
+                };
+
+                // Pass 2: latest anchored winning window. A candidate window starts at a
+                // block f that has a vote for slot s; the window is [f, f+VOTING_PERIOD-1]
+                // (must be complete: f <= E - VOTING_PERIOD + 1). H wins the window if it
+                // clears 75% of both tallies + the fee floor; the anchor rule also requires
+                // block f to carry a vote for that winner H.
+                const int max_f{E - (VOTING_PERIOD - 1)};
+                for (auto it = votes.rbegin(); it != votes.rend(); ++it) {
+                    const int f{it->first};
+                    if (f > max_f) continue;
+
+                    std::map<uint256, Tally> cand;
+                    CAmount ftot{0}, ktot{0};
+                    for (auto jt = votes.find(f); jt != votes.end() && jt->first <= f + VOTING_PERIOD - 1; ++jt) {
+                        for (const auto& [b, t] : jt->second) {
+                            cand[b].fee_weight += t.fee_weight; ftot += t.fee_weight;
+                            cand[b].stake += t.stake;           ktot += t.stake;
+                        }
+                    }
+                    const CAmount floor{fee_floor_at(f)};
+
+                    uint256 b;
+                    bool found{false};
+                    for (const auto& [cb, t] : cand) {
+                        if (ftot > 0 && ktot > 0 && ftot >= floor
+                            && (__int128)4 * t.fee_weight >= (__int128)3 * ftot
+                            && (__int128)4 * t.stake >= (__int128)3 * ktot) {
+                            b = cb; found = true; break;
+                        }
+                    }
+
+                    if (rep_f < 0) { // latest candidate window: report it if no winner
+                        rep_f = f; rep_cand = cand; rep_fee_total = ftot; rep_stake_total = ktot; rep_fee_floor = floor;
+                    }
+                    if (found && it->second.count(b)) { // winner voted for in the FIRST block
+                        have_winner = true; winner = b; win_f = f;
+                        rep_f = f; rep_cand = cand; rep_fee_total = ftot; rep_stake_total = ktot; rep_fee_floor = floor;
+                        break;
+                    }
                 }
             }
 
             UniValue result(UniValue::VOBJ);
             result.pushKV("slot", slot);
-            UniValue window(UniValue::VOBJ);
-            window.pushKV("from", win_from);
-            window.pushKV("to", win_to);
-            result.pushKV("window", window);
-            result.pushKV("fee_total", ValueFromAmount(fee_total));
-            result.pushKV("stake_total", ValueFromAmount(stake_total));
+            UniValue search(UniValue::VOBJ);
+            search.pushKV("from", search_lo);
+            search.pushKV("to", E);
+            result.pushKV("search", search);
 
-            UniValue arr(UniValue::VARR);
-            {
-                LOCK(cs_main);
-                for (const auto& [h, t] : cand) {
-                    UniValue c(UniValue::VOBJ);
-                    c.pushKV("branch", h.GetHex());
-                    c.pushKV("fee_weight", ValueFromAmount(t.fee_weight));
-                    c.pushKV("fee_pct", fee_total ? (double)t.fee_weight / (double)fee_total : 0.0);
-                    c.pushKV("stake_weight", ValueFromAmount(t.stake));
-                    c.pushKV("stake_pct", stake_total ? (double)t.stake / (double)stake_total : 0.0);
-                    std::vector<unsigned char> code;
-                    std::string reason;
-                    const bool assemblable{chainman.ActiveChainstate().AssemblePushCode(h, code, reason)
-                                           == PushCodeStatus::COMPLETE};
-                    c.pushKV("assemblable", assemblable);
-                    arr.push_back(c);
+            if (rep_f >= 0) {
+                UniValue window(UniValue::VOBJ);
+                window.pushKV("from", rep_f);
+                window.pushKV("to", rep_f + VOTING_PERIOD - 1);
+                result.pushKV("window", window);
+                result.pushKV("fee_total", ValueFromAmount(rep_fee_total));
+                result.pushKV("stake_total", ValueFromAmount(rep_stake_total));
+                result.pushKV("fee_floor", ValueFromAmount(rep_fee_floor));
+                result.pushKV("fee_floor_met", rep_fee_total >= rep_fee_floor);
+                UniValue arr(UniValue::VARR);
+                {
+                    LOCK(cs_main);
+                    for (const auto& [b, t] : rep_cand) {
+                        UniValue c(UniValue::VOBJ);
+                        c.pushKV("branch", b.GetHex());
+                        c.pushKV("fee_weight", ValueFromAmount(t.fee_weight));
+                        c.pushKV("fee_pct", rep_fee_total ? (double)t.fee_weight / (double)rep_fee_total : 0.0);
+                        c.pushKV("stake_weight", ValueFromAmount(t.stake));
+                        c.pushKV("stake_pct", rep_stake_total ? (double)t.stake / (double)rep_stake_total : 0.0);
+                        std::vector<unsigned char> code;
+                        std::string reason;
+                        c.pushKV("assemblable", chainman.ActiveChainstate().AssemblePushCode(b, code, reason)
+                                                == PushCodeStatus::COMPLETE);
+                        arr.push_back(c);
+                    }
                 }
+                result.pushKV("candidates", arr);
+            } else {
+                result.pushKV("window", UniValue());
+                result.pushKV("candidates", UniValue(UniValue::VARR));
             }
-            result.pushKV("candidates", arr);
 
             if (have_winner) {
                 result.pushKV("winner", winner.GetHex());
-                result.pushKV("would_activate_at", win_to + ACTIVATION_DELAY);
+                // last block of the sequence + 720 + 1
+                result.pushKV("activation_block", (win_f + VOTING_PERIOD - 1) + ACTIVATION_DELAY + 1);
             } else {
                 result.pushKV("winner", UniValue());
-                result.pushKV("would_activate_at", UniValue());
+                result.pushKV("activation_block", UniValue());
             }
             return result;
         },

@@ -86,60 +86,90 @@ relative lock is automatic from confirmation.)
     K(H)  = sum of stake_weight of STAKE_VOTE outputs for branch H
     Ftot  = sum over all H of F(H)      (total fee-weight cast for slot S)
     Ktot  = sum over all H of K(H)      (total stake cast for slot S)
-- Supermajority: branch H wins the window iff
-    F(H) >= 0.75 * Ftot   AND   K(H) >= 0.75 * Ktot
+- Supermajority + fee floor: branch H QUALIFIES at window-end E iff
+    F(H) >= 0.75 * Ftot   AND   K(H) >= 0.75 * Ktot   AND   Ftot >= fee_floor(E)
   Because 2 * 0.75 > 1, at most one H can hold >=75% of Ftot (and of Ktot), so the
-  winner is unique; if no H clears BOTH, there is no winner for this window.
-  (Denominators are "of votes cast for the slot", not of the whole fee/coin base.)
+  qualifying branch is unique. The 75% denominators are "of votes cast for the
+  slot"; the fee floor adds an ABSOLUTE participation requirement so a slot cannot
+  be captured by tiny turnout.
 
-## Activation
+### Fee participation floor (added 2026-09-02)
+    year_fees  = total tx fees over the 720*365 = 262800 blocks ending at the block
+                 right before the voting window (i.e. ending at f - 1)
+    fee_floor  = 0.0625 * (year_fees / 365 * 8)     [ = year_fees / 730 ]
+i.e. 6.25% of an AVERAGE 5760-block window's fees measured over the trailing year.
+So the fee-weight cast for the slot (Ftot) must be at least ~1/16 of a typical
+window's total fees. Consensus should track year_fees as a running sum (like the
+money supply), not recompute 262800 blocks each time.
 
-- ACTIVATION_DELAY = 720 blocks.
-- Define win(E, S) = the branch H that wins the window ending at E for slot S, or
-  none.
-- The active algo for slot S at height h:
-    active(S, h) = win(E*, S), where E* is the greatest height <= h - ACTIVATION_DELAY
-                   with win(E*, S) != none; if no such E*, slot S is primitive-only.
-  i.e. the most-recent supermajority at least 720 blocks in the past takes effect;
-  a later supermajority (re-vote) supersedes an earlier one. The delay is a buffer
-  so a short reorg cannot retroactively change the algo a just-mined block used.
-- At the moment a slot first activates (or re-activates to) branch H, H must
-  ASSEMBLE (getpushcode == complete) and pass the resource limits (fuel / memory
-  pages -- see execution doc). If it does not, the activation is void and the slot
-  keeps its previous algo (or stays primitive-only). [OPEN: exact "void" semantics
-  -- treat a non-assemblable/over-limit winner as "no winner" for that window.]
+## Activation (ANCHORED window; revised 2026-09-03)
+
+The voting window is a FIXED sequence of VOTING_PERIOD blocks ANCHORED to a vote,
+not a rolling window -- this is what gives the full-period delay (activation ~=
+first_vote + VOTING_PERIOD + 720) without a sustained rule.
+
+NOT sustained: a "must qualify in every window across the period" rule is cheaply
+VETOABLE -- a miner gets a block's fees back, so it can inject a large self-paid
+counter-fee-vote for free; under a sustained rule a single such block anywhere in
+the period breaks the continuity and vetoes indefinitely. So qualification is a
+SINGLE tally over the anchored window, backed by the 6.25% fee floor (participation)
+and the 75%-of-stake requirement (real locked coins, not free). (The fee side is
+inherently miner-gameable via free fees; the stake side is the real Sybil protection.)
+
+Definitions (slot S):
+- An ANCHORED WINDOW is a sequence [f, f + VOTING_PERIOD - 1] whose FIRST block f
+  carries a vote for slot S and some branch b.
+- b WINS the window iff, tallying vote outputs confirmed in the window:
+    F(b) >= 0.75*Ftot  AND  K(b) >= 0.75*Ktot  AND  Ftot > 0  AND  Ktot > 0  AND
+    Ftot >= fee_floor  (fee_floor computed from the year ending at f-1).
+- The active algo for slot S = the branch b of the LATEST anchored window (largest
+  f, searched over the last MAX_PUSHCODE_DEPTH blocks) that b wins AND whose first
+  block f carries a vote for b. Its ACTIVATION BLOCK (the first height b is used as
+  slot S's dynamic algo) is:
+    activation = (f + VOTING_PERIOD - 1) + ACTIVATION_DELAY + 1
+  i.e. the window's last block + 720 + 1.
+- ACTIVATION_DELAY = 720 blocks after the window, during which VOTES DO NOT MATTER
+  (a reorg buffer and lead time for nodes/miners to prepare). A later anchored win
+  (re-vote) supersedes the earlier active algo. If none, the slot keeps its current
+  algo (primitive-only if never activated).
+- Requiring block f to carry a vote for the winner b anchors the window to where b's
+  voting is actually happening (it cannot be positioned over unrelated blocks), and
+  makes activation land a full period + delay after voting begins.
+- At activation, H must ASSEMBLE (getpushcode == complete) and pass the resource
+  limits; else the activation is void and the slot keeps its previous algo. [OPEN:
+  treat a non-assemblable/over-limit winner as "did not qualify".]
 
 ## Reorg / determinism
 
-active(S, h) is a pure function of the confirmed chain up to h, so a reorg simply
-recomputes it. The 720-block delay makes shallow reorgs harmless. A reorg deeper
-than 720 could change a slot's active algo retroactively and invalidate affected
-blocks' dynamic solutions; this is bounded by the base PoW securing the chain and
-is the same class of risk as any deep-reorg consensus change. Implementations
-should compute active(S, h) incrementally (track per-slot current winner) rather
-than rescanning 5760 blocks each block.
+The active algo is a pure function of the confirmed chain, so a reorg recomputes
+it. The 720-block delay makes shallow reorgs harmless. A reorg deeper than the
+window + 720 could retroactively change a slot's active algo; bounded by the base
+PoW, same class as any deep-reorg risk. A consensus implementation must track
+incrementally (per-slot: running window tallies as f advances, and year_fees as a
+running sum) rather than the O(votes * window) rescans the informational RPC does.
 
 ## Informational RPC (non-consensus, first deliverable)
 
     getalgovote <slot> ( height )
-Tally the window ending at `height` (default: tip) for `slot` and return:
+Search the last MAX_PUSHCODE_DEPTH blocks (as of `height`, default tip) for the
+latest anchored winning window and return:
     {
       "slot": n,
-      "window": { "from": h1, "to": h2 },
-      "fee_total": <fee-weight units>,
-      "stake_total": <amount>,
-      "candidates": [
-        { "branch": "<hash>", "fee_weight": x, "fee_pct": p,
-          "stake_weight": y, "stake_pct": q, "assemblable": bool } ...
-      ],
-      "winner": "<hash>" | null,           // clears both 75% thresholds
-      "active": "<hash>" | null,           // active(slot, height) incl. 720 delay
-      "would_activate_at": h | null
+      "search": { "from": lo, "to": E },
+      "window": { "from": f, "to": f+VOTING_PERIOD-1 } | null,  // reported window
+      "fee_total": <units>, "stake_total": <amount>,
+      "fee_floor": <units>, "fee_floor_met": bool,
+      "candidates": [ { "branch","fee_weight","fee_pct","stake_weight","stake_pct",
+                        "assemblable" } ... ],           // for the reported window
+      "winner": "<hash>" | null,                          // latest anchored win
+      "activation_block": (f+VOTING_PERIOD-1) + 720 + 1 | null
     }
-Implementation notes: needs spent-input values for fees (read CBlockUndo, or
-require -txindex); recognizes the OP_VOTE and stake-output templates; pure
-read-only, so it can prototype the rules on testnet before any of this is
-consensus. A later `listalgovotes`/`getalgoslots` can summarize all 8 slots.
+The reported window is the winning one, else the latest vote-anchored complete
+window (for diagnostics). Needs spent-input values for fees (reads CBlockUndo);
+recognizes the FEE_VOTE / STAKE_VOTE templates via Solver; pure read-only, so it
+prototypes the rules on testnet before any of this is consensus. Cost: it scans up
+to MAX_PUSHCODE_DEPTH blocks -- fine on a short testnet, but consensus must track
+incrementally. A later `getalgoslots` can summarize all 8 slots.
 
 ## Dynamic-algo I/O contract (summary; full spec in the execution doc)
 
