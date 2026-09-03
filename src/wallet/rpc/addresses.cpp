@@ -99,7 +99,8 @@ RPCHelpMan getrawchangeaddress()
         throw JSONRPCError(RPC_WALLET_ERROR, "Error: This wallet has no available keys");
     }
 
-    OutputType output_type = pwallet->m_default_change_type.value_or(pwallet->m_default_address_type);
+    //OutputType output_type = pwallet->m_default_change_type.value_or(pwallet->m_default_address_type);
+    OutputType output_type = OutputType::LEGACY;
     if (!request.params[0].isNull()) {
         std::optional<OutputType> parsed = ParseOutputType(request.params[0].get_str());
         if (!parsed) {
