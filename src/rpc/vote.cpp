@@ -39,8 +39,9 @@
 
 namespace {
 
-constexpr int VOTING_PERIOD = 720 * 8;   // 5760 blocks (~8 days), the sliding window
-constexpr int ACTIVATION_DELAY = 720;    // blocks between a qualifying window and activation
+// VOTING_PERIOD (the anchored-window length) is a per-chain consensus parameter,
+// consensus.nVotingPeriod -- read it from the active chain params.
+constexpr int ACTIVATION_DELAY = 720;    // blocks after a qualifying window before activation
 constexpr int YEAR_BLOCKS = 720 * 365;   // 262800 blocks (~1 year), for the fee floor
 
 using valtype = std::vector<unsigned char>;
@@ -83,7 +84,8 @@ static RPCHelpMan getalgovote()
         "getalgovote",
         "\nFind the winning dynamic-algo vote for an mPoW slot. INFORMATIONAL and\n"
         "NON-CONSENSUS. Searches the last MAX_PUSHCODE_DEPTH blocks for the LATEST\n"
-        "'anchored' voting window: a sequence of " + strprintf("%d", VOTING_PERIOD) + " blocks whose FIRST block\n"
+        "'anchored' voting window: a voting-period-long sequence of blocks (the period\n"
+        "is the consensus parameter nVotingPeriod) whose FIRST block\n"
         "carries a vote for slot s and branch b, where b wins that window (>=75% of the\n"
         "fee-weight AND >=75% of the stake AND the total fee-weight meets the fee floor).\n"
         "The winner's activation block is that window's LAST block + " + strprintf("%d", ACTIVATION_DELAY) + " + 1.\n"
@@ -137,6 +139,7 @@ static RPCHelpMan getalgovote()
                 throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("slot out of range (0..%d)", NUM_ALGOS - 1));
             }
             ChainstateManager& chainman = EnsureAnyChainman(request.context);
+            const int voting_period{chainman.GetConsensus().nVotingPeriod};
 
             // Result of the search (filled under cs_main).
             bool have_winner{false};
@@ -189,7 +192,7 @@ static RPCHelpMan getalgovote()
                             if (type == TxoutType::FEE_VOTE && DecodeSlot(sols[1]) == slot) {
                                 votes[h][uint256(sols[0])].fee_weight += fee_share;
                             } else if (type == TxoutType::STAKE_VOTE && DecodeSlot(sols[1]) == slot
-                                       && DecodeLock(sols[2]) >= VOTING_PERIOD) {
+                                       && DecodeLock(sols[2]) >= voting_period) {
                                 votes[h][uint256(sols[0])].stake += o.nValue;
                             }
                         }
@@ -209,18 +212,18 @@ static RPCHelpMan getalgovote()
                 };
 
                 // Pass 2: latest anchored winning window. A candidate window starts at a
-                // block f that has a vote for slot s; the window is [f, f+VOTING_PERIOD-1]
-                // (must be complete: f <= E - VOTING_PERIOD + 1). H wins the window if it
+                // block f that has a vote for slot s; the window is [f, f+voting_period-1]
+                // (must be complete: f <= E - voting_period + 1). H wins the window if it
                 // clears 75% of both tallies + the fee floor; the anchor rule also requires
                 // block f to carry a vote for that winner H.
-                const int max_f{E - (VOTING_PERIOD - 1)};
+                const int max_f{E - (voting_period - 1)};
                 for (auto it = votes.rbegin(); it != votes.rend(); ++it) {
                     const int f{it->first};
                     if (f > max_f) continue;
 
                     std::map<uint256, Tally> cand;
                     CAmount ftot{0}, ktot{0};
-                    for (auto jt = votes.find(f); jt != votes.end() && jt->first <= f + VOTING_PERIOD - 1; ++jt) {
+                    for (auto jt = votes.find(f); jt != votes.end() && jt->first <= f + voting_period - 1; ++jt) {
                         for (const auto& [b, t] : jt->second) {
                             cand[b].fee_weight += t.fee_weight; ftot += t.fee_weight;
                             cand[b].stake += t.stake;           ktot += t.stake;
@@ -259,7 +262,7 @@ static RPCHelpMan getalgovote()
             if (rep_f >= 0) {
                 UniValue window(UniValue::VOBJ);
                 window.pushKV("from", rep_f);
-                window.pushKV("to", rep_f + VOTING_PERIOD - 1);
+                window.pushKV("to", rep_f + voting_period - 1);
                 result.pushKV("window", window);
                 result.pushKV("fee_total", ValueFromAmount(rep_fee_total));
                 result.pushKV("stake_total", ValueFromAmount(rep_stake_total));
@@ -291,7 +294,7 @@ static RPCHelpMan getalgovote()
             if (have_winner) {
                 result.pushKV("winner", winner.GetHex());
                 // last block of the sequence + 720 + 1
-                result.pushKV("activation_block", (win_f + VOTING_PERIOD - 1) + ACTIVATION_DELAY + 1);
+                result.pushKV("activation_block", (win_f + voting_period - 1) + ACTIVATION_DELAY + 1);
             } else {
                 result.pushKV("winner", UniValue());
                 result.pushKV("activation_block", UniValue());
@@ -345,11 +348,11 @@ static RPCHelpMan createstakevotescript()
         "  <locktime> OP_CHECKSEQUENCEVERIFY OP_DROP OP_VOTE <branch> OP_DROP <slot> OP_DROP <payout>\n"
         "It is spendable back to `address` after `locktime` relative blocks (BIP68), and\n"
         "its stake-weight in a vote tally is the output's value (counted only when\n"
-        "locktime >= the voting period, " + strprintf("%d", VOTING_PERIOD) + " blocks). Put a real value on this output.\n",
+        "locktime >= the chain's voting period, nVotingPeriod). Put a real value on this output.\n",
         {
             {"branch", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "32-byte content hash of the algo branch to vote for"},
             {"slot", RPCArg::Type::NUM, RPCArg::Optional::NO, "The mPoW slot (0.." + strprintf("%d", NUM_ALGOS - 1) + ")"},
-            {"locktime", RPCArg::Type::NUM, RPCArg::Optional::NO, "Relative timelock in blocks (>= " + strprintf("%d", VOTING_PERIOD) + " to count as stake)"},
+            {"locktime", RPCArg::Type::NUM, RPCArg::Optional::NO, "Relative timelock in blocks (>= the chain's nVotingPeriod to count as stake)"},
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The address the locked coins return to"},
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {

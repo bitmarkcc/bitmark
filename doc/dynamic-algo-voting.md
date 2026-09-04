@@ -78,8 +78,10 @@ relative lock is automatic from confirmation.)
 
 ## Window, denominators, thresholds
 
-- VOTING_PERIOD = 720 * 8 = 5760 blocks (~8 days at 720 blocks/day). Sliding
-  window: it may start at any height.
+- VOTING_PERIOD is a PER-CHAIN consensus parameter (consensus.nVotingPeriod), so
+  testnet can use a short period to test activation without mining a full mainnet
+  window. Values: mainnet/signet 720*8 = 5760 (~8 days), testnet 720 (~1 day),
+  regtest 20.
 - Tally for a window ending at height E and slot S: over all vote OUTPUTS confirmed
   in [E - 5759, E] targeting slot S,
     F(H)  = sum of fee_weight   of FEE_VOTE outputs for branch H

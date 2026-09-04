@@ -105,6 +105,7 @@ public:
         consensus.nPushCodeVersion = 5;
         consensus.nPushCodeActivationThreshold = 750;
         consensus.nPushCodeActivationWindow = 1000;
+        consensus.nVotingPeriod = 720 * 8; // 5760, ~8 days
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 24 * 60 * 60; // one day
         consensus.nPowTargetSpacing = 2 * 60; // two minutes
@@ -233,6 +234,7 @@ public:
         consensus.nPushCodeVersion = 5;
         consensus.nPushCodeActivationThreshold = 750;
         consensus.nPushCodeActivationWindow = 1000;
+        consensus.nVotingPeriod = 720; // ~1 day (short, for testing activation)
         consensus.powLimit = uint256S("00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 24 * 60 * 60;
         consensus.nPowTargetSpacing = 2 * 60;
@@ -356,6 +358,7 @@ public:
         consensus.nPushCodeVersion = 5;
         consensus.nPushCodeActivationThreshold = 750;
         consensus.nPushCodeActivationWindow = 1000;
+        consensus.nVotingPeriod = 720 * 8; // 5760
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
@@ -440,6 +443,7 @@ public:
         consensus.nPushCodeVersion = 5;
         consensus.nPushCodeActivationThreshold = 75;
         consensus.nPushCodeActivationWindow = 100;
+        consensus.nVotingPeriod = 20; // tiny, for tests
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 24 * 60 * 60; // one day
         consensus.nPowTargetSpacing = 2 * 60;

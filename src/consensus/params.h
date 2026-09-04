@@ -117,6 +117,10 @@ struct Params {
     int nPushCodeVersion;
     unsigned int nPushCodeActivationThreshold;
     unsigned int nPushCodeActivationWindow;
+    /** Dynamic-algo voting: length in blocks of an anchored voting window (the
+     * span over which fee/stake votes for a slot are tallied). Per-chain so
+     * testnet can use a short period. Mainnet: 720*8 = 5760 (~8 days). */
+    int nVotingPeriod;
     BIP9Deployment vDeployments[MAX_VERSION_BITS_DEPLOYMENTS];
     /** Proof of work parameters */
     uint256 powLimit;
