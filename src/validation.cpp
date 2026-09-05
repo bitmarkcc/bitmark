@@ -848,6 +848,18 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
         return state.Invalid(TxValidationResult::TX_WITNESS_MUTATED, "bad-witness-nonstandard");
     }
 
+    // Bitmark: segwit is not activated (SegwitHeight = INT_MAX on main/testnet), so
+    // a transaction carrying witness data can never be part of a valid block --
+    // ContextualCheckBlock's CheckWitnessMalleation rejects "unexpected witness".
+    // Reject it here too, so such a tx can never sit in the mempool and stall block
+    // assembly (the miner would keep selecting it and every candidate block would
+    // fail). This matches the block-level rule, so it is not a new relay-only rule.
+    if (tx.HasWitness() &&
+        !DeploymentActiveAfter(m_active_chainstate.m_chain.Tip(), m_active_chainstate.m_chainman,
+                               Consensus::DEPLOYMENT_SEGWIT)) {
+        return state.Invalid(TxValidationResult::TX_CONSENSUS, "unexpected-witness");
+    }
+
     int64_t nSigOpsCost = GetTransactionSigOpCost(tx, m_view, STANDARD_SCRIPT_VERIFY_FLAGS);
 
     // ws.m_modified_fees includes any fee deltas from PrioritiseTransaction
