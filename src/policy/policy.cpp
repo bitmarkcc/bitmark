@@ -110,6 +110,11 @@ bool IsStandard(const CScript& scriptPubKey, const std::optional<unsigned>& max_
         // transactions can propagate over p2p; each chunk is already capped at 520
         // bytes by Solver(). A per-tx total relay cap (MAX_SOLUTION_BYTES) and a
         // raised standard-tx-size for large (LLM-scale) solutions come with 6.7.
+    } else if (whichType == TxoutType::RESERVEFEE) {
+        // Bitmark: a spendable hashrate-contingent reserve-fee covenant output. The
+        // template is already validated by Solver(); the algo range and the s0
+        // ceiling are contextual and enforced by the block-connect covenant, so the
+        // output is standard for relay as-is (a normal-value output, not dust).
     }
 
     return true;

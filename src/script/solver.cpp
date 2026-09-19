@@ -32,6 +32,7 @@ std::string GetTxnOutputType(TxoutType t)
     case TxoutType::FEE_VOTE: return "fee_vote";
     case TxoutType::STAKE_VOTE: return "stake_vote";
     case TxoutType::SOLUTION: return "solution";
+    case TxoutType::RESERVEFEE: return "reservefee";
     } // no default case, so the compiler can warn about missing cases
     assert(false);
 }
@@ -275,6 +276,31 @@ static bool MatchSolution(const CScript& script, std::vector<valtype>& sols)
     return true;
 }
 
+// Bitmark RESERVEFEE: <algo> <s0> <refund_pkh> OP_RESERVEFEE, a SPENDABLE
+// hashrate-contingent reserve-fee covenant output (flow model). <algo> (1..NUM_ALGOS)
+// selects which algo's hashrate recovery pays it out; <s0> is the 2-byte (Q16)
+// baseline RSF threshold; <refund_pkh> is the 20-byte pubkey hash that authorizes the
+// user's refund. All spend rules (claim / refund / sweep selection, released amounts,
+// RSF gates, and the refund signature) are enforced at block connect, not here.
+// vSolutions = [algo(<=1 byte), s0(2 bytes), refund_pkh(20 bytes)].
+static bool MatchReserveFee(const CScript& script, std::vector<valtype>& sols)
+{
+    sols.clear();
+    CScript::const_iterator it = script.begin();
+    valtype algo;
+    if (!NextNum(script, it, 1, algo)) return false;                    // <algo>
+    opcodetype opcode; valtype s0;
+    if (!script.GetOp(it, opcode, s0) || s0.size() != 2) return false;  // <s0>: 2-byte push
+    valtype pkh;
+    if (!script.GetOp(it, opcode, pkh) || pkh.size() != 20) return false; // <refund_pkh:20>
+    if (!NextOp(script, it, OP_RESERVEFEE)) return false;
+    if (it != script.end()) return false;
+    sols.push_back(std::move(algo));
+    sols.push_back(std::move(s0));
+    sols.push_back(std::move(pkh));
+    return true;
+}
+
 TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned char>>& vSolutionsRet)
 {
     vSolutionsRet.clear();
@@ -356,6 +382,10 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
     if (MatchSolution(scriptPubKey, params)) {
         vSolutionsRet = std::move(params);
         return TxoutType::SOLUTION;
+    }
+    if (MatchReserveFee(scriptPubKey, params)) {
+        vSolutionsRet = std::move(params);
+        return TxoutType::RESERVEFEE;
     }
 
     vSolutionsRet.clear();

@@ -620,8 +620,21 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
                 }
                 break;
 
+                case OP_RESERVEFEE: // OP_NOP7 (0xb6): Bitmark reserve-fee covenant marker
+                {
+                    // A DEFINED no-op: OP_RESERVEFEE marks a spendable reserve-fee
+                    // covenant output (<algo> <s0> <refund_pkh> OP_RESERVEFEE). The
+                    // spend rules (claim / refund / sweep selection, released amounts,
+                    // RSF gates, and the refund signature) are enforced at block
+                    // connect, not in the interpreter. Like OP_VOTE it is deliberately
+                    // NOT a discouraged upgradable NOP, so a reserve-fee output stays
+                    // standard to spend. OP_NOP7 is thereby permanently claimed as
+                    // OP_RESERVEFEE.
+                }
+                break;
+
                 case OP_NOP1:
-                case OP_NOP6: case OP_NOP7: case OP_NOP8: case OP_NOP9: case OP_NOP10:
+                case OP_NOP6: case OP_NOP8: case OP_NOP9: case OP_NOP10:
                 {
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
                         return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);

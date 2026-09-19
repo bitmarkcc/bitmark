@@ -201,6 +201,43 @@ BOOST_AUTO_TEST_CASE(script_standard_Solver_success)
     s << OP_RETURN << OP_SOLUTION << OP_0 << chunk << OP_1;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
 
+    // TxoutType::RESERVEFEE (Bitmark): <algo> <s0:2> <refund_pkh:20> OP_RESERVEFEE
+    s.clear();
+    std::vector<unsigned char> s0{0x00, 0x80};          // Q16 baseline ~0.5
+    std::vector<unsigned char> refund_pkh(20, 0xee);
+    s << OP_3 << s0 << refund_pkh << OP_RESERVEFEE;      // algo 3 (OP_3)
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::RESERVEFEE);
+    BOOST_CHECK_EQUAL(solutions.size(), 3U);
+    BOOST_CHECK(solutions[0] == std::vector<unsigned char>{3}); // OP_3 decoded to byte 3
+    BOOST_CHECK(solutions[1] == s0);
+    BOOST_CHECK(solutions[2] == refund_pkh);
+
+    // a 1-byte algo push is also accepted
+    s.clear();
+    s << std::vector<unsigned char>{0x08} << s0 << refund_pkh << OP_RESERVEFEE;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::RESERVEFEE);
+    BOOST_CHECK(solutions[0] == std::vector<unsigned char>{8});
+
+    // wrong s0 size (not 2 bytes) is not a match
+    s.clear();
+    s << OP_3 << std::vector<unsigned char>{0x80} << refund_pkh << OP_RESERVEFEE;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // wrong pkh size (not 20 bytes) is not a match
+    s.clear();
+    s << OP_3 << s0 << std::vector<unsigned char>(21, 0xee) << OP_RESERVEFEE;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // missing OP_RESERVEFEE terminator is not a match
+    s.clear();
+    s << OP_3 << s0 << refund_pkh;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // trailing data after OP_RESERVEFEE is not a match
+    s.clear();
+    s << OP_3 << s0 << refund_pkh << OP_RESERVEFEE << OP_1;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
     // TxoutType::NONSTANDARD
     s.clear();
     s << OP_9 << OP_ADD << OP_11 << OP_EQUAL;
