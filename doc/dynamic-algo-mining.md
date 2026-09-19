@@ -280,7 +280,7 @@ computed with a WIDE intermediate — `x·q` can reach ~2^66 — via `arith_uint
 (already in consensus, portable, avoids `__int128`): `(arith_uint256(x) * q) >> 32`,
 take the low 64 bits.
 
-With `r = subsidy + claimable_fees`, `S = subsidy`, `F = claimable_fees`:
+With `r = subsidy + total_fees`, `S = subsidy`, `F = total_fees`:
 - **Valid solution:**
   - `dyn = fp_mul(r, α_q)` — the dynamic miner's amount `= floor(α·r)`; the §4.3 floor
     is "coinbase pays `≥ dyn` to the payout".
@@ -336,144 +336,128 @@ Note: this RSF is distinct from Bitmark's existing per-algo subsidy scaling (SSF
 mPoW; the RSF here governs only the reserve-fee release. It is "applied to fees" in
 the opt-in sense of §6, not as a blanket subsidy scaling.
 
+The reserve-fee mechanism uses only the **current** RSF `s_t = s^a(claim_height −
+HASHRATE_CYCLE)`, computed here. The **baseline** `s0` a contract is measured against is
+NOT computed from the chain — it is a user-declared constant stored in the output (§6.1),
+so `s0` needs no RSF lookup and is fixed for the life of the contract.
+
 ---
 
 ## 6. Reserve fees
 
-An opt-in mechanism by which a user makes part of a transaction's fee
-**hashrate-contingent**: released to an algo's miners as that algo's hashrate
-recovers, refundable to the user if it doesn't. This is the on-chain realization of
-the 2018 reserve-fee idea. **Soft fork, no UTXO-set bloat beyond transient reserve
-outputs.**
+An opt-in mechanism by which a user makes part of a transaction's value
+**hashrate-contingent**: released to one algo's miners *while* that algo sustains
+hashrate above a chosen threshold, and refundable to the user if it doesn't. On-chain
+realization of the 2018 reserve-fee idea. **Soft fork**; the reserve lives in a
+spendable covenant UTXO (never off-UTXO state), which is what makes releasing it later
+— as an ordinary spend — soft-fork-safe.
 
-Design decisions locked in discussion:
-- **Option A**: each contract is tied to ONE algo, chosen by the user (wallet RPC
-  defaults to a random 1..NUM_ALGOS). Only that algo's blocks may claim it, gated on
-  that algo's RSF recovery. (Simplest UTXO/covenant; punishes per-algo suppression
-  directly. Alternatives B/global-pool-self-gated and C/proportional-split were
-  considered and rejected — see the discussion log.)
-- **Proportional release with rollover**, anchored to the RSF at creation.
-- **Height-anchored, not hash-anchored** (§6.4).
-- **2-year refund DEADLINE** (not a timelock): the user may reclaim the un-recovered
-  remainder within two years; after that any miner may sweep it (§6.3).
+Design (as settled in discussion):
+- **Flow model, not ratchet.** Miners earn a *stream* while `s_t > s0` (sustained
+  hashrate above the baseline), faster the higher `s_t` is — rather than a one-time
+  payment for reaching new RSF peaks. The ratchet/peak model was dropped: it creeps the
+  baseline toward the peak, herding miners into the `~0.975p–p` region where the SSF
+  subsidy misbehaves and the payout formula (`1−s0 → 0`) is ill-conditioned. Flow keeps
+  a fixed, moderate baseline and rewards *sustaining* hashrate, which better matches the
+  anti-suppression goal. Rate constant `k = 1` (global).
+- **One algo per contract** (`<algo>`), user-chosen. Only that algo's blocks may claim
+  it — punishes per-algo suppression directly. (Alternatives: a global pool split
+  across algos was considered and rejected — see the discussion log.)
+- **Baseline `s0` is stored directly** as a user-declared threshold, NOT derived from a
+  reference block — simpler covenant (no lookup) and predictable at build time. `s0`
+  only affects the user's own contract economics, never security, so a user-set value
+  is safe; the covenant only guards `s0 ≤ S0_MAX (~0.95)` to avoid the `1−s0 → 0`
+  ill-conditioning.
+- **2-year clock from the output's own confirmation height** — no stored origin height
+  (see §6.3); a flow-specific simplification.
 
 ### 6.1 The output
 ```
-output = ( V , "<algo> <H_orig> <refund_spk> OP_RESERVEFEE" )
+output = ( V , "<algo> <s0> <refund_pkh> OP_RESERVEFEE" )   // SPENDABLE, TxoutType::RESERVEFEE
 ```
-- `V` — the reserved amount (satoshis). **The user chooses `V`**; it is diverted from
-  the fee (the tx over-pays its fee by `V`). Diversion = the coinbase under-claims by
-  `V`, which old nodes accept (they see `V` as unclaimed/donated fee) → soft-fork-safe.
-- `algo ∈ 1..NUM_ALGOS` — user-chosen algo this contract rewards.
-- `H_orig` — the creation height, carried purely for the 2-year refund deadline
-  (§6.3). Validated `== actual creation height` once at birth, then preserved by the
-  covenant across rollovers so miners can't reset the refund clock.
-- `refund_spk` — where a refund is paid.
-- `OP_RESERVEFEE = OP_NOP7` — a no-op to old nodes, so the output is anyone-can-spend
-  under old rules; upgraded nodes enforce the covenant below in `ConnectBlock`.
+- `V` — the reserved amount (satoshis). The user **funds this like any output** (from
+  the tx's inputs). It is a real UTXO, *not* left as fee: value can only move by being
+  spent, so a real output is what lets it later flow to miners (claim) or back to the
+  user (refund) without looking like inflation to old nodes. Miners collect their share
+  when a **claim tx leaves the released slice as fee**.
+- `algo ∈ [1, NUM_ALGOS]` — the algo whose recovery pays this contract out (1-byte push
+  / `OP_1..OP_8`).
+- `s0` — baseline RSF threshold, a **2-byte Q16** value (`s0 = u16 / 2^16`), scaled to
+  Q32 for the arithmetic. Covenant requires `s0 ≤ S0_MAX`.
+- `refund_pkh` — 20-byte HASH160 that authorizes the user's refund.
+- `OP_RESERVEFEE = OP_NOP7` — a defined no-op to the interpreter, so the output is
+  anyone-can-spend at the script level; the covenant enforces all real rules in
+  `ConnectBlock`.
 
-### 6.2 Baseline & the free `s0` ratchet
-The RSF baseline for a reserve output is `s0 = s^algo(coin_height − HASHRATE_CYCLE)`,
-where `coin_height` is the output's OWN creation height (from the coins database).
-Nothing about `s0` is stored — it's recomputed from the coin's height.
+The spend path is chosen by a **scriptSig selector**: `0` = claim, `1` = refund
+(`<sig> <pubkey> 1`), `2` = sweep.
 
-This gives the ratchet for free: a rollover output (§6.3) is created at the claim
-height, so its `coin_height` IS the bumped baseline. Successive claims therefore
-anchor to successively higher heights with no stored/mutated `s0`. (The stored
-`H_orig` is only the refund clock, not the RSF baseline.)
-
-### 6.3 Lifecycle
-
-**Claim (keyless; any algo-`algo` block → miner).** When
-`s_t = s^algo(t − HASHRATE_CYCLE) > s0`, a claim is a normal transaction, mined in an
-algo-`algo` block, that spends the reserve UTXO and routes value as:
+### 6.2 Release (flow, k = 1)
+The current RSF `s_t = s^algo(claim_height − HASHRATE_CYCLE)` is computed in arrears
+(§5.1); `s0` is read straight from the output. While `s_t > s0`, an algo-`algo` block
+may claim:
 ```
-claimable = floor( V · (s_t − s0) / (1 − s0) )   // 0 if s_t ≤ s0 ; V if s_t = 1
+claimable = min( V_rem , floor( V_rem · (s_t − s0)/(1 − s0) · Δ ) )
 ```
-- `claimable` is left unassigned → becomes the block fee (the miner's take).
-- if `claimable < V`, the remainder `V − claimable` MUST reappear as a fresh reserve
-  output `(V − claimable, "<algo> <H_orig> <refund_spk> OP_RESERVEFEE")` (same
-  `algo`, same `H_orig`, same `refund_spk`; new `coin_height` ⇒ bumped baseline).
-- `scriptSig = OP_0` (path selector 0) — **no signature**. Safe because the covenant
-  proves the value can only become miner-fee + a same-terms rollover; the only party
-  who profits is the block's miner, who includes the tx in their own block.
-- Enforced (ConnectBlock): the spending block's algo `== algo`; `claimable` computed
-  from the recomputed `s0` and `s_t`; the rollover output is exact.
+where `V_rem` is the output's value and `Δ` = algo-`algo` blocks between the output's
+coin_height and the claiming block (from the RSF index). `Δ` lets a miner **batch** —
+collect several blocks' worth in one claim tx instead of one tx per block — so flow
+doesn't spam the chain. Higher `s_t` ⇒ larger fraction ⇒ faster drain ("faster if
+higher"). `s0` is **fixed** (no ratchet), so `V_rem` empties over roughly
+`(1−s0)/(s_t−s0)` blocks of sustained recovery and pauses whenever `s_t ≤ s0`.
 
-Telescoping check: releasing at `s1` then `s2 (> s1 > s0)` leaves
-`V·(1−s1)/(1−s0) · (1−s2)/(1−s1) = V·(1−s2)/(1−s0)`, i.e. release depends only on the
-running max — so the ratchet is path-independent.
+### 6.3 Lifecycle (three paths)
 
-The `TWO_YEARS = 720·365·2` blocks from `H_orig` is a **refund DEADLINE, not a
-timelock**: the user has two years to reclaim the un-recovered remainder; after that it
-defaults to miners. So there are two more paths besides the claim above.
+**Claim — keyless; algo-`algo` block; `s_t > s0`.** Spends the reserve UTXO; leaves
+`claimable` unassigned (→ block fee for the miner); if `claimable < V_rem`, the
+remainder MUST reappear as a fresh reserve output with the **same**
+`<algo> <s0> <refund_pkh>` (only its value and coin_height change). `scriptSig = OP_0`.
+Enforced (ConnectBlock): block algo `== algo`, correct `claimable`, exact rollover
+output.
 
-**Refund (signed; user; BEFORE 2 years).** While `spending_height − H_orig < TWO_YEARS`,
-`refund_spk` may reclaim the current `V_remaining` to a normal spendable output.
-- `scriptSig = <sig> <refund_pubkey> OP_1` (selector 1 + refund authorization).
-- Enforced (ConnectBlock): `spending_height − H_orig < TWO_YEARS`; the full
-  `V_remaining` paid to `refund_spk`; valid signature; and `s_t ≤ s0` (current RSF not
-  above the ratchet baseline) so the user can only pull the **un-recovered** remainder,
-  never money a recovering algo's miners have earned but not yet claimed.
-- This is the user's "hashrate isn't coming back, give me my fee back" option, and the
-  anti-suppression tool: an active user reclaims on suppression, denying the reserve to
-  the miners who suppressed.
+**Refund — signed; user; `s_t ≤ s0`; before 2 years.** The user reclaims the current
+`V_rem`. `scriptSig = <sig> <pubkey> OP_1`. Enforced (ConnectBlock):
+`HASH160(pubkey) == refund_pkh`; a valid signature over the standard `SIGHASH_ALL`
+sighash (scriptCode = the reserve scriptPubKey), checked by reusing Core's
+`TransactionSignatureChecker` — `SIGHASH_ALL` commits to the outputs so a thief cannot
+malleate the refund destination; `s_t ≤ s0` (only the un-earned remainder);
+`age < TWO_YEARS`. The interpreter checks no signature here (the script is
+anyone-can-spend), so the refund is protected by the **new-node covenant**, not old
+nodes — soft-fork-safe (a thief's unsigned "refund" is orphaned by the upgraded
+majority; old-node enforcement was judged not worth the extra script bytes). This is
+the anti-suppression payoff: if the algo stays suppressed, the user pulls their fee
+back.
 
-**Expiry sweep (keyless; ANY miner; AFTER 2 years).** Once
-`spending_height − H_orig ≥ TWO_YEARS`, ANY block (any algo) may claim the FULL
-`V_remaining` unconditionally — the same keyless claim path as above, but with
-`claimable = V_remaining` and NO RSF gate and NO algo gate.
-- `scriptSig = OP_0`.
-- Enforced (ConnectBlock): `spending_height − H_orig ≥ TWO_YEARS`; full `V_remaining`
-  becomes the block fee. (No `block algo == algo` check — deliberately.)
-- Why ANY miner, not the contract's algo `a`: a remainder surviving to the 2-year mark
-  means algo `a` did NOT recover (had it recovered, the proportional claim path would
-  already have drained it). Routing that to algo-`a` miners would reward the very algo
-  that stayed suppressed — backwards for an anti-suppression mechanism. Treating it as
-  generic abandoned value claimable by any miner (Bitmark's "un-emitted value defaults
-  to miners" default) avoids that, is simpler (drops the algo gate the recovery path
-  needs), and lets the most active algos — which mine the most blocks — naturally grab
-  the most sweeps, gently favouring healthy algos.
-- Rationale for the sweep at all: a user who never reclaimed within two years forfeits,
-  so abandoned contracts never linger as locked dust. Active users are unaffected —
-  they had two years, and the suppression case is exactly when they'd reclaim.
+**Expiry sweep — keyless; ANY miner; age ≥ 2 years.** `age = claim_height −
+coin_height`. Any block may take the full `V_rem` (→ fee). `scriptSig = OP_2`. No RSF or
+algo gate. Because `coin_height` only advances via real claims (which require `s_t > s0`
+and drain value), `age ≥ TWO_YEARS` implies the contract has been **stuck below baseline
+for two years** — so the sweep only ever fires on genuinely abandoned contracts. Routed
+to *any* miner (not algo `a`): a contract that never recovered shouldn't reward the algo
+that stayed suppressed; abandoned value defaults to whoever mines it (the most active
+algos, mining the most blocks, naturally grab the most).
 
-Asymmetry: the miner paths (recovery claim, expiry sweep) are **keyless** (fully
-constrained by the covenant); the refund path is **signed** (only the user, only within
-the two-year window, only the un-recovered part).
+**Why the 2-year clock needs no stored origin.** The clock runs from the *current*
+output's coin_height. A miner cannot cheaply keep resetting it: advancing coin_height
+requires a **claim**, which needs `s_t > s0` and **drains real value**. Once hashrate
+falls below baseline, claims stop, coin_height freezes, and the clock runs. (Under the
+abandoned ratchet model a sliver-claim could reset the clock for free — which is why
+that model needed a stored origin height; flow doesn't.)
 
-### 6.4 Why height, not hash — and reorg safety
-The RSF baseline anchors to the reserve output's OWN creation height, and a coin's
-ancestry is pinned by the coin's existence:
-- Recomputing `s0` reads a window that is entirely **ancestors of the output**. As
-  long as the output is on the active chain, that window is fixed; a reorg deep enough
-  to change it necessarily **orphans the output** (and any claim spending it). Baseline
-  and output cannot diverge. The one-cycle-in-arrears rule (§5.1) buries the window
-  ~720 blocks deep, strengthening this.
-- A block **hash** would anchor to one specific block regardless of chain: if it were
-  reorged off the output's chain the reference would **dangle**. Height-relative-to-the-
-  output can't dangle. So height is strictly better here.
-
-Attacks considered, none profitable:
-1. *Reorg to lower `s0` and claim more* — must reorg the output's ancestor window,
-   which orphans the contract and the claim; you'd re-mine days of blocks to steal one
-   contract's `V`.
-2. *Timestamp-faking hashrate* — MTP (median of 11, future-bounded) caps it.
-3. *User choosing a favorable reference* — she can't; the baseline is her output's own
-   height, and `H_orig` is validated `== creation height`, so she can neither lower
-   `s0` nor move her refund clock. She only picks `algo`.
-4. *Shallow reorg near the 2-year boundary* — shifts the deadline by a few blocks out
-   of 525,600; noise.
-Every "current" RSF (`s_t`) is computed from the claim/refund block's own ancestry and
-validated in that block's context, so it is reorg-safe by construction.
+### 6.4 Reorg safety
+`s0`, `algo`, `refund_pkh` are constants in the output — trivially reorg-stable. The
+only chain-derived quantity, the current RSF `s_t`, is computed **in arrears** (§5.1)
+from the claiming block's own ancestry and validated in that block's context, so it is
+reorg-safe by construction; `Δ` and `age` are likewise functions of the output's own
+coin_height and the claiming height. MTP (median-of-11, future-bounded) caps
+timestamp-faking of the hashrate measurement.
 
 ### 6.5 State & bloat
-Reserve outputs live in the UTXO set (that's what keeps it a soft fork — the value is
-never destroyed-and-recreated, only spent). But they are **transient**: each claim
-drains them and rolls a smaller remainder forward; a fully-recovered algo empties its
-contracts, and a refund removes them. So the worst-case ~2× UTXO growth is rarely
-approached and never permanent. No per-contract side database is required; the coins
-DB plus the header-derived RSF index suffice.
+Reserve outputs live in the UTXO set (that's what keeps this a soft fork — value is only
+ever spent, never destroyed-and-recreated). They are **transient**: claims drain them
+and roll a smaller remainder forward, recovery empties them, a refund/sweep removes
+them, and only one live reserve UTXO exists per contract at a time. No side database —
+the coins DB plus the header-derived RSF index (§5) suffice.
 
 ---
 
@@ -549,10 +533,12 @@ For a block on slot/algo `a` at height `t` whose slot has an active algo (evalua
 the parent chain per `dynamic-algo-voting.md`, so a block can't self-activate):
 
 1. **Base PoW** verified as today (old-node path).
-2. **Fees.** `total_fees = Σ tx fees`. `reserved = Σ V` of new `OP_RESERVEFEE`
-   contracts created this block. `claimable_fees = total_fees − reserved`. Reserve
-   *claims* (§6.3) appear as ordinary fees from their spending txs and are inside
-   `total_fees`; the covenant checks below gate their validity.
+2. **Fees.** `total_fees = Σ tx fees`, and the coinbase may claim all of them.
+   Creating a reserve output does NOT reduce fees — `V` is a normal output the user
+   funds from their own inputs (§6.1), not a fee diversion. Reserve *claims* (§6.3)
+   appear as ordinary fees from their spending txs (the released slice left unassigned)
+   and are already inside `total_fees`; the covenant checks in step 6 gate their
+   validity.
 3. **Solution & payout.** Scan the WHOLE block for `OP_SOLUTION` outputs (in the
    solution tx per §2.1, or the coinbase per §2.2), order by `seq` (0..N-1,
    contiguous/unique, total ≤ `MAX_SOLUTION_BYTES`), concatenate. Read the committed
@@ -563,20 +549,22 @@ the parent chain per `dynamic-algo-voting.md`, so a block can't self-activate):
    out_ab)` under the gas/memory limits (§8). A limit breach or module fault ⇒ invalid.
    Require `0 ≤ α < 1`, `0 ≤ β < 1`. For the no-solution branch, run `verify()` with an
    empty solution solely to read `α, β`.
-5. **Reward split** (with `r = subsidy + claimable_fees`, integer α,β per §4.4):
+5. **Reward split** (with `r = subsidy + total_fees`, integer α,β per §4.4):
    - `verify()==0`: the coinbase must contain the one required output paying `≥ α·r`
      to `payout_scriptPubKey` (§2.3); total coinbase value `≤ r`; emitted subsidy = `S`.
    - else: coinbase subsidy `≤ β·(1−α)·S` (fees still fully claimable); emitted subsidy
      = `β·(1−α)·S`; defer the rest via the milestone accounting.
-6. **Reserve covenant.** For each spend of an `OP_RESERVEFEE` output, enforce §6.3 by
-   path:
-   - *recovery claim* (age `< TWO_YEARS`, keyless): block algo == contract algo,
-     `s_t > s0`, correct `claimable`/rollover;
-   - *refund* (age `< TWO_YEARS`, signed): `s_t ≤ s0`, full `V_remaining` to
-     `refund_spk`, valid sig;
-   - *expiry sweep* (age `≥ TWO_YEARS`, keyless): any algo, full `V_remaining` → block
-     fee.
-   For each new `OP_RESERVEFEE` output, enforce `H_orig == t` and well-formed fields.
+6. **Reserve covenant.** For each spend of an `OP_RESERVEFEE` output, dispatch on the
+   scriptSig selector and enforce §6.3 (`age = t − coin_height`):
+   - *claim* (selector 0, keyless): block algo == contract `algo`, `s_t > s0`, correct
+     flow `claimable` (§6.2), exact `<algo> <s0> <refund_pkh>` rollover output;
+   - *refund* (selector 1, `<sig> <pubkey>`): `HASH160(pubkey) == refund_pkh`, valid
+     `SIGHASH_ALL` sig (reuse `TransactionSignatureChecker`), `s_t ≤ s0`,
+     `age < TWO_YEARS`, full `V_rem` to the user;
+   - *expiry sweep* (selector 2, keyless): `age ≥ TWO_YEARS`, full `V_rem` → block fee
+     (no algo/RSF gate).
+   For each NEW `OP_RESERVEFEE` output, enforce well-formed fields: `algo ∈
+   [1, NUM_ALGOS]`, `s0 ≤ S0_MAX`.
 7. **Milestone accounting** updated with the ACTUAL emitted subsidy (never counting
    deferred subsidy as emitted).
 
@@ -619,7 +607,8 @@ index rebuilds from headers).
 - Per-height/per-algo RSF index: storage format and rebuild-on-reindex.
 - Data availability of LLM validation examples: inline merkle-branch proofs carried in
   the `OP_SOLUTION` stream (fold the proof format in — see the voting doc).
-- Reserve refund anti-race: the refund is gated on `s_t ≤ s0` so the user can only pull
-  the un-recovered remainder. Confirm this gate is sufficient (vs. refunding only the
-  instantaneously-un-recovered `V·(1−s_t)/(1−s0)` amount) — RESOLVED as the `s_t ≤ s0`
-  gate for now; revisit if RSF churn strands honest refunds.
+- Reserve params: `S0_MAX` value (the `s0` ceiling), and the global flow rate `k` (=1
+  for now; the future `<ctype>` field would let contracts pick other release rules).
+- Reserve refund sighash: reuse `TransactionSignatureChecker` with `SIGHASH_ALL` and
+  the reserve scriptPubKey as scriptCode. Confirm no malleability corner (SIGHASH_ALL
+  covers outputs, so the refund destination is committed).

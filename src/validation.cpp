@@ -1780,6 +1780,78 @@ BoostBigNum get_ssf(const CBlockIndex* pindex)
     return scalingFactor;
 }
 
+// Bitmark reserve-fee RSF (Reward Scaling Factor): the per-algo recovery ratio
+// s^algo = h_cur / h_peak, returned as a Q32 fixed-point uint32 (s = value / 2^32, in
+// [0, 1)). h_cur is the hashrate over the last nSSF (=90 = HASHRATE_CYCLE) algo-blocks
+// before pindex; h_peak is the max over the trailing year of such windows (including
+// the current one, so h_cur <= h_peak and s <= 1). This reuses get_ssf()'s exact
+// hashes_cur / hashes_peak walk; ONLY the final transform differs -- the subsidy SSF
+// uses peak/(peak-cur) (which is non-linear and blows up as cur -> peak), whereas the
+// reserve RSF uses the linear cur/peak. Returns 0 on insufficient history (no peak).
+uint32_t get_rsf(const CBlockIndex* pindex, Algo algo)
+{
+    const CBlockIndex* pprev_algo = pindex;
+    BoostBigNum hashes_peak = BoostBigNum(0);
+    BoostBigNum hashes_cur = BoostBigNum(0);
+    for (int i = 0; i < 365; i++) { // use at most a year's worth of history
+        pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo, algo);
+        if (!pprev_algo) {
+            break;
+        }
+        BoostBigNum hashes = pprev_algo->GetBlockWorkBoost();
+        unsigned int time_f = pprev_algo->GetMedianTimePast();
+        unsigned int time_i = 0;
+        for (int j = 0; j < nSSF - 1; j++) { // nSSF algo-blocks = one cycle
+            pprev_algo = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo, algo);
+            if (!pprev_algo) {
+                hashes = BoostBigNum(0);
+                break;
+            }
+            hashes += pprev_algo->GetBlockWorkBoost();
+            time_i = pprev_algo->GetMedianTimePast();
+        }
+        if (!pprev_algo) {
+            break;
+        }
+        const CBlockIndex* pprev_algo_time = CBlockIndex::GetPrevAlgoBlockIndex(pprev_algo, algo);
+        if (pprev_algo_time) {
+            time_i = pprev_algo_time->GetMedianTimePast();
+        } else { // get prefork block time
+            const CBlockIndex* blockindex = pprev_algo;
+            while (blockindex && blockindex->OnFork()) {
+                blockindex = blockindex->pprev;
+            }
+            if (blockindex) time_i = blockindex->GetBlockTime();
+        }
+        if (time_f > time_i) {
+            time_f -= time_i;
+        } else {
+            return 0;
+        }
+        hashes = (hashes * 100000000) / time_f;
+        if (hashes > hashes_peak) hashes_peak = hashes;
+        if (i == 0) hashes_cur = hashes;
+    }
+    if (hashes_peak <= BoostBigNum(0)) return 0;
+    BoostBigNum q = (hashes_cur << 32) / hashes_peak; // floor(cur * 2^32 / peak)
+    if (q >= (BoostBigNum(1) << 32)) return 0xFFFFFFFFu; // cur == peak -> clamp to ~1.0
+    return (uint32_t)q.convert_to<uint64_t>();
+}
+
+// The reserve-fee RSF the covenant compares s0 against: the per-algo RSF evaluated
+// HASHRATE_CYCLE (nSSF) algo-blocks IN ARREARS from pindex, so the measurement window
+// is buried ~one cycle deep and cannot be wobbled by recent blocks or a shallow reorg
+// (doc/dynamic-algo-mining.md sec 5.1). Returns Q32; 0 on insufficient history.
+uint32_t GetReserveRSF(const CBlockIndex* pindex, Algo algo)
+{
+    const CBlockIndex* p = pindex;
+    for (int i = 0; i < nSSF; i++) { // nSSF = HASHRATE_CYCLE = 90 algo-blocks
+        p = CBlockIndex::GetPrevAlgoBlockIndex(p, algo);
+        if (!p) return 0;
+    }
+    return get_rsf(p, algo);
+}
+
 /* Basic method for compatibility purposes. Doesn't give the post fork subsidy. */
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& params)
 {
