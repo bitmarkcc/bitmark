@@ -31,6 +31,7 @@ std::string GetTxnOutputType(TxoutType t)
     case TxoutType::PUSHCODE: return "pushcode";
     case TxoutType::FEE_VOTE: return "fee_vote";
     case TxoutType::STAKE_VOTE: return "stake_vote";
+    case TxoutType::SOLUTION: return "solution";
     } // no default case, so the compiler can warn about missing cases
     assert(false);
 }
@@ -252,6 +253,28 @@ static bool MatchStakeVote(const CScript& script, std::vector<valtype>& sols)
     return true;
 }
 
+// Bitmark SOLUTION: OP_RETURN OP_SOLUTION <seq> <chunk>, unspendable. Carries one
+// ordered chunk of a dynamic-algo solution; the block verifier concatenates all such
+// outputs in the block by ascending <seq>. May appear in the coinbase or in a
+// dedicated solution transaction. vSolutions = [seq(<=4 bytes, minimal), chunk].
+static bool MatchSolution(const CScript& script, std::vector<valtype>& sols)
+{
+    sols.clear();
+    CScript::const_iterator it = script.begin();
+    if (!NextOp(script, it, OP_RETURN)) return false;
+    if (!NextOp(script, it, OP_SOLUTION)) return false;
+    valtype seq;
+    if (!NextNum(script, it, 4, seq)) return false;               // <seq>
+    opcodetype opcode; valtype chunk;
+    if (!script.GetOp(it, opcode, chunk)) return false;           // <chunk>: a data push
+    if (chunk.empty() || opcode > OP_PUSHDATA4) return false;     // non-empty push only
+    if (chunk.size() > MAX_SCRIPT_ELEMENT_SIZE) return false;     // <=520 bytes
+    if (it != script.end()) return false;
+    sols.push_back(std::move(seq));
+    sols.push_back(std::move(chunk));
+    return true;
+}
+
 TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned char>>& vSolutionsRet)
 {
     vSolutionsRet.clear();
@@ -329,6 +352,10 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
     if (MatchStakeVote(scriptPubKey, params)) {
         vSolutionsRet = std::move(params);
         return TxoutType::STAKE_VOTE;
+    }
+    if (MatchSolution(scriptPubKey, params)) {
+        vSolutionsRet = std::move(params);
+        return TxoutType::SOLUTION;
     }
 
     vSolutionsRet.clear();

@@ -202,8 +202,10 @@ enum opcodetype
     OP_NOP4 = OP_PUSHCODE,
     OP_VOTE = 0xb4,     // Bitmark: vote a dynamic-algo branch into an mPoW slot
     OP_NOP5 = OP_VOTE,
-    OP_NOP6 = 0xb5,
-    OP_NOP7 = 0xb6,
+    OP_SOLUTION = 0xb5, // Bitmark: mark a dynamic-algo solution chunk (OP_RETURN OP_SOLUTION <seq> <chunk>)
+    OP_NOP6 = OP_SOLUTION,
+    OP_RESERVEFEE = 0xb6, // Bitmark: hashrate-contingent reserve-fee covenant output
+    OP_NOP7 = OP_RESERVEFEE,
     OP_NOP8 = 0xb7,
     OP_NOP9 = 0xb8,
     OP_NOP10 = 0xb9,

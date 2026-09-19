@@ -414,6 +414,7 @@ static bool SignStep(const SigningProvider& provider, const BaseSignatureCreator
     case TxoutType::PUSHCODE:
     case TxoutType::FEE_VOTE:
     case TxoutType::STAKE_VOTE: // spendable, but reclaiming stake needs a manual CSV spend
+    case TxoutType::SOLUTION:
     case TxoutType::WITNESS_UNKNOWN:
         return false;
     case TxoutType::PUBKEY:

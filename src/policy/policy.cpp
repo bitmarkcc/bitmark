@@ -105,6 +105,11 @@ bool IsStandard(const CScript& scriptPubKey, const std::optional<unsigned>& max_
         if (payout_type == TxoutType::NONSTANDARD || payout_type == TxoutType::STAKE_VOTE) {
             return false;
         }
+    } else if (whichType == TxoutType::SOLUTION) {
+        // Bitmark: a dynamic-algo solution chunk (unspendable). Standard so solution
+        // transactions can propagate over p2p; each chunk is already capped at 520
+        // bytes by Solver(). A per-tx total relay cap (MAX_SOLUTION_BYTES) and a
+        // raised standard-tx-size for large (LLM-scale) solutions come with 6.7.
     }
 
     return true;
@@ -157,7 +162,11 @@ bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_dat
 
         if (whichType == TxoutType::NULL_DATA)
             nDataOut++;
-        else if ((whichType == TxoutType::MULTISIG) && (!permit_bare_multisig)) {
+        else if (whichType == TxoutType::SOLUTION) {
+            // Bitmark: 0-value unspendable data output; exempt from the dust rule
+            // like NULL_DATA, but deliberately NOT counted in nDataOut so a solution
+            // spanning many chunks is not rejected by the single-OP_RETURN limit.
+        } else if ((whichType == TxoutType::MULTISIG) && (!permit_bare_multisig)) {
             reason = "bare-multisig";
             return false;
         } else if (IsDust(txout, dust_relay_fee)) {

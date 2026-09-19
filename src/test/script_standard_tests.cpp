@@ -166,6 +166,41 @@ BOOST_AUTO_TEST_CASE(script_standard_Solver_success)
     s << OP_RETURN << OP_PUSHCODE << OP_2 << OP_DUP;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
 
+    // TxoutType::SOLUTION (Bitmark): OP_RETURN OP_SOLUTION <seq> <chunk>
+    s.clear();
+    std::vector<unsigned char> chunk(64, 0xcd);
+    s << OP_RETURN << OP_SOLUTION << OP_0 << chunk;   // seq 0 (OP_0), 64-byte chunk
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTION);
+    BOOST_CHECK_EQUAL(solutions.size(), 2U);
+    BOOST_CHECK(solutions[0].empty());               // seq 0 decodes to an empty valtype
+    BOOST_CHECK(solutions[1] == chunk);
+
+    // a multi-byte seq is accepted
+    s.clear();
+    s << OP_RETURN << OP_SOLUTION << std::vector<unsigned char>{0x2a, 0x01} << chunk; // seq 298
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTION);
+    BOOST_CHECK(solutions[0] == (std::vector<unsigned char>{0x2a, 0x01}));
+
+    // missing chunk is not a match
+    s.clear();
+    s << OP_RETURN << OP_SOLUTION << OP_5;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // OP_SOLUTION without the leading OP_RETURN is not a match
+    s.clear();
+    s << OP_SOLUTION << OP_0 << chunk;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // a chunk larger than MAX_SCRIPT_ELEMENT_SIZE is not a match
+    s.clear();
+    s << OP_RETURN << OP_SOLUTION << OP_0 << std::vector<unsigned char>(MAX_SCRIPT_ELEMENT_SIZE + 1, 0x00);
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // trailing data after the chunk is not a match
+    s.clear();
+    s << OP_RETURN << OP_SOLUTION << OP_0 << chunk << OP_1;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
     // TxoutType::NONSTANDARD
     s.clear();
     s << OP_9 << OP_ADD << OP_11 << OP_EQUAL;

@@ -34,6 +34,7 @@ enum class TxoutType {
     PUSHCODE, //!< Bitmark: OP_RETURN OP_PUSHCODE <up to 5 params>, carries dynamic-algo code (unspendable)
     FEE_VOTE, //!< Bitmark: OP_RETURN OP_VOTE <branch:32> <slot>, a fee-weighted dynamic-algo vote (unspendable)
     STAKE_VOTE, //!< Bitmark: <lock> OP_CSV OP_DROP OP_VOTE <branch:32> OP_DROP <slot> OP_DROP <payout>, a stake-weighted vote (spendable after lock)
+    SOLUTION, //!< Bitmark: OP_RETURN OP_SOLUTION <seq> <chunk>, a dynamic-algo solution chunk (unspendable; coinbase or solution-tx)
 };
 
 /** Get the name of a TxoutType as a string */
