@@ -881,7 +881,52 @@ static RPCHelpMan chaindynamics()
 	},
     };
 }
-	    
+
+static RPCHelpMan getreservefeersf()
+{
+    return RPCHelpMan{"getreservefeersf",
+        "\nReturns the reserve-fee RSF (Reward Scaling Factor) for an mPoW algo: the\n"
+        "just-ended-period recovery ratio s = h_cur / h_peak that the reserve-fee\n"
+        "covenant compares a contract's s0 against. Reported as the raw Q32 integer\n"
+        "the covenant uses (s = q32 / 2^32) and as a decimal.\n",
+        {
+            {"algo", RPCArg::Type::NUM, RPCArg::Optional::NO, "the algo index (0..NUM_ALGOS-1)"},
+            {"height", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "the block height to evaluate at (tip by default)"},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "", {
+                {RPCResult::Type::NUM, "algo", "the algo index"},
+                {RPCResult::Type::NUM, "height", "the block height the RSF was evaluated at"},
+                {RPCResult::Type::NUM, "q32", "the RSF as a Q32 fixed-point integer (0..2^32-1)"},
+                {RPCResult::Type::NUM, "rsf", "the RSF as a decimal in [0,1)"},
+            }
+        },
+        RPCExamples{
+            HelpExampleCli("getreservefeersf", "0")
+            + HelpExampleRpc("getreservefeersf", "0, 1000")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+            int algo_i = request.params[0].getInt<int>();
+            if (algo_i < 0 || algo_i >= NUM_ALGOS)
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "algo out of range");
+            int height = -1;
+            ChainstateManager& chainman = EnsureAnyChainman(request.context);
+            if (request.params.size() > 1)
+                height = request.params[1].getInt<int>();
+            LOCK(cs_main);
+            CBlockIndex* pindex = (height >= 0) ? chainman.ActiveChain()[height] : nullptr;
+            if (!pindex) pindex = chainman.ActiveChain().Tip();
+            uint32_t q32 = get_rsf(CHECK_NONFATAL(pindex), static_cast<Algo>(algo_i));
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("algo", algo_i);
+            result.pushKV("height", pindex->nHeight);
+            result.pushKV("q32", (int64_t)q32);
+            result.pushKV("rsf", (double)q32 / 4294967296.0);
+            return result;
+        },
+    };
+}
 
 static RPCHelpMan getblockfrompeer()
 {
@@ -980,6 +1025,10 @@ static RPCHelpMan getblockheader()
                         RPCResult::Type::OBJ, "", "",
                         {
                             {RPCResult::Type::STR_HEX, "hash", "the block hash (same as provided)"},
+                            {RPCResult::Type::STR_HEX, "powhash", "the block proof-of-work hash"},
+                            {RPCResult::Type::STR_HEX, "parentblockhash", /*optional=*/true, "auxpow only: the parent block hash"},
+                            {RPCResult::Type::STR_HEX, "parentblockpowhash", /*optional=*/true, "auxpow only: the parent block proof-of-work hash"},
+                            {RPCResult::Type::STR_HEX, "parentblockprevhash", /*optional=*/true, "auxpow only (non-cryptonight): the parent block's previous-block hash"},
                             {RPCResult::Type::NUM, "confirmations", "The number of confirmations, or -1 if the block is not on the main chain"},
                             {RPCResult::Type::NUM, "height", "The block height or index"},
                             {RPCResult::Type::NUM, "version", "The block version"},
@@ -1120,6 +1169,10 @@ static RPCHelpMan getblock()
                 RPCResult::Type::OBJ, "", "",
                 {
                     {RPCResult::Type::STR_HEX, "hash", "the block hash (same as provided)"},
+                    {RPCResult::Type::STR_HEX, "powhash", "the block proof-of-work hash"},
+                    {RPCResult::Type::STR_HEX, "parentblockhash", /*optional=*/true, "auxpow only: the parent block hash"},
+                    {RPCResult::Type::STR_HEX, "parentblockpowhash", /*optional=*/true, "auxpow only: the parent block proof-of-work hash"},
+                    {RPCResult::Type::STR_HEX, "parentblockprevhash", /*optional=*/true, "auxpow only (non-cryptonight): the parent block's previous-block hash"},
                     {RPCResult::Type::NUM, "confirmations", "The number of confirmations, or -1 if the block is not on the main chain"},
                     {RPCResult::Type::NUM, "size", "The block size"},
                     {RPCResult::Type::NUM, "strippedsize", "The block size excluding witness data"},
@@ -3326,6 +3379,7 @@ void RegisterBlockchainRPCCommands(CRPCTable& t)
 	{"blockchain", &getblockspacing},
 	{"blockchain", &getmoneysupply},
 	{"blockchain", &chaindynamics},
+        {"blockchain", &getreservefeersf},
         {"blockchain", &getdeploymentinfo},
         {"blockchain", &gettxout},
         {"blockchain", &gettxoutsetinfo},

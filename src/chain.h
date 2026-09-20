@@ -398,6 +398,14 @@ public:
      */
     bool IsSuperMajority(int minVersion, unsigned int nRequired, unsigned int nToCheck) const;
 
+    /** Like IsSuperMajority, but the threshold must be met independently WITHIN EACH
+     * actively-mined mPoW algo: among each algo's last nToCheck on-fork blocks, at
+     * least the nRequired/nToCheck fraction must be version >= minVersion. An algo with
+     * no blocks in range is skipped (no miners to signal), so no single algo can carry
+     * the vote alone; at least one algo must be active and pass. Used to gate the
+     * version-5 dynamic-algo fork. */
+    bool IsSuperMajorityPerAlgo(int minVersion, unsigned int nRequired, unsigned int nToCheck) const;
+
     bool OnFork() const;
 
     /* Get previous CBlockIndex pointer with the given algo */

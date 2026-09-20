@@ -103,9 +103,10 @@ public:
         consensus.MinBIP9WarningHeight = std::numeric_limits<int>::max(); // segwit activation height + miner confirmation window
         // OP_PUSHCODE: activate when 750 of the last 1000 blocks signal base version >= 5
         consensus.nPushCodeVersion = 5;
-        consensus.nPushCodeActivationThreshold = 750;
-        consensus.nPushCodeActivationWindow = 1000;
+        consensus.nPushCodeActivationThreshold = 94;  // per algo
+        consensus.nPushCodeActivationWindow = 125;    // last 125 blocks of each algo
         consensus.nVotingPeriod = 720 * 8; // 5760, ~8 days
+        consensus.nReserveFeeExpiry = 720 * 365 * 2; // 525600, ~2 years
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 24 * 60 * 60; // one day
         consensus.nPowTargetSpacing = 2 * 60; // two minutes
@@ -232,9 +233,10 @@ public:
         consensus.MinBIP9WarningHeight = std::numeric_limits<int>::max();
         // OP_PUSHCODE: same 750/1000 base-version-5 supermajority as mainnet
         consensus.nPushCodeVersion = 5;
-        consensus.nPushCodeActivationThreshold = 750;
-        consensus.nPushCodeActivationWindow = 1000;
+        consensus.nPushCodeActivationThreshold = 94;  // per algo
+        consensus.nPushCodeActivationWindow = 125;    // last 125 blocks of each algo
         consensus.nVotingPeriod = 720; // ~1 day (short, for testing activation)
+        consensus.nReserveFeeExpiry = 720 * 365 * 2; // 525600, ~2 years
         consensus.powLimit = uint256S("00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 24 * 60 * 60;
         consensus.nPowTargetSpacing = 2 * 60;
@@ -356,9 +358,10 @@ public:
         consensus.SegwitHeight = 1;
         // OP_PUSHCODE: 750/1000 base-version-5 supermajority, as mainnet
         consensus.nPushCodeVersion = 5;
-        consensus.nPushCodeActivationThreshold = 750;
-        consensus.nPushCodeActivationWindow = 1000;
+        consensus.nPushCodeActivationThreshold = 94;  // per algo
+        consensus.nPushCodeActivationWindow = 125;    // last 125 blocks of each algo
         consensus.nVotingPeriod = 720 * 8; // 5760
+        consensus.nReserveFeeExpiry = 720 * 365 * 2; // 525600, ~2 years
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
@@ -441,9 +444,10 @@ public:
         // quickly (75 of the last 100 blocks at base version >= 5, mirroring the
         // mainnet 75% ratio). Drive per-block signaling with -blockversion.
         consensus.nPushCodeVersion = 5;
-        consensus.nPushCodeActivationThreshold = 75;
-        consensus.nPushCodeActivationWindow = 100;
+        consensus.nPushCodeActivationThreshold = 9;   // per algo
+        consensus.nPushCodeActivationWindow = 12;     // last 12 blocks of each algo
         consensus.nVotingPeriod = 20; // tiny, for tests
+        consensus.nReserveFeeExpiry = 720 * 14; // 10080, ~2 weeks (short, for tests)
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 24 * 60 * 60; // one day
         consensus.nPowTargetSpacing = 2 * 60;

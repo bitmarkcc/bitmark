@@ -2453,9 +2453,12 @@ public:
 // chainid bits via GetBlockVersion (& 255).
 static bool DynamicForkActive(const CBlockIndex* pprev, const Consensus::Params& params)
 {
-    return pprev && pprev->IsSuperMajority(params.nPushCodeVersion,
-                                           params.nPushCodeActivationThreshold,
-                                           params.nPushCodeActivationWindow);
+    // The version-5 dynamic-algo fork requires the supermajority WITHIN EACH actively
+    // mined algo (nPushCodeActivationWindow is the per-algo window), so no single algo
+    // can activate it alone.
+    return pprev && pprev->IsSuperMajorityPerAlgo(params.nPushCodeVersion,
+                                                  params.nPushCodeActivationThreshold,
+                                                  params.nPushCodeActivationWindow);
 }
 
 static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const ChainstateManager& chainman)
@@ -2685,7 +2688,8 @@ static int64_t num_blocks_total = 0;
 // ---- Bitmark reserve-fee covenant (doc/dynamic-algo-mining.md sec 6) ----------------
 // The reserve fee lives entirely in the UTXO set; this is PURE VALIDATION (no side
 // state), so DisconnectBlock needs nothing -- reorg undo is the normal coins rollback.
-static const int64_t  RESERVE_TWO_YEARS = 720LL * 365 * 2; // ~2 years, in total blocks
+// The expiry (blocks after which an un-refunded reserve may be swept) is the per-chain
+// consensus param nReserveFeeExpiry.
 
 // Parse a reserve-spend scriptSig, which must be push-only: [selector, (sig, pubkey)?].
 // Small-int opcodes decode to a 1-byte value, OP_0 to empty. Caps at 3 pushes.
@@ -2710,9 +2714,11 @@ static bool ReserveScriptSigPushes(const CScript& scriptSig, std::vector<std::ve
 // covenant. `txfee` is the tx's fee (inputs - outputs; 0 is passed for a coinbase, which
 // has no reserve spends). Returns false with `state` set on any violation.
 static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& view,
-                              const CBlockIndex* pindex, CAmount txfee, TxValidationState& state)
+                              const CBlockIndex* pindex, CAmount txfee,
+                              const Consensus::Params& params, TxValidationState& state)
 {
     const int block_algo = (int)pindex->GetAlgo();
+    const int64_t reserve_expiry = params.nReserveFeeExpiry;
     CAmount required_fee = 0; // Σ released value that must become fee (refund + sweep)
     bool has_claim = false;
 
@@ -2764,7 +2770,7 @@ static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& vie
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-rollover");
             // fee == claimable is guaranteed by the 1-in/1-out shape (input V_rem, output rollover).
         } else if (selector == 1) { // REFUND: user-signed fee-redirect, not recovered, unexpired
-            if (age >= RESERVE_TWO_YEARS)
+            if (age >= reserve_expiry)
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-expired");
             const uint32_t s_t = get_rsf(pindex, (Algo)algo_i);
             if (s_t > s0)
@@ -2781,7 +2787,7 @@ static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& vie
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-badsig");
             required_fee += V_rem;
         } else if (selector == 2) { // SWEEP: keyless, any miner, expired
-            if (age < RESERVE_TWO_YEARS)
+            if (age < reserve_expiry)
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-sweep-tooearly");
             required_fee += V_rem;
         } else {
@@ -3067,6 +3073,9 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     CAmount nFees = 0;
     int nInputs = 0;
     int64_t nSigOpsCost = 0;
+    // Compute the dynamic-algo fork gate once per block (the per-algo supermajority
+    // walk is not cheap, so don't repeat it per transaction).
+    const bool dynamic_active = DynamicForkActive(pindex->pprev, m_chainman.GetConsensus());
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
@@ -3106,9 +3115,9 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             // Bitmark: enforce the reserve-fee covenant (spends + creation) once the
             // dynamic-algo soft fork is active. Pure validation (no side state), so
             // DisconnectBlock needs nothing. See doc/dynamic-algo-mining.md sec 6.
-            if (DynamicForkActive(pindex->pprev, m_chainman.GetConsensus())) {
+            if (dynamic_active) {
                 TxValidationState rf_state;
-                if (!CheckReserveFeeTx(tx, view, pindex, txfee, rf_state)) {
+                if (!CheckReserveFeeTx(tx, view, pindex, txfee, m_chainman.GetConsensus(), rf_state)) {
                     state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                   rf_state.GetRejectReason(), rf_state.GetDebugMessage());
                     return error("ConnectBlock(): reserve-fee covenant failed on %s: %s",

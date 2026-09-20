@@ -18,8 +18,9 @@ Constants used below:
 - `HASHRATE_CYCLE = 90` **algo-blocks** — one hashrate-measurement cycle for a
   single algo. `90 = 720 / NUM_ALGOS`, and `720` is also the coinbase-maturity depth,
   so a full hashrate cycle is as deep as a matured coinbase.
-- `YEAR_BLOCKS = 720 * 365`; `TWO_YEARS = 720 * 365 * 2 = 525600` (also
-  `MAX_PUSHCODE_LENGTH`).
+- `YEAR_BLOCKS = 720 * 365`. `TWO_YEARS` (the reserve-fee expiry) is the per-chain
+  consensus param `nReserveFeeExpiry` = `720*365*2 = 525600` on main/test/signet
+  (= `MAX_PUSHCODE_LENGTH`), and a small value on regtest (`720*14`) for testability.
 - New opcodes (all `OP_NOPx`, i.e. no-ops to old nodes → soft-fork-safe):
   `OP_PUSHCODE = OP_NOP4 = 0xb3`, `OP_VOTE = OP_NOP5 = 0xb4`,
   `OP_SOLUTION = OP_NOP6 = 0xb5`, `OP_RESERVEFEE = OP_NOP7 = 0xb6`.

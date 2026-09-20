@@ -181,19 +181,21 @@ bool GetBlockVariant(const int nVersion)
 }
 
 bool CBlockIndex::OnFork() const
-{ //todo: Can this->pprev be NULL?
-    if (this->pprev->IsSuperMajority(4, 75, 100))
-        return true;
+{
+    // Regtest: the Multi-PoW fork is active from the start (matches the miner's
+    // onMultiPoWFork), so per-algo logic works in tests without reaching a huge height.
+    if (Params().IsRegTest())
+	return true;
+    else if (!Params().IsTestChain() && this->nHeight >= 450947)
+	return true;
+    else if (Params().IsTestChain() && this->pprev && this->pprev->IsSuperMajority(4, 75, 100))
+	return true;
 
     return false;
 }
 
 bool CBlockIndex::IsSuperMajority(int minVersion, unsigned int nRequired, unsigned int nToCheck) const
 {
-    if (Params().IsRegTest()) {
-        // return true; needed?
-    }
-
     const CBlockIndex* pstart = this;
     unsigned int nFound = 0;
     for (unsigned int i = 0; i < nToCheck && nFound < nRequired && pstart != NULL; i++) {
@@ -207,6 +209,29 @@ bool CBlockIndex::IsSuperMajority(int minVersion, unsigned int nRequired, unsign
     }
 
     return false;
+}
+
+bool CBlockIndex::IsSuperMajorityPerAlgo(int minVersion, unsigned int nRequired, unsigned int nToCheck) const
+{
+    // Version-5 (dynamic-algo) fork gate: for EACH mPoW algo independently, of that
+    // algo's last nToCheck (125) blocks at least nRequired (94) must be version >=
+    // minVersion (5). EVERY algo must pass -- an algo that falls short, or that isn't
+    // being mined at all, keeps the fork off, so no subset of algos can activate it.
+    //
+    // GetPrevAlgoBlockIndex walks that algo's chain and stops at the Multi-PoW fork
+    // boundary (it only returns on-fork blocks), so we look back exactly as far as
+    // needed -- and no further than the fork -- for each algo.
+    if (!pprev) return false;
+    for (int a = 0; a < NUM_ALGOS; a++) {
+        unsigned int found = 0;
+        const CBlockIndex* p = CBlockIndex::GetPrevAlgoBlockIndex(this, (Algo)a);
+        for (unsigned int seen = 0; p != nullptr && seen < nToCheck; ++seen) {
+            if (GetBlockVersion(p->nVersion) >= minVersion) ++found;
+            p = CBlockIndex::GetPrevAlgoBlockIndex(p, (Algo)a);
+        }
+        if (found < nRequired) return false; // not 94-of-125 for this algo (or not mined)
+    }
+    return true;
 }
 
 BoostBigNum BoostBigNumFromCompact(unsigned int nCompact) {

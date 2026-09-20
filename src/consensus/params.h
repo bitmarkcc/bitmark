@@ -110,10 +110,12 @@ struct Params {
     /** OP_PUSHCODE soft fork: miner-signaled activation with no hardcoded
      * height. Bitmark cannot use BIP9 versionbits because nVersion's upper bits
      * carry the PoW algo / auxpow / variant / chainid fields, so activation is
-     * by base-version supermajority instead (CBlockIndex::IsSuperMajority masks
-     * to the low 8 bits via GetBlockVersion). Active once at least
-     * nPushCodeActivationThreshold of the previous nPushCodeActivationWindow
-     * blocks have base version >= nPushCodeVersion. */
+     * by base-version supermajority instead (base version = low 8 bits via
+     * GetBlockVersion). PER ALGO: active only once, for EVERY mPoW algo, at least
+     * nPushCodeActivationThreshold of that algo's last nPushCodeActivationWindow
+     * blocks have base version >= nPushCodeVersion (see
+     * CBlockIndex::IsSuperMajorityPerAlgo). Requiring every algo means no subset of
+     * algos can activate the fork alone. Mainnet: 94 of each algo's last 125. */
     int nPushCodeVersion;
     unsigned int nPushCodeActivationThreshold;
     unsigned int nPushCodeActivationWindow;
@@ -121,6 +123,10 @@ struct Params {
      * span over which fee/stake votes for a slot are tallied). Per-chain so
      * testnet can use a short period. Mainnet: 720*8 = 5760 (~8 days). */
     int nVotingPeriod;
+    /** Reserve-fee expiry: a reserve output that is never refunded within this many
+     * blocks of its (current) confirmation may be swept to any miner. Per-chain so
+     * regtest can use a tiny value. Mainnet: 720*365*2 = 525600 (~2 years). */
+    int nReserveFeeExpiry;
     BIP9Deployment vDeployments[MAX_VERSION_BITS_DEPLOYMENTS];
     /** Proof of work parameters */
     uint256 powLimit;

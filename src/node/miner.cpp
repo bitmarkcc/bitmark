@@ -147,6 +147,11 @@ void BlockAssembler::resetBlock()
 	}
 	onMultiPoWFork = nHeight >= 376;
     }
+    // Regtest: the Multi-PoW fork is active from the start so that setminingalgo can
+    // mine blocks of any algo (needed to activate the per-algo version-5 fork in tests).
+    if (chainparams.GetChainType() == ChainType::REGTEST) {
+	onMultiPoWFork = true;
+    }
 
     if (onMultiPoWFork)
 	pblock->SetAlgo(algo);

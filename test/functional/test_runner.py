@@ -324,6 +324,7 @@ BASE_SCRIPTS = [
     'feature_cltv.py',
     'feature_pushcode.py',
     'rpc_pushcode.py',
+    'feature_reservefee.py',
     'rpc_uptime.py',
     'feature_discover.py',
     'wallet_resendwallettransactions.py --legacy-wallet',

@@ -331,6 +331,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "getmoneysupply", 1, "height"},
     { "chaindynamics", 0, "height"},
     { "chaindynamics", 1, "giga"},
+    { "getreservefeersf", 0, "algo"},
+    { "getreservefeersf", 1, "height"},
     { "mark", 0, "marking"},
     { "getauxblock", 2, "algo"},
 };
