@@ -42,6 +42,7 @@
 #include <primitives/transaction.h>
 #include <random.h>
 #include <reverse_iterator.h>
+#include <script/interpreter.h>
 #include <script/pushcode.h>
 #include <script/script.h>
 #include <script/sigcache.h>
@@ -1838,20 +1839,6 @@ uint32_t get_rsf(const CBlockIndex* pindex, Algo algo)
     return (uint32_t)q.convert_to<uint64_t>();
 }
 
-// The reserve-fee RSF the covenant compares s0 against: the per-algo RSF evaluated
-// HASHRATE_CYCLE (nSSF) algo-blocks IN ARREARS from pindex, so the measurement window
-// is buried ~one cycle deep and cannot be wobbled by recent blocks or a shallow reorg
-// (doc/dynamic-algo-mining.md sec 5.1). Returns Q32; 0 on insufficient history.
-uint32_t GetReserveRSF(const CBlockIndex* pindex, Algo algo)
-{
-    const CBlockIndex* p = pindex;
-    for (int i = 0; i < nSSF; i++) { // nSSF = HASHRATE_CYCLE = 90 algo-blocks
-        p = CBlockIndex::GetPrevAlgoBlockIndex(p, algo);
-        if (!p) return 0;
-    }
-    return get_rsf(p, algo);
-}
-
 /* Basic method for compatibility purposes. Doesn't give the post fork subsidy. */
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& params)
 {
@@ -2695,6 +2682,136 @@ static SteadyClock::duration time_index{};
 static SteadyClock::duration time_total{};
 static int64_t num_blocks_total = 0;
 
+// ---- Bitmark reserve-fee covenant (doc/dynamic-algo-mining.md sec 6) ----------------
+// The reserve fee lives entirely in the UTXO set; this is PURE VALIDATION (no side
+// state), so DisconnectBlock needs nothing -- reorg undo is the normal coins rollback.
+static const int64_t  RESERVE_TWO_YEARS = 720LL * 365 * 2; // ~2 years, in total blocks
+
+// Parse a reserve-spend scriptSig, which must be push-only: [selector, (sig, pubkey)?].
+// Small-int opcodes decode to a 1-byte value, OP_0 to empty. Caps at 3 pushes.
+static bool ReserveScriptSigPushes(const CScript& scriptSig, std::vector<std::vector<unsigned char>>& pushes)
+{
+    pushes.clear();
+    CScript::const_iterator it = scriptSig.begin();
+    opcodetype op;
+    std::vector<unsigned char> vch;
+    while (it != scriptSig.end()) {
+        if (!scriptSig.GetOp(it, op, vch)) return false;
+        if (!vch.empty()) pushes.push_back(vch);
+        else if (op == OP_0) pushes.push_back(std::vector<unsigned char>());
+        else if (op >= OP_1 && op <= OP_16) pushes.push_back(std::vector<unsigned char>(1, (unsigned char)(op - OP_1 + 1)));
+        else return false; // not a plain data/small-int push
+        if (pushes.size() > 3) return false;
+    }
+    return true;
+}
+
+// Validate every OP_RESERVEFEE spend and creation in one transaction against the
+// covenant. `txfee` is the tx's fee (inputs - outputs; 0 is passed for a coinbase, which
+// has no reserve spends). Returns false with `state` set on any violation.
+static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& view,
+                              const CBlockIndex* pindex, CAmount txfee, TxValidationState& state)
+{
+    const int block_algo = (int)pindex->GetAlgo();
+    CAmount required_fee = 0; // Σ released value that must become fee (refund + sweep)
+    bool has_claim = false;
+
+    for (unsigned int j = 0; j < tx.vin.size(); j++) {
+        const Coin& coin = view.AccessCoin(tx.vin[j].prevout);
+        std::vector<std::vector<unsigned char>> sol;
+        if (Solver(coin.out.scriptPubKey, sol) != TxoutType::RESERVEFEE) continue;
+
+        const int algo_i = sol[0].empty() ? 0 : sol[0][0];
+        const uint32_t s0_q16 = (uint32_t)sol[1][0] | ((uint32_t)sol[1][1] << 8);
+        const uint32_t s0 = s0_q16 << 16; // Q16 -> Q32
+        const std::vector<unsigned char>& refund_pkh = sol[2];
+        const CAmount V_rem = coin.out.nValue;
+        const int64_t age = (int64_t)pindex->nHeight - coin.nHeight;
+
+        std::vector<std::vector<unsigned char>> pushes;
+        if (!ReserveScriptSigPushes(tx.vin[j].scriptSig, pushes) || pushes.empty())
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-bad-scriptsig");
+        const int selector = pushes[0].empty() ? 0 : pushes[0][0];
+
+        if (selector == 0) { // CLAIM: dedicated 1-in/1-out tx, algo-matched, mature, recovering
+            has_claim = true;
+            if (tx.vin.size() != 1 || tx.vout.size() != 1)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-shape");
+            if (algo_i != block_algo)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-algo");
+            // maturity: >= HASHRATE_CYCLE (nSSF) algo-`algo` blocks since coin_height
+            const CBlockIndex* p = pindex;
+            int matured = 0;
+            for (; matured < nSSF; matured++) {
+                p = CBlockIndex::GetPrevAlgoBlockIndex(p, (Algo)algo_i);
+                if (!p || p->nHeight <= coin.nHeight) break;
+            }
+            if (matured < nSSF)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-immature");
+            const uint32_t s_t = get_rsf(pindex, (Algo)algo_i); // just-ended period
+            if (!(s_t > s0))
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-notrecovered");
+            // claimable = floor(V_rem * (s_t - s0) / (2^32 - s0)); < V_rem since s_t < 2^32
+            BoostBigNum num = BoostBigNum(V_rem) * BoostBigNum((uint32_t)(s_t - s0));
+            BoostBigNum denom = (BoostBigNum(1) << 32) - BoostBigNum(s0);
+            CAmount claimable = (CAmount)(num / denom).convert_to<uint64_t>();
+            if (claimable <= 0)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-nothing");
+            if (claimable > V_rem) claimable = V_rem;
+            const CAmount rollover = V_rem - claimable;
+            // exactly one rollover output: same script, value = V_rem - claimable (> 0)
+            if (tx.vout[0].nValue != rollover || tx.vout[0].scriptPubKey != coin.out.scriptPubKey)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-rollover");
+            // fee == claimable is guaranteed by the 1-in/1-out shape (input V_rem, output rollover).
+        } else if (selector == 1) { // REFUND: user-signed fee-redirect, not recovered, unexpired
+            if (age >= RESERVE_TWO_YEARS)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-expired");
+            const uint32_t s_t = get_rsf(pindex, (Algo)algo_i);
+            if (s_t > s0)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-recovered");
+            if (pushes.size() != 3)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-nosig");
+            const std::vector<unsigned char>& sig = pushes[1];
+            const std::vector<unsigned char>& pubkey = pushes[2];
+            const uint160 pkh = Hash160(pubkey);
+            if (refund_pkh.size() != 20 || !std::equal(pkh.begin(), pkh.end(), refund_pkh.begin()))
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-pkh");
+            TransactionSignatureChecker checker(&tx, j, V_rem, MissingDataBehavior::FAIL);
+            if (!checker.CheckECDSASignature(sig, pubkey, coin.out.scriptPubKey, SigVersion::BASE))
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-badsig");
+            required_fee += V_rem;
+        } else if (selector == 2) { // SWEEP: keyless, any miner, expired
+            if (age < RESERVE_TWO_YEARS)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-sweep-tooearly");
+            required_fee += V_rem;
+        } else {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-bad-selector");
+        }
+    }
+
+    // The released value of refund/sweep inputs must actually be fee (fungibility: a
+    // tx fee this large means the spender paid it to the miner). A claim tx is the
+    // dedicated 1-in/1-out shape, so its fee == claimable by construction (and it can
+    // carry no refund/sweep inputs).
+    if (has_claim && required_fee != 0)
+        return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-shape");
+    if (required_fee > 0 && txfee < required_fee)
+        return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-fee-too-low");
+
+    // Creation: a new reserve output (incl. a claim's rollover) needs a valid algo.
+    // s0 needs no ceiling -- the 2-byte Q16 encoding already keeps s0 < 1, so
+    // denom = 2^32 - s0 stays >= 0x10000 (no ill-conditioning); a high s0 just makes a
+    // "demanding" contract that only pays near the peak, which is the user's choice.
+    for (const CTxOut& out : tx.vout) {
+        std::vector<std::vector<unsigned char>> sol;
+        if (Solver(out.scriptPubKey, sol) != TxoutType::RESERVEFEE) continue;
+        const int algo_i = sol[0].empty() ? 0 : sol[0][0];
+        if (algo_i < 0 || algo_i >= NUM_ALGOS)
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-bad-algo");
+    }
+    return true;
+}
+
 /** Apply the effects of this block (with given index) on the UTXO set represented by coins.
  *  Validity checks that depend on the UTXO set are also done; ConnectBlock()
  *  can fail if those validity checks fail (among other reasons). */
@@ -2984,6 +3101,19 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             if (!SequenceLocks(tx, nLockTimeFlags, prevheights, *pindex)) {
                 LogPrintf("ERROR: %s: contains a non-BIP68-final transaction\n", __func__);
                 return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-txns-nonfinal");
+            }
+
+            // Bitmark: enforce the reserve-fee covenant (spends + creation) once the
+            // dynamic-algo soft fork is active. Pure validation (no side state), so
+            // DisconnectBlock needs nothing. See doc/dynamic-algo-mining.md sec 6.
+            if (DynamicForkActive(pindex->pprev, m_chainman.GetConsensus())) {
+                TxValidationState rf_state;
+                if (!CheckReserveFeeTx(tx, view, pindex, txfee, rf_state)) {
+                    state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
+                                  rf_state.GetRejectReason(), rf_state.GetDebugMessage());
+                    return error("ConnectBlock(): reserve-fee covenant failed on %s: %s",
+                                 tx.GetHash().ToString(), state.ToString());
+                }
             }
         }
 

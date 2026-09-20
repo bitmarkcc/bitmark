@@ -98,12 +98,12 @@ CAmount GetBlockSubsidy(const CBlockIndex* pindex, const Consensus::Params& cons
 bool update_ssf(int nVersion);
 
 //! Bitmark reserve-fee RSF (Reward Scaling Factor), per algo, as a Q32 fixed-point
-//! uint32 (s = value / 2^32, in [0,1)). get_rsf gives s^algo as of pindex; GetReserveRSF
-//! gives it HASHRATE_CYCLE (nSSF) algo-blocks IN ARREARS from pindex -- the value the
-//! reserve-fee covenant compares a contract's stored s0 threshold against. Both return 0
-//! on insufficient history. See doc/dynamic-algo-mining.md sec 5-6.
+//! uint32 (s = value / 2^32, in [0,1)). get_rsf(pindex, algo) is s^algo over the last
+//! HASHRATE_CYCLE (nSSF) algo-blocks BEFORE pindex -- the just-ended period the reserve
+//! covenant compares a contract's stored s0 against (the claim block is excluded, so its
+//! miner can't nudge it). Returns 0 on insufficient history. See
+//! doc/dynamic-algo-mining.md sec 5-6.
 uint32_t get_rsf(const CBlockIndex* pindex, Algo algo);
-uint32_t GetReserveRSF(const CBlockIndex* pindex, Algo algo);
 
 bool FatalError(kernel::Notifications& notifications, BlockValidationState& state, const std::string& strMessage, const bilingual_str& userMessage = {});
 
