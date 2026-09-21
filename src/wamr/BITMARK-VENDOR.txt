@@ -1,0 +1,5 @@
+WAMR vendored for the bitmark dynamic-algo AOT runtime.
+Upstream: https://github.com/bytecodealliance/wasm-micro-runtime
+Pinned commit: b70d708d46be750bfcf008218b42c7b98c49368a
+Excluded from upstream: core/iwasm/compilation (LLVM AOT compiler, offline wamrc only),
+  core/iwasm/fast-jit (asmjit), core/deps, and all non-core dirs.

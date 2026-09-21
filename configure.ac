@@ -1923,6 +1923,23 @@ fi
 ac_configure_args="${ac_configure_args} --disable-shared --with-pic --enable-benchmark=no --enable-module-recovery --disable-module-ecdh"
 AC_CONFIG_SUBDIRS([src/secp256k1])
 
+dnl The vendored WAMR AOT runtime (src/wamr, for dynamic-algo execution) builds via
+dnl its own CMake, so cmake is required. Map the host CPU to WAMR's target name; an
+dnl empty value lets WAMR's CMake auto-detect. See doc/dynamic-algo-mining.md sec 8.
+AC_PATH_PROG([CMAKE], [cmake])
+if test "x$CMAKE" = "x"; then
+  AC_MSG_ERROR([cmake is required to build the vendored WAMR runtime in src/wamr])
+fi
+AC_SUBST([CMAKE])
+case $host_cpu in
+  x86_64|amd64)  WAMR_BUILD_TARGET=X86_64 ;;
+  i?86)          WAMR_BUILD_TARGET=X86_32 ;;
+  aarch64|arm64) WAMR_BUILD_TARGET=AARCH64 ;;
+  arm*)          WAMR_BUILD_TARGET=ARM ;;
+  *)             WAMR_BUILD_TARGET= ;;
+esac
+AC_SUBST([WAMR_BUILD_TARGET])
+
 AC_OUTPUT
 
 dnl Replace the BUILDDIR path with the correct Windows path if compiling on Native Windows

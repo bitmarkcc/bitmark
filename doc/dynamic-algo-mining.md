@@ -709,6 +709,49 @@ These target flags are consensus parameters.
   validation-set selection must itself be grinding-resistant; the prev-block-hash half
   is not grindable without redoing that block's PoW.
 
+### 8.8 Bounding AOT compilation (deterministic, without a governance dependency)
+
+`wamrc` compile time/memory can blow up on adversarial `.wasm` (LLVM passes are
+superlinear in some per-function metrics, and for arbitrary input the cost is not
+statically predictable). Compilation is rare -- once per algo activation (~8 algos,
+with a long governance lead time before the algo is active) -- but it must be bounded
+**without relying on social vetting as the security root** (that would undercut
+trustlessness). Governance and the activation lead time are defense-in-depth, not the
+guarantee.
+
+- **Per-function structural caps (consensus, static):** cap the *per-function* metrics
+  that drive superlinear passes -- instruction count, basic-block count, operand/SSA +
+  phi count, loop-nesting depth, locals -- plus module-level function/table/global/byte
+  caps. Bounding each function's compile makes total compile ~linear in module size.
+  The deterministic consensus rule is simply "the `.wasm` passes the caps," computed
+  identically by every node.
+- **Pinned bounded opt pipeline:** fix `wamrc`'s opt level / pass set (not `-O3`) so
+  worst-case per-function cost is bounded in the capped metrics. A consensus parameter,
+  pinned together with the exact WAMR/LLVM version (commit `b70d708`) -- a compiler
+  upgrade could change complexity, so the version is part of the safety argument.
+- **Adversarial fuzzing of `wamrc`:** fuzz modules sitting at the caps for compile-time
+  or memory blow-up; any pass superlinear in an uncapped metric => add that metric.
+  Turns "we hope it's bounded" into evidence.
+- **No split risk:** given the caps bound the envelope, adequate hardware always
+  compiles an accepted module; a node that cannot is below the hardware floor (§8.4) --
+  a local provisioning fact, not a consensus disagreement. Compile *time* need not be
+  deterministic; only the cap pass/fail and the execution *result* are consensus.
+- **Honest residual:** LLVM has no formal per-pass complexity guarantee, so this is
+  empirical hardening (caps + pinned pipeline + fuzzing + pinned compiler version), not
+  a proof -- the same standard by which the chain trusts its signature-verification and
+  script-parsing code.
+- **Fallback lever (evaluated 2026-09-21 -- NOT currently viable):** WAMR **Fast JIT**
+  (pure C, bounded ~linear compile) was the hoped-for stronger compile-bound story, but
+  measured on the trunk verifier it (a) does not support SIMD (`SIMD + FAST_JIT` is an
+  unsupported build combo) and (b) crashes with "out of bounds memory access" ~26 s in,
+  during the model build's large `memory.grow`, at the same point regardless of
+  `--stack-size` -- a Fast-JIT codegen/robustness limitation (AOT and both interpreters
+  run the same module correctly). So Fast JIT is not a drop-in fallback today; the
+  compile bound must be solved on the **LLVM-AOT path** (per-function caps + pinned
+  pipeline + fuzzing above). Reviving it would need upstream Fast-JIT fixes + SIMD, or
+  a different bounded compiler (Cranelift/wasmtime is the Rust analog other wasm chains
+  use for exactly this bounded-compile reason).
+
 ---
 
 ## 9. Open items / parameters
@@ -735,6 +778,11 @@ These target flags are consensus parameters.
 - WAMR vendoring: pinned to commit `b70d708` (see §8.1); replace `src/wasm3/`, rewrite
   the execution bridge (`wasmexec.{h,cpp}`) against WAMR's AOT API, and add the offline
   `wamrc` AOT-compile step with the pinned per-arch target flags.
+- **Structural caps** (§8.8): the exact per-function + module-level metrics and their
+  values (consensus); the pinned `wamrc` opt pipeline; a `wamrc` fuzzing harness to
+  validate the compile bound.
+- **Fast JIT fallback** (§8.8): benchmark WAMR Fast JIT runtime speed on the LLM
+  verifier to quantify the AOT-vs-bounded-compile tradeoff.
 - Data availability of LLM validation examples: inline merkle-branch proofs carried in
   the `OP_SOLUTION` stream (fold the proof format in — see the voting doc).
 - Reserve flow rate `k` (=1 for now; the future `<ctype>` field would let contracts pick

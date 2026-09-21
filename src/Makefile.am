@@ -24,7 +24,7 @@ check_PROGRAMS =
 TESTS =
 BENCHMARKS =
 
-BITCOIN_INCLUDES=-I$(builddir) -I$(srcdir)/$(MINISKETCH_INCLUDE_DIR_INT) -I$(srcdir)/secp256k1/include -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT)
+BITCOIN_INCLUDES=-I$(builddir) -I$(srcdir)/$(MINISKETCH_INCLUDE_DIR_INT) -I$(srcdir)/secp256k1/include -I$(srcdir)/$(UNIVALUE_INCLUDE_DIR_INT) -I$(srcdir)/wamr/core/iwasm/include
 
 LIBBITCOIN_NODE=libbitcoin_node.a
 LIBBITCOIN_COMMON=libbitcoin_common.a
@@ -34,6 +34,9 @@ LIBBITCOIN_UTIL=libbitcoin_util.a
 LIBBITCOIN_CRYPTO_BASE=crypto/libbitcoin_crypto_base.la
 LIBBITCOINQT=qt/libbitcoinqt.a
 LIBSECP256K1=secp256k1/libsecp256k1.la
+# WAMR AOT runtime (dynamic-algo execution), built via its own CMake into a static
+# lib. See doc/dynamic-algo-mining.md sec 8; pinned to WAMR commit b70d708.
+LIBWAMR=wamr/build/libvmlib.a
 
 if ENABLE_ZMQ
 LIBBITCOIN_ZMQ=libbitcoin_zmq.a
@@ -70,6 +73,15 @@ noinst_LTLIBRARIES += $(LIBBITCOIN_CRYPTO)
 
 $(LIBSECP256K1): $(wildcard secp256k1/src/*.h) $(wildcard secp256k1/src/*.c) $(wildcard secp256k1/include/*)
 	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C $(@D) $(@F)
+
+# Build the vendored WAMR AOT runtime out-of-tree via its own CMake. WAMR_BUILD_TARGET
+# comes from the host CPU (configure); an empty value makes wamr/CMakeLists.txt
+# auto-detect. Uses the build's own C compiler for a consistent (cross-)toolchain.
+$(LIBWAMR): $(srcdir)/wamr/CMakeLists.txt
+	$(AM_V_at)$(MKDIR_P) wamr/build
+	$(AM_V_at)cd wamr/build && $(CMAKE) -DCMAKE_BUILD_TYPE=Release \
+	  -DCMAKE_C_COMPILER="$(CC)" -DWAMR_BUILD_TARGET="$(WAMR_BUILD_TARGET)" \
+	  "$(abs_srcdir)/wamr" >/dev/null && $(MAKE) $(AM_MAKEFLAGS)
 
 # Make is not made aware of per-object dependencies to avoid limiting building parallelization
 # But to build the less dependent modules first, we manually select their order here:
@@ -854,7 +866,8 @@ bitcoin_bin_ldadd = \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBLEVELDB) \
   $(LIBMEMENV) \
-  $(LIBSECP256K1)
+  $(LIBSECP256K1) \
+  $(LIBWAMR)
 
 bitcoin_bin_ldadd += $(BDB_LIBS) $(MINIUPNPC_LIBS) $(NATPMP_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE_LIBS)
 
@@ -1092,6 +1105,10 @@ CTAES_DIST += crypto/ctaes/README.md
 CTAES_DIST += crypto/ctaes/test.c
 
 CLEANFILES = $(EXTRA_LIBRARIES)
+
+# WAMR is built out-of-tree by CMake ($(LIBWAMR)); drop its build dir on clean.
+clean-local:
+	-rm -rf wamr/build
 
 CLEANFILES += *.gcda *.gcno
 CLEANFILES += compat/*.gcda compat/*.gcno
