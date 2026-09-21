@@ -597,17 +597,114 @@ index rebuilds from headers).
 
 ---
 
-## 8. Execution runtime (recap; full detail in the voting doc)
+## 8. Execution runtime
 
-- Runtime: **wasm3** (pure C, no Rust), embedded in bitmarkd. Deterministic for
-  integer algos; f32 is IEEE-deterministic.
-- Memory bound: a linear-memory page cap enforced by the runtime.
-- CPU bound: **gas by bytecode instrumentation** (a fixed cost table compiled into the
-  module), not a runtime fuel counter, so the gas count is identical on every node.
-  STILL UNCLEAR / may change — shared open item with the voting doc.
+### 8.1 Engine selection (evaluated 2026-09-21)
+
+Requirement: run the LLM proof-of-useful-work verifier fast enough for the 2-minute
+block interval (`nPowTargetSpacing = 120 s`), **deterministically**, on a multi-arch
+node (x86-64, x86-32, ARM64, ARMv7, possibly more). Measured the settled trunk
+verifier (C=768, L=12, NH=12, E=64, ~496M params) full eval on this host:
+
+| engine / mode | model build | forward | total | runtime lang |
+|---|---|---|---|---|
+| wasm3 (interpreter) | 167.7 s | 65.6 s | 233 s | C, no SIMD |
+| WAMR fast-interpreter | 220.0 s | 68.2 s | 288 s | C, no SIMD |
+| wasmtime (JIT, SIMD) | 6.08 s | 1.72 s | 7.8 s | Rust |
+| **WAMR AOT (SIMD)** | **2.24 s** | **1.56 s** | **3.8 s** | **C runtime** |
+
+- **Decision: WAMR AOT** (wasm-micro-runtime, Bytecode Alliance; **pinned to commit
+  `b70d708`**). The latest release tag `WAMR-2.4.5` does NOT build here: `wamrc` fails
+  against LLVM 21 (`LLVMOrcThreadSafeContextGetContext` removed) and its SIMD `iwasm`
+  fetches `simde` over the network at cmake time. `b70d708` (chronologically newer
+  than the 2.4.5 tag; version.h still says 2.4.3) carries the LLVM-21 fix and builds
+  cleanly against system LLVM 21 with no network fetch, so we pin the commit hash
+  until a release supports LLVM 21. It is the only
+  option that hits the ~1 s-class forward target while keeping the node **pure C**:
+  the LLVM compiler lives only in the offline `wamrc` tool, not in bitmarkd. An
+  approved algo's `.wasm` is AOT-compiled to `.aot` once (at governance/activation);
+  the small C runtime just loads and runs it.
+- **wasm3 is rejected** for the LLM verifier: ~60x slower than native and no SIMD
+  (cannot even compile the v128 module -- "compiling function underran the stack").
+  A single verify is ~4 min, ~2x the block interval, before 8-way parallelism.
+- All four engines produced the **bit-identical** loss `7.835143` / `0x40fab97e`.
+
+### 8.2 Determinism (verified 2026-09-21)
+
+- IEEE-754 f32 add/sub/mul/div/sqrt are correctly rounded, hence bit-identical on
+  every compliant target.
+- `wamrc`/LLVM does **not** contract `mul+add` into FMA: `+fma` and `-fma` builds
+  give identical output. **Strict IEEE (no fast-math, no contraction) is a required
+  `wamrc` invariant** and is the default.
+- Output is invariant to optimization level (`-O0` == `-O3`) and to a fixed target.
+- Transcendentals (`expf`/`tanhf` in gelu/softmax) are compiled **into** the
+  freestanding `.wasm` from wasi-libc -- not called from host libm -- so identical
+  bytecode yields identical results on every architecture. (Reinforces the
+  freestanding, import-free module requirement.)
+
+### 8.3 AOT target = a fixed per-arch baseline (CONSENSUS parameter)
+
+Compiling with `-mcpu=native` is forbidden: a node lacking a feature **crashes**
+(observed: an `+avx2` `.aot` gets SIGILL on a non-AVX2 host) or could diverge. Each
+node compiles the canonical `.wasm` with the **same pinned, conservative per-arch
+target + strict IEEE**, so results are bit-identical:
+
+- **x86-64:** `x86-64-v2` (SSE4.2). Verified bit-identical to scalar and to the
+  interpreters.
+- **x86-32 (i686):** MUST use SSE2 float math (`-mfpmath=sse`), never x87 -- x87's
+  80-bit extended precision would diverge from every other target. Require SSE2
+  (universal on post-2004 x86).
+- **ARM64 (aarch64):** `armv8-a` + NEON/ASIMD -- IEEE-754 incl. denormals; matches x86.
+- **ARMv7: UNRESOLVED HAZARD.** ARMv7 NEON float flushes denormals to zero (not fully
+  IEEE), so v128 float lowered to raw NEON could diverge on denormal inputs. Scalar
+  VFP is IEEE. Options: (a) ARMv7 nodes run the **scalar** (non-SIMD) module, (b) the
+  engine lowers v128 float to IEEE-correct code (scalar VFP, or NEON with FPCR
+  denormals enabled if the core supports it). **Needs verification on real ARMv7
+  hardware before ARMv7 can be a dynamic-algo validator.**
+
+These target flags are consensus parameters.
+
+### 8.4 Toolchain & node-hardware reality
+
+- AOT needs LLVM per build-host (via `wamrc`), either compiled locally at activation
+  or distributed as per-arch `.aot`. LLVM on small ARM devices is heavy.
+- The LLM verifier needs ~2 GiB RAM + ~seconds of native compute per verify, so
+  small ARMv7 / low-RAM devices likely **cannot** be dynamic-algo validators; they
+  may run pruned/SPV or validate only the primitive PoW. Governance/scaling item.
+
+### 8.5 Memory & stack bounds
+
+- **2 GiB linear-memory cap per verifier instance** (settled in `~/git/llm.c`
+  `doc/btm-proof-of-useful-work.md`: 8-way parallel verification fits 16 GB commodity
+  RAM; 2 GiB sits under wasm32 dlmalloc's ~2 GiB single-allocation ceiling; the E=64
+  trunk is 1.76 GB of params). A consensus constant; enforce via WAMR's max-memory
+  setting (the analog of wasm3's `d_m3MaxLinearMemoryPages = 32768`).
+- The wasm3 interpreter operand-stack constant (`WASM_STACK_BYTES = 1 MiB`) is moot
+  under AOT (native call stack + WAMR aux stack); WAMR's aux-stack size becomes the
+  analogous fixed bound.
+
+### 8.6 CPU bound (gas)
+
+- Under AOT there is no interpreter loop to patch, so gas metering is **wasm
+  instrumentation before AOT-compile**: inject a per-basic-block weighted gas
+  decrement + underflow trap into the `.wasm`, then `wamrc` compiles the checks to
+  native -- so metering runs at native speed (the earlier "instrumentation is slow"
+  objection was interpreter-specific and dissolves under AOT).
+- Gas is a deterministic weighted op count; over-budget traps => the solution is
+  invalid, identically on every node. Budget = a top-down ceiling derived from block
+  time (a consensus constant), not fitted to any one algo.
+- No general upper bound on arbitrary-algo gas is computable (halting problem); the
+  gas cap itself is the enforced bound. Data-oblivious algos (NN forward passes have
+  input-independent control flow) have ~constant gas across inputs, so one
+  measurement bounds them -- **data-obliviousness is the property checked at
+  OP_PUSHCODE approval**, not exhaustive input measurement.
+
+### 8.7 ABI (unchanged)
+
 - The node marshals inputs above `__heap_base` and calls `verify()` with the offsets;
-  reads the i32 result and the 8-byte `out_ab` (two Q32 `u32`, §3). `host.c` is the
-  working prototype. No float crosses the ABI, so the node's money path is integer-only.
+  reads the i32 result and the 8-byte `out_ab` (two Q32 `u32`, §3). No float crosses
+  the ABI, so the money path is integer-only. `host.c` was the wasm3-era prototype;
+  the WAMR bridge replaces it.
 - Grinding resistance: the seed's payout half is miner-controlled, so an LLM algo's
   validation-set selection must itself be grinding-resistant; the prev-block-hash half
   is not grindable without redoing that block's PoW.
@@ -622,10 +719,22 @@ index rebuilds from headers).
   template policy that injects it + the `dynamic` GBT field (§6bis).
 - Relay of solution txs: keep out-of-band, or add `OP_SOLUTION` relay standardness
   (multiple OP_RETURNs, `MAX_SOLUTION_BYTES`) so solutions propagate p2p (§2.1).
-- Gas metering mechanism (shared with the voting doc).
+- Gas metering: mechanism settled (per-basic-block wasm instrumentation compiled to
+  native under AOT, §8.6); still open: the weighted cost table and the block-time-
+  derived budget constant.
 - Materialized-algo store: format and where the ~8 activated modules live; re-vote
   swap-in.
 - Per-height/per-algo RSF index: storage format and rebuild-on-reindex.
+- **ARMv7 SIMD determinism** (§8.3): verify on real hardware whether v128 float can be
+  made IEEE-correct (denormals), or mandate the scalar module on ARMv7.
+- **AOT toolchain / packaging** (§8.4): compile `.wasm`->`.aot` locally per node via
+  `wamrc` at activation, or distribute per-arch `.aot`; LLVM availability per arch.
+- **Pinned per-arch AOT target flags** as consensus parameters (§8.3); WAMR max-memory
+  setting for the 2 GiB cap (§8.5) and WAMR aux-stack size.
+- Node hardware floor for dynamic-algo validation vs. primitive-only/pruned nodes (§8.4).
+- WAMR vendoring: pinned to commit `b70d708` (see §8.1); replace `src/wasm3/`, rewrite
+  the execution bridge (`wasmexec.{h,cpp}`) against WAMR's AOT API, and add the offline
+  `wamrc` AOT-compile step with the pinned per-arch target flags.
 - Data availability of LLM validation examples: inline merkle-branch proofs carried in
   the `OP_SOLUTION` stream (fold the proof format in — see the voting doc).
 - Reserve flow rate `k` (=1 for now; the future `<ctype>` field would let contracts pick
