@@ -677,8 +677,11 @@ These target flags are consensus parameters.
 - **2 GiB linear-memory cap per verifier instance** (settled in `~/git/llm.c`
   `doc/btm-proof-of-useful-work.md`: 8-way parallel verification fits 16 GB commodity
   RAM; 2 GiB sits under wasm32 dlmalloc's ~2 GiB single-allocation ceiling; the E=64
-  trunk is 1.76 GB of params). A consensus constant; enforce via WAMR's max-memory
-  setting (the analog of wasm3's `d_m3MaxLinearMemoryPages = 32768`).
+  trunk is 1.76 GB of params). A consensus constant, enforced in the bridge via
+  `wasm_runtime_instantiate_ex`'s `max_memory_pages = 32768` (the WAMR analog of
+  wasm3's `d_m3MaxLinearMemoryPages = 32768`). WAMR only *lowers* the limit, so the
+  effective cap is `min(module's declared max, 32768 pages)` -- always <= 2 GiB, and
+  deterministic since the module's declared max is part of the `.wasm`.
 - The wasm3 interpreter operand-stack constant (`WASM_STACK_BYTES = 1 MiB`) is moot
   under AOT (native call stack + WAMR aux stack); WAMR's aux-stack size becomes the
   analogous fixed bound.

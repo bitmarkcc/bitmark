@@ -36,24 +36,36 @@
 // In production the module is a WAMR .aot precompiled offline by wamrc with the
 // pinned per-arch target flags (doc sec 8.3); wasm_runtime_load also accepts a
 // plain .wasm (JIT/interp builds), which is useful for tests.
+//
+// CPU is bounded by gas (doc sec 8.6): the module is instrumented before AOT
+// compilation to call an imported host function `metering.usegas(i32 cost)` at
+// each basic block, charging that block's weighted cost. This bridge supplies
+// `usegas`, accumulates the cost, and traps the moment it exceeds gas_limit --
+// so execution can never exceed the cap, deterministically on every node. A
+// module that is not instrumented never calls usegas (gas_used stays 0). Pass a
+// very large gas_limit to *measure* an algo's cost without capping it.
 struct AlgoVerifyResult {
     bool ok{false};             //!< engine loaded the module and ran verify() cleanly
     bool solution_valid{false}; //!< verify() returned 0 (solution meets target)
     uint32_t alpha_q32{0};      //!< dynamic-miner fraction of the reward, Q32
     uint32_t beta_q32{0};       //!< primitive-miner fraction of (1-alpha), Q32
+    uint64_t gas_used{0};       //!< weighted gas charged via metering.usegas (0 if uninstrumented)
+    bool out_of_gas{false};     //!< execution was aborted by the gas cap
     std::string error;          //!< human-readable reason when !ok
 };
 
-//! Run a dynamic-algo verifier module. On any engine-level failure (bad module,
-//! missing export, marshaling failure, trap) the result has ok=false and a
-//! populated error; callers must treat that as "no valid dynamic solution",
-//! never as a valid one.
+//! Run a dynamic-algo verifier module under a gas cap. On any engine-level failure
+//! (bad module, missing export, marshaling failure, out-of-gas, other trap) the
+//! result has ok=false and a populated error; callers must treat that as "no valid
+//! dynamic solution", never as a valid one. gas_limit is the maximum weighted gas
+//! the module may charge before it is trapped (a consensus constant, doc sec 8.6).
 AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
                                Span<const unsigned char> prev_hash,
                                Span<const unsigned char> payout,
                                uint32_t nbits,
                                Span<const unsigned char> txs,
                                Span<const unsigned char> last_n_blocks,
-                               Span<const unsigned char> solution);
+                               Span<const unsigned char> solution,
+                               uint64_t gas_limit);
 
 #endif // BITCOIN_DYNAMICALGO_WASMEXEC_H

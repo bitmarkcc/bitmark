@@ -19,12 +19,49 @@ namespace {
 //! measured. See doc/dynamic-algo-mining.md sec 8.5.
 constexpr uint32_t WASM_STACK_BYTES = 1024 * 1024;
 
-//! WAMR's runtime must be initialized once per process before any use.
-bool EnsureWamrInit()
+//! Hard cap on a verifier's linear memory: 2 GiB = 32768 wasm pages of 64 KiB.
+//! Enforced at instantiation regardless of the module's own declared maximum, so a
+//! module cannot grow past it on any node. CONSENSUS constant (doc sec 8.5); the
+//! WAMR analog of wasm3's d_m3MaxLinearMemoryPages=32768.
+constexpr uint32_t WASM_MAX_MEMORY_PAGES = 32768;
+
+//! Per-execution gas accounting, hung off the exec_env's user data so the usegas
+//! native can find it. `used` accumulates the weighted cost the instrumented module
+//! charges; once it exceeds `limit` the module is trapped.
+struct GasState {
+    uint64_t used{0};
+    uint64_t limit{0};
+};
+
+//! Distinctive trap message so the out-of-gas case is recognizable in the result.
+constexpr char OUT_OF_GAS_MSG[] = "dynamic-algo out of gas";
+
+//! Host function imported by instrumented modules as `metering.usegas(i32 cost)`.
+//! Charges the basic block's cost and traps deterministically on overrun. WAMR
+//! passes exec_env as the first argument (signature "(i)" = one i32, no return).
+void bitmark_usegas(wasm_exec_env_t exec_env, int32_t cost)
+{
+    auto* gas = static_cast<GasState*>(wasm_runtime_get_user_data(exec_env));
+    if (gas == nullptr) return; // no budget attached (e.g. a direct, non-metered call)
+    gas->used += static_cast<uint32_t>(cost); // cost is a non-negative block weight
+    if (gas->used > gas->limit) {
+        wasm_runtime_set_exception(wasm_runtime_get_module_inst(exec_env), OUT_OF_GAS_MSG);
+    }
+}
+
+//! WAMR's runtime must be initialized once per process, and the gas native
+//! registered before any instrumented module is instantiated.
+bool EnsureWamrReady()
 {
     static std::once_flag once;
     static bool ok = false;
-    std::call_once(once, [] { ok = wasm_runtime_init(); });
+    std::call_once(once, [] {
+        if (!wasm_runtime_init()) return;
+        static NativeSymbol syms[] = {
+            {"usegas", reinterpret_cast<void*>(bitmark_usegas), "(i)", nullptr},
+        };
+        ok = wasm_runtime_register_natives("metering", syms, 1);
+    });
     return ok;
 }
 
@@ -49,14 +86,15 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
                                uint32_t nbits,
                                Span<const unsigned char> txs,
                                Span<const unsigned char> last_n_blocks,
-                               Span<const unsigned char> solution)
+                               Span<const unsigned char> solution,
+                               uint64_t gas_limit)
 {
     AlgoVerifyResult res;
 
     if (module_bytes.empty()) { res.error = "empty module"; return res; }
     // The guest reads exactly 32 prev_hash bytes; reject anything else.
     if (prev_hash.size() != 32) { res.error = "prev_hash must be 32 bytes"; return res; }
-    if (!EnsureWamrInit()) { res.error = "wasm_runtime_init failed"; return res; }
+    if (!EnsureWamrReady()) { res.error = "WAMR init/register failed"; return res; }
 
     // WAMR references the module buffer until wasm_runtime_unload; keep our own
     // copy alive for the whole call (declared before the guard so it outlives it).
@@ -75,7 +113,11 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
                                 + last_n_blocks.size() + solution.size() + 8;
     const uint32_t heap_size = (uint32_t)std::min<uint64_t>(inputs_total + (1u << 16), 0xFFFFFFFFu);
 
-    g.inst = wasm_runtime_instantiate(g.module, WASM_STACK_BYTES, heap_size, err, sizeof(err));
+    InstantiationArgs inst_args{};
+    inst_args.default_stack_size = WASM_STACK_BYTES; // ignored once create_exec_env sets its own
+    inst_args.host_managed_heap_size = heap_size;
+    inst_args.max_memory_pages = WASM_MAX_MEMORY_PAGES; // 2 GiB cap, consensus (doc 8.5)
+    g.inst = wasm_runtime_instantiate_ex(g.module, &inst_args, err, sizeof(err));
     if (!g.inst) { res.error = std::string("instantiate: ") + err; return res; }
 
     g.env = wasm_runtime_create_exec_env(g.inst, WASM_STACK_BYTES);
@@ -105,6 +147,12 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
     wasm_function_inst_t fn = wasm_runtime_lookup_function(g.inst, "verify");
     if (!fn) { res.error = "no verify export"; return res; }
 
+    // Attach the gas budget so the usegas native meters this execution and traps on
+    // overrun. `gas` must outlive the call (referenced via the exec_env user data).
+    GasState gas{};
+    gas.limit = gas_limit;
+    wasm_runtime_set_user_data(g.env, &gas);
+
     // verify(prev, payout,payout_len, nbits, txs,txs_len, last_n,last_n_len,
     //        nonce,nonce_len, out_ab) -> i32. All args are i32 (one cell each);
     // the i32 return lands in argv[0].
@@ -112,8 +160,11 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
         off_prev, off_payout, (uint32_t)payout.size(), nbits,
         off_txs, (uint32_t)txs.size(), off_lastn, (uint32_t)last_n_blocks.size(),
         off_nonce, (uint32_t)solution.size(), off_outab};
-    if (!wasm_runtime_call_wasm(g.env, fn, 11, argv)) {
+    bool called = wasm_runtime_call_wasm(g.env, fn, 11, argv);
+    res.gas_used = gas.used;
+    if (!called) {
         const char* ex = wasm_runtime_get_exception(g.inst);
+        res.out_of_gas = (ex != nullptr && std::strstr(ex, OUT_OF_GAS_MSG) != nullptr);
         res.error = std::string("verify trap: ") + (ex ? ex : "unknown");
         return res;
     }
