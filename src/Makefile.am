@@ -171,6 +171,7 @@ BITCOIN_CORE_H = \
   dbwrapper.h \
   deploymentinfo.h \
   deploymentstatus.h \
+  dynamicalgo/wasmexec.h \
   external_signer.h \
   flatfile.h \
   headerssync.h \
@@ -485,6 +486,7 @@ libbitcoin_node_a_SOURCES = \
   txmempool.cpp \
   txorphanage.cpp \
   txrequest.cpp \
+  dynamicalgo/wasmexec.cpp \
   validation.cpp \
   validationinterface.cpp \
   versionbits.cpp \
