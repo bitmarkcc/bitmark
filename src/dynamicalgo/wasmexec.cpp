@@ -9,6 +9,8 @@
 #include <crypto/common.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <vector>
@@ -19,11 +21,18 @@ namespace {
 //! measured. See doc/dynamic-algo-mining.md sec 8.5.
 constexpr uint32_t WASM_STACK_BYTES = 1024 * 1024;
 
-//! Hard cap on a verifier's linear memory: 2 GiB = 32768 wasm pages of 64 KiB.
-//! Enforced at instantiation regardless of the module's own declared maximum, so a
-//! module cannot grow past it on any node. CONSENSUS constant (doc sec 8.5); the
-//! WAMR analog of wasm3's d_m3MaxLinearMemoryPages=32768.
-constexpr uint32_t WASM_MAX_MEMORY_PAGES = 32768;
+//! Total per-verifier memory is capped at 2 GiB, split so the two channels sum
+//! exactly: linear memory (mmap'd, hardware-bounds-checked) + all WAMR runtime
+//! allocations (instance structs, tables, exec stack) via the custom allocator.
+//!   linear cap   = 32512 pages x 64 KiB = 2032 MiB (1.984375 GiB)
+//!   alloc ceiling = 16 MiB (WASM_ALLOC_CEILING)
+//!   total        = 2032 + 16 = 2048 MiB = 2 GiB exactly.
+//! The trunk verifier measured 31,163 pages (1.902 GiB), leaving ~84 MiB headroom.
+//! CONSENSUS constants, fixed network-wide (doc sec 8.5). max_memory_pages is
+//! enforced per-instance by WAMR; the alloc ceiling is process-global (see
+//! EnsureWamrReady), i.e. per-instance only for one verify at a time.
+constexpr uint32_t WASM_MAX_MEMORY_PAGES = 32512;
+constexpr uint64_t WASM_ALLOC_CEILING = 16ull * 1024 * 1024;
 
 //! Per-execution gas accounting, hung off the exec_env's user data so the usegas
 //! native can find it. `used` accumulates the weighted cost the instrumented module
@@ -49,14 +58,75 @@ void bitmark_usegas(wasm_exec_env_t exec_env, int32_t cost)
     }
 }
 
-//! WAMR's runtime must be initialized once per process, and the gas native
-//! registered before any instrumented module is instantiated.
+// Custom allocator enforcing WASM_ALLOC_CEILING on ALL WAMR runtime allocations
+// (instance structs, tables, the exec-env stack). Linear memory is mmap'd on a
+// separate path (capped by max_memory_pages), so linear + these two caps sum to
+// the 2 GiB total. A 16-byte header records each block's size for free/realloc
+// accounting and keeps the returned pointer 16-byte aligned. NOTE: this is a
+// process-global ceiling (WAMR installs one allocator), so it bounds concurrent
+// instances collectively; strictly per-instance only for one verify at a time.
+std::atomic<uint64_t> g_wamr_alloc_used{0};
+
+void* bm_malloc(unsigned size)
+{
+    const uint64_t need = static_cast<uint64_t>(size) + 16;
+    if (g_wamr_alloc_used.fetch_add(need, std::memory_order_relaxed) + need > WASM_ALLOC_CEILING) {
+        g_wamr_alloc_used.fetch_sub(need, std::memory_order_relaxed);
+        return nullptr;
+    }
+    void* base = std::malloc(need);
+    if (base == nullptr) { g_wamr_alloc_used.fetch_sub(need, std::memory_order_relaxed); return nullptr; }
+    *static_cast<uint64_t*>(base) = need;
+    return static_cast<char*>(base) + 16;
+}
+
+void bm_free(void* ptr)
+{
+    if (ptr == nullptr) return;
+    void* base = static_cast<char*>(ptr) - 16;
+    g_wamr_alloc_used.fetch_sub(*static_cast<uint64_t*>(base), std::memory_order_relaxed);
+    std::free(base);
+}
+
+void* bm_realloc(void* ptr, unsigned size)
+{
+    if (ptr == nullptr) return bm_malloc(size);
+    void* base = static_cast<char*>(ptr) - 16;
+    const uint64_t old = *static_cast<uint64_t*>(base);
+    const uint64_t need = static_cast<uint64_t>(size) + 16;
+    if (need > old) {
+        const uint64_t d = need - old;
+        if (g_wamr_alloc_used.fetch_add(d, std::memory_order_relaxed) + d > WASM_ALLOC_CEILING) {
+            g_wamr_alloc_used.fetch_sub(d, std::memory_order_relaxed);
+            return nullptr; // over ceiling; original block stays valid
+        }
+    } else {
+        g_wamr_alloc_used.fetch_sub(old - need, std::memory_order_relaxed);
+    }
+    void* nb = std::realloc(base, need);
+    if (nb == nullptr) { // realloc failed: block unchanged at `old`; undo the counter delta
+        if (need > old) g_wamr_alloc_used.fetch_sub(need - old, std::memory_order_relaxed);
+        else g_wamr_alloc_used.fetch_add(old - need, std::memory_order_relaxed);
+        return nullptr;
+    }
+    *static_cast<uint64_t*>(nb) = need;
+    return static_cast<char*>(nb) + 16;
+}
+
+//! WAMR's runtime must be initialized once per process (with our capped allocator),
+//! and the gas native registered before any instrumented module is instantiated.
 bool EnsureWamrReady()
 {
     static std::once_flag once;
     static bool ok = false;
     std::call_once(once, [] {
-        if (!wasm_runtime_init()) return;
+        RuntimeInitArgs init_args;
+        std::memset(&init_args, 0, sizeof(init_args));
+        init_args.mem_alloc_type = Alloc_With_Allocator;
+        init_args.mem_alloc_option.allocator.malloc_func = reinterpret_cast<void*>(bm_malloc);
+        init_args.mem_alloc_option.allocator.realloc_func = reinterpret_cast<void*>(bm_realloc);
+        init_args.mem_alloc_option.allocator.free_func = reinterpret_cast<void*>(bm_free);
+        if (!wasm_runtime_full_init(&init_args)) return;
         static NativeSymbol syms[] = {
             {"usegas", reinterpret_cast<void*>(bitmark_usegas), "(i)", nullptr},
         };
