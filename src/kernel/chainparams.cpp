@@ -149,19 +149,15 @@ public:
         // This is fine at runtime as we'll fall back to using them as an addrfetch if they don't support the
         // service bits we want, but we should get them updated to support all service bits wanted by any
         // release ASAP to avoid it where possible.
-        vSeeds.emplace_back("da.bitmark.guru");         // DE Frank
-        vSeeds.emplace_back("btm.openmarks.com");       // IL eli
+        vSeeds.emplace_back("da.bitmark.guru");         // FR miner
         vSeeds.emplace_back("shido.bitmark.one");       // JP akio
         vSeeds.emplace_back("dnsseed.openmarks.com");   // DE omar
-        vSeeds.emplace_back("ra.zmark.org");            // CA sam
+        vSeeds.emplace_back("ra.zmark.org");            // FR tracker
         vSeeds.emplace_back("marks.chainetics.com");    // SG ben
         vSeeds.emplace_back("biji.bitmark.one");        // CA marks
-        vSeeds.emplace_back("marks.avalax.com");        // JP jin
         vSeeds.emplace_back("shiba.zmark.org");         // NJ j2
-        vSeeds.emplace_back("btmk.zmark.org");          // CA zappa
-        vSeeds.emplace_back("dnsseed.bitmark.cc");      // NJ joe
-        vSeeds.emplace_back("btm.zmark.org");           // NJ vinny j0
-	vSeeds.emplace_back("seed.bitmark.cc");         // linkmark
+	vSeeds.emplace_back("btmk.bitmark.guru");
+	vSeeds.emplace_back("btmk.openmarks.com");
 
 	// Deal with the Bitmark versions later in the RPC
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,85);
