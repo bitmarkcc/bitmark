@@ -34,28 +34,51 @@ constexpr uint32_t WASM_STACK_BYTES = 1024 * 1024;
 constexpr uint32_t WASM_MAX_MEMORY_PAGES = 32512;
 constexpr uint64_t WASM_ALLOC_CEILING = 16ull * 1024 * 1024;
 
+using dynamicalgo::GasClass;
+
 //! Per-execution gas accounting, hung off the exec_env's user data so the usegas
-//! native can find it. `used` accumulates the weighted cost the instrumented module
-//! charges; once it exceeds `limit` the module is trapped.
+//! native can find it. `used[]` accumulates each count class's executions; `bulk_bytes`
+//! accumulates the combined BULK budget (each bulk op's runtime size N converted to
+//! bytes). Once any class exceeds its consensus limit the module is trapped and the
+//! offending class recorded in `tripped`. `uncapped` disables the caps for offline
+//! measurement (never set on the consensus path).
 struct GasState {
-    uint64_t used{0};
-    uint64_t limit{0};
+    uint64_t used[dynamicalgo::GC_COUNT_N] = {0};
+    uint64_t bulk_bytes{0};
+    int32_t tripped{-1};
+    bool uncapped{false};
 };
 
 //! Distinctive trap message so the out-of-gas case is recognizable in the result.
 constexpr char OUT_OF_GAS_MSG[] = "dynamic-algo out of gas";
 
-//! Host function imported by instrumented modules as `metering.usegas(i32 cost)`.
-//! Charges the basic block's cost and traps deterministically on overrun. WAMR
-//! passes exec_env as the first argument (signature "(i)" = one i32, no return).
-void bitmark_usegas(wasm_exec_env_t exec_env, int32_t cost)
+//! Host function imported by instrumented modules as `metering.usegas(i32 class,
+//! i32 n)`. For a count class (0..GC_COUNT_N-1), n is the basic block's execution
+//! count of that class; for a bulk sub-kind (GC_BULK_*), n is the bulk op's runtime
+//! size operand, converted to bytes and folded into the combined BULK budget. Traps
+//! deterministically the moment any class exceeds its consensus limit. WAMR passes
+//! exec_env as the first argument (signature "(ii)" = two i32, no return).
+void bitmark_usegas(wasm_exec_env_t exec_env, int32_t cls, int32_t n_raw)
 {
     auto* gas = static_cast<GasState*>(wasm_runtime_get_user_data(exec_env));
     if (gas == nullptr) return; // no budget attached (e.g. a direct, non-metered call)
-    gas->used += static_cast<uint32_t>(cost); // cost is a non-negative block weight
-    if (gas->used > gas->limit) {
-        wasm_runtime_set_exception(wasm_runtime_get_module_inst(exec_env), OUT_OF_GAS_MSG);
+    const uint64_t n = static_cast<uint32_t>(n_raw); // count / size operand, non-negative
+    if (cls >= 0 && cls < dynamicalgo::GC_COUNT_N) {
+        const uint64_t u = (gas->used[cls] += n);
+        if (!gas->uncapped && u > dynamicalgo::GAS_LIMIT[cls]) {
+            gas->tripped = cls;
+            wasm_runtime_set_exception(wasm_runtime_get_module_inst(exec_env), OUT_OF_GAS_MSG);
+        }
+    } else if (cls >= dynamicalgo::GC_BULK_MEM && cls < dynamicalgo::GC_CLASS_MAX) {
+        gas->bulk_bytes += n * dynamicalgo::GasBulkFactor(cls);
+        if (!gas->uncapped && gas->bulk_bytes > dynamicalgo::GAS_BULK_LIMIT) {
+            gas->tripped = cls;
+            wasm_runtime_set_exception(wasm_runtime_get_module_inst(exec_env), OUT_OF_GAS_MSG);
+        }
     }
+    // Unknown class id: ignore. The instrumenter only ever emits valid ids; a
+    // hand-crafted module passing garbage simply charges nothing (its real opcodes
+    // are still metered by their own charges), so this cannot evade the caps.
 }
 
 // Custom allocator enforcing WASM_ALLOC_CEILING on ALL WAMR runtime allocations
@@ -128,7 +151,7 @@ bool EnsureWamrReady()
         init_args.mem_alloc_option.allocator.free_func = reinterpret_cast<void*>(bm_free);
         if (!wasm_runtime_full_init(&init_args)) return;
         static NativeSymbol syms[] = {
-            {"usegas", reinterpret_cast<void*>(bitmark_usegas), "(i)", nullptr},
+            {"usegas", reinterpret_cast<void*>(bitmark_usegas), "(ii)", nullptr},
         };
         ok = wasm_runtime_register_natives("metering", syms, 1);
     });
@@ -157,7 +180,7 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
                                Span<const unsigned char> txs,
                                Span<const unsigned char> last_n_blocks,
                                Span<const unsigned char> solution,
-                               uint64_t gas_limit)
+                               bool meter_uncapped)
 {
     AlgoVerifyResult res;
 
@@ -219,8 +242,10 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
 
     // Attach the gas budget so the usegas native meters this execution and traps on
     // overrun. `gas` must outlive the call (referenced via the exec_env user data).
+    // Limits are consensus constants (gasclasses.h); meter_uncapped only disables
+    // them for offline measurement.
     GasState gas{};
-    gas.limit = gas_limit;
+    gas.uncapped = meter_uncapped;
     wasm_runtime_set_user_data(g.env, &gas);
 
     // verify(prev, payout,payout_len, nbits, txs,txs_len, last_n,last_n_len,
@@ -231,7 +256,14 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
         off_txs, (uint32_t)txs.size(), off_lastn, (uint32_t)last_n_blocks.size(),
         off_nonce, (uint32_t)solution.size(), off_outab};
     bool called = wasm_runtime_call_wasm(g.env, fn, 11, argv);
-    res.gas_used = gas.used;
+    // Report the per-class usage (both on success and on any trap). gas_used is the
+    // total count-class executions; bulk_bytes the combined BULK budget.
+    for (int cl = 0; cl < dynamicalgo::GC_COUNT_N; cl++) {
+        res.class_used[cl] = gas.used[cl];
+        res.gas_used += gas.used[cl];
+    }
+    res.bulk_bytes = gas.bulk_bytes;
+    res.gas_class = gas.tripped;
     if (!called) {
         const char* ex = wasm_runtime_get_exception(g.inst);
         res.out_of_gas = (ex != nullptr && std::strstr(ex, OUT_OF_GAS_MSG) != nullptr);

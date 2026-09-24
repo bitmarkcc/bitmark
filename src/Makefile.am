@@ -171,6 +171,7 @@ BITCOIN_CORE_H = \
   dbwrapper.h \
   deploymentinfo.h \
   deploymentstatus.h \
+  dynamicalgo/gasclasses.h \
   dynamicalgo/wasmexec.h \
   external_signer.h \
   flatfile.h \

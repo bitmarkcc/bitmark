@@ -664,43 +664,181 @@ target + strict IEEE**, so results are bit-identical:
 
 These target flags are consensus parameters.
 
-### 8.4 Toolchain & node-hardware reality
+### 8.4 Toolchain & node-hardware floor
 
 - AOT needs LLVM per build-host (via `wamrc`), either compiled locally at activation
   or distributed as per-arch `.aot`. LLVM on small ARM devices is heavy.
-- The LLM verifier needs ~2 GiB RAM + ~seconds of native compute per verify, so
-  small ARMv7 / low-RAM devices likely **cannot** be dynamic-algo validators; they
-  may run pruned/SPV or validate only the primitive PoW. Governance/scaling item.
+- **Hardware floor (a node requirement, NOT a consensus rule):** a block carries only
+  ONE dynamic-algo solution, so a validator doing **serial** verification (one verify
+  at a time) needs only **~4 GB RAM** (2 GiB for the algo + node caches + OS) and
+  **>= ~10 GB/s memory bandwidth**, plus a modern multi-GHz core. One verify's worst
+  case is ~tens of seconds -- well inside the 120 s block interval -- so a 4 GB serial
+  node keeps up in steady state. The gas limits (§8.6) are *chosen* so a floor-
+  conformant node validates within the interval. Bandwidth cannot be a consensus
+  parameter (consensus can't measure hardware); it only informs the limit choice.
+- **~16 GB is optional, for 8-way parallel verification** -- a throughput optimization
+  for initial block download (validating thousands of past blocks across cores). Not
+  required; a serial node just syncs slower. Parallel verification is also where the
+  process-global allocator ceiling would need scaling to N x 16 MiB (§8.5); serial
+  verification (the 4 GB case) sidesteps that.
+- **A below-floor node does not split the chain.** It still computes the *identical*
+  validity result (gas counts + trap decision are deterministic) -- it is merely
+  *slower*, and if too slow it lags block production, exactly like an under-provisioned
+  Bitcoin node. So hardware variation is a liveness/participation issue, never a
+  consensus fork. Small ARMv7 / low-RAM devices that cannot meet the floor may run
+  pruned/SPV or validate only the primitive PoW.
 
-### 8.5 Memory & stack bounds
+### 8.5 Memory bounds (total 2 GiB per verifier)
 
-- **2 GiB linear-memory cap per verifier instance** (settled in `~/git/llm.c`
-  `doc/btm-proof-of-useful-work.md`: 8-way parallel verification fits 16 GB commodity
-  RAM; 2 GiB sits under wasm32 dlmalloc's ~2 GiB single-allocation ceiling; the E=64
-  trunk is 1.76 GB of params). A consensus constant, enforced in the bridge via
-  `wasm_runtime_instantiate_ex`'s `max_memory_pages = 32768` (the WAMR analog of
-  wasm3's `d_m3MaxLinearMemoryPages = 32768`). WAMR only *lowers* the limit, so the
-  effective cap is `min(module's declared max, 32768 pages)` -- always <= 2 GiB, and
-  deterministic since the module's declared max is part of the `.wasm`.
-- The wasm3 interpreter operand-stack constant (`WASM_STACK_BYTES = 1 MiB`) is moot
-  under AOT (native call stack + WAMR aux stack); WAMR's aux-stack size becomes the
-  analogous fixed bound.
+Total per-verifier resident memory is capped at **2 GiB**, split so WAMR's two
+allocation paths sum exactly (implemented in `src/dynamicalgo/wasmexec.cpp`):
 
-### 8.6 CPU bound (gas)
+- **Linear memory** (guest params/activations/heap; `mmap`'d, hardware-bounds-
+  checked, enforced per-instance): `max_memory_pages = 32512` = **2032 MiB
+  (1.984375 GiB)**, via `wasm_runtime_instantiate_ex`. WAMR only *lowers* a module's
+  declared max, so the effective cap is `min(module max, 32512)` -- deterministic.
+- **WAMR runtime allocations** (instance structs, tables, exec-env operand stack;
+  via `runtime_malloc`): a **custom allocator** installed at `wasm_runtime_full_init`
+  (`Alloc_With_Allocator`) enforcing a **16 MiB ceiling** -- it returns NULL past the
+  ceiling, so a runaway `table.grow` (tables live here, *outside* the linear cap)
+  fails deterministically instead of OOMing the node, closing the table-space channel.
+- 2032 + 16 = 2048 MiB = **2 GiB exactly.**
 
-- Under AOT there is no interpreter loop to patch, so gas metering is **wasm
-  instrumentation before AOT-compile**: inject a per-basic-block weighted gas
-  decrement + underflow trap into the `.wasm`, then `wamrc` compiles the checks to
-  native -- so metering runs at native speed (the earlier "instrumentation is slow"
-  objection was interpreter-specific and dissolves under AOT).
-- Gas is a deterministic weighted op count; over-budget traps => the solution is
-  invalid, identically on every node. Budget = a top-down ceiling derived from block
-  time (a consensus constant), not fitted to any one algo.
+Notes:
+- `WASM_STACK_BYTES = 1 MiB` is the exec-env operand-stack size (consensus constant:
+  too small traps a legit module). It is drawn *from* the 16 MiB ceiling, not added.
+- The guest module's own `malloc` (dlmalloc compiled into the `.wasm`) operates
+  inside linear memory and never touches the custom allocator.
+- The AOT native code is `mmap`'d executable on its own path -- outside the 2 GiB
+  (small, identical on every node).
+- Basis (`~/git/llm.c` `doc/btm-proof-of-useful-work.md`): 8-way parallel
+  verification fits ~16 GB commodity RAM; 2 GiB sits under wasm32 dlmalloc's ~2 GiB
+  single-allocation ceiling; E=64 is the largest wasm32-safe MoE config.
+- **Measured**: the trunk grows linear memory to **31,163 pages (1.902 GiB)**,
+  ~84 MiB (4.3%) under the 32512 cap -- deliberately tight (E=64 ≈ 2 GiB).
+- **Caveat**: the custom allocator is process-global, so the 16 MiB ceiling bounds
+  concurrent instances collectively -- strictly per-instance only for one verify at a
+  time; N-way parallel scales it to N x 16 MiB (linear stays per-instance).
+- **Cold-materialization cost**: first-touch faulting the ~2 GiB working set costs
+  ~1 s (kernel page-zeroing ~2 GB/s) -- not a wasm op, so it escapes gas metering; it
+  is bounded (<= ~1 s by the 2 GiB cap) and carried as a fixed term (§8.6).
+
+### 8.6 CPU bound (per-class gas)
+
+Metering is **wasm instrumentation before AOT-compile**: the offline tool
+(`src/dynamicalgo/gasinstrument.cpp`) injects, per basic block, calls to imported
+host functions that charge that block's work; `wamrc` then compiles the checks to
+native, so metering runs at native speed. The runtime (`wasmexec.cpp`) supplies the
+host functions, accumulates **per-class counters**, and traps the instant any class
+exceeds its limit -- deterministically (costs come from the deterministic bytecode;
+the trap decision is a pure function of them). *Enforcement across per-class counters
+is designed here; the runtime currently ships a single combined `usegas` counter --
+the per-class split is the next implementation step.*
+
+**Opcode classes** -- 15 "count" classes (charged 1/execution, members share ~equal
+per-op *worst-case* time) + a combined bulk-bytes class (charged N = runtime size).
+Exact opcode->class map in `gasinstrument.cpp`. Per-op ns are native latency-basis
+(conservative: latency >= throughput; MEM/SIMD_MEM/VAR are L1-warm). Note the old
+"NOP" was split three ways by worst-case cost -- see the NOP/ICONST/VAR note below:
+
+| class | members (summary) | ns/op |
+|---|---|---:|
+| NOP | nop, drop, block/loop/end, ref.* (structural, no instruction) | **0** |
+| ICONST | i32/i64.const (register `mov` worst case) | 0.25 |
+| VAR | local.get/set/tee, f32/f64.const (spilled slot / const-pool load) | 1.0 |
+| BRANCH | br, br_if, br_table, return, select, if, else | 0.3 |
+| CALL | call, call_indirect | 1.5 |
+| INT | i32/i64 add/sub/logic/shift/cmp/clz/ctz/popcnt/wrap/extend | 0.33 |
+| IMUL | i32/i64 mul | 1.0 |
+| IDIV | i32/i64 div/rem | 7.2 |
+| FADD | f32/f64 add/sub/mul/neg/abs/min/max/copysign/cmp | 1.0 |
+| FDIV | f32/f64 div, sqrt | 5.0 |
+| FCVT | ceil/floor/trunc/nearest, convert/promote/demote | 1.5 |
+| MEM | scalar loads/stores, global.get/set, memory.size, table.get/set | 1.6 (L1) |
+| SIMD | v128 arith/logic/cmp/splat/lane | 0.93 |
+| SIMD_DIV | v128 div/sqrt | 3.7 |
+| SIMD_MEM | v128 loads/stores/lane | 0.94 (L1) |
+| BULK | memory/table fill+copy+init+grow, by N bytes | ~0.5/byte (cold) |
+
+- **NOP/ICONST/VAR** were one class until measured worst cases forced the split:
+  structural NOP emits *no* instruction (exactly 0, so its limit is a pure count cap);
+  `i32/i64.const` folds to an immediate or, worst case, a register `mov` (~0.25 ns);
+  `local.*`/`f-const` fold to a register / hoisted const but, worst case, become an
+  L1 stack-slot or const-pool load (~1 ns). `if`/`else` moved to BRANCH (a branch),
+  `global.*`/`memory.size` to MEM (a memory access) -- so no cost hides in "NOP".
+- table bulk ops are allowed: *space* bounded by the 2 GiB total cap (§8.5), *time*
+  by the combined BULK byte budget.
+
+**Measured trunk profile (one full eval)** + per-class limits. Rule:
+`limit = max(2 x count, count-for-a-0.5 s slice)`, so every class gets >= 0.5 s of
+headroom and the compute-dominant classes (which the LLM genuinely needs) are pinned
+by 2xcount. Safe because the algo is data-oblivious => counts are fixed per input.
+
+| class | executions | limit | max time |
+|---|---:|---:|---:|
+| VAR | 8,380,928,112 | 16 B | 16.0 s |
+| SIMD_MEM | 2,262,561,184 | 5 B | 4.70 s |
+| SIMD | 2,306,983,477 | 5 B | 4.65 s |
+| INT | 3,708,852,924 | 8 B | 2.64 s |
+| ICONST | 3,277,654,242 | 8 B | 2.00 s |
+| IMUL | 4,697,157 | 512 M | 0.51 s |
+| FADD | 153,250,325 | 512 M | 0.51 s |
+| MEM | 69,938,770 | 320 M | 0.51 s |
+| FDIV | 4,734,311 | 100 M | 0.50 s |
+| BRANCH | 616,660,453 | 1.6 B | 0.48 s |
+| CALL | 7,187,197 | 320 M | 0.48 s |
+| FCVT | 5,065,092 | 320 M | 0.48 s |
+| SIMD_DIV | 262,912 | 128 M | 0.47 s |
+| IDIV | 8,913 | 64 M | 0.46 s |
+| NOP | 85,557,450 | 16 B | 0 |
+| BULK (bytes) | fill 4.7 MB, copy 629 KB, grow 2.04 GB | **8 GiB combined** | ~2 s |
+
+- Implied worst-case verify (limits x times) ≈ **~35 s compute + ~2 s BULK + ~1 s
+  cold materialization ≈ ~38 s** on a reference core (conservative -- latency-basis
+  and adversarial spill assumed; the LLM's real forward is ~1.5 s). On 4x-slower
+  hardware ~150 s -- so the reference-core figure has ~3x margin under the 120 s
+  interval, and the hardware floor (§8.4) is set so conformant nodes stay under it.
+- **VAR dominates the worst case (16 s)** -- the LLM's stack-machine verbosity emits
+  8.4 B local/const ops that cost ~0 in practice (register-resident) but ~1 ns if an
+  adversary forces spills; we bound the adversarial case. The next tier is the
+  genuine compute (SIMD_MEM/SIMD/INT ≈ 12 s). Rare/cheap classes sit at their 0.5 s
+  slice; a loose limit stays safe iff `limit x ns/op` is a small budget slice.
 - No general upper bound on arbitrary-algo gas is computable (halting problem); the
-  gas cap itself is the enforced bound. Data-oblivious algos (NN forward passes have
-  input-independent control flow) have ~constant gas across inputs, so one
-  measurement bounds them -- **data-obliviousness is the property checked at
-  OP_PUSHCODE approval**, not exhaustive input measurement.
+  per-class limits *are* the enforced bound. **Data-obliviousness** (input-independent
+  control flow, true of NN forward passes) is the property checked at OP_PUSHCODE
+  approval so one measurement bounds the counts.
+- **Cache-miss worst case (memory classes).** The `MEM`/`SIMD_MEM` per-op times above
+  are L1-warm; a cache-hostile module could miss to DRAM (~100 ns latency each). This
+  does *not* blow up unboundedly: (1) it is bounded by the op-count *limit*, and (2)
+  miss *throughput* is bandwidth-limited (misses overlap ~10-20 deep), so worst-case
+  memory time = `(SIMD_MEM + MEM limits) x 64 B (cache line) / min-bandwidth` ≈
+  `5.3 B x 64 B / 10 GB/s ≈ 34 s` -- not `count x 100 ns`. That fits the 120 s
+  interval. The LLM itself measured 0.66 ns/load amortized (forward 1.5 s / 2.26 B
+  loads), proving its access is cache-friendly. The `min-bandwidth` here is the §8.4
+  hardware floor, not a consensus value: gas op-counts + limits are the consensus
+  bound; wall-time is hardware-dependent and only guaranteed to fit for floor-
+  conformant nodes.
+
+- **Metering overhead (on top of the per-op tables).** Gas is charged per basic
+  block, so a run makes one `usegas` host call per opcode class present per
+  block-entry executed. That call cost (~a few ns each) is *not* in the per-op tables
+  above, but it is bounded: total block-entries <= the back-edge/branch budget
+  (`BRANCH` limit 1.6 B, one per loop iteration) plus function entries (`CALL` limit
+  320 M), and each entry emits a small constant number of charge-calls -- so metering
+  adds an `O(BRANCH + CALL)`-bounded overhead (order ~10 s at the limits, ~a few 100 ms
+  for the real trunk, whose blocks are large). It scales with node speed like any
+  other compute and is covered by the §8.4 floor. The charge-calls are also why NOP's
+  16 B limit is only a backstop: a pure-NOP loop is bound first by its back-edge
+  (`BRANCH`), not by the NOP count.
+
+All class definitions, limits, per-op costs, and the 8 GiB combined BULK budget are
+consensus parameters, pinned with the instrumenter + WAMR version. Implemented in
+`src/dynamicalgo/gasclasses.h` (the shared taxonomy + limits), `gasinstrument.cpp`
+(offline per-class instrumentation), and `wasmexec.cpp` (runtime per-class
+enforcement + trap). Instrumenter output verified to type-check and compile (wamrc /
+wasmtime) on the trunk, MoE, and non-SIMD verifiers; measured trunk counts all sit
+under their limits (binding class VAR at ~52% of budget, combined BULK ≈ 2.05 GB of
+8 GiB).
 
 ### 8.7 ABI (unchanged)
 
@@ -765,9 +903,12 @@ guarantee.
   template policy that injects it + the `dynamic` GBT field (§6bis).
 - Relay of solution txs: keep out-of-band, or add `OP_SOLUTION` relay standardness
   (multiple OP_RETURNs, `MAX_SOLUTION_BYTES`) so solutions propagate p2p (§2.1).
-- Gas metering: mechanism settled (per-basic-block wasm instrumentation compiled to
-  native under AOT, §8.6); still open: the weighted cost table and the block-time-
-  derived budget constant.
+- Gas metering: mechanism + 13 count classes + combined BULK budget + measured
+  trunk profile + per-class limits + per-op times all calibrated (§8.6). **Still
+  open (implementation):** the runtime currently ships a single combined `usegas`
+  counter; the per-class split needs wiring into both the instrumenter (per-class
+  charges + bulk-N via a scratch local/global) and the runtime (per-class counters
+  + per-class limits + the 8 GiB BULK budget).
 - Materialized-algo store: format and where the ~8 activated modules live; re-vote
   swap-in.
 - Per-height/per-algo RSF index: storage format and rebuild-on-reindex.
@@ -775,17 +916,18 @@ guarantee.
   made IEEE-correct (denormals), or mandate the scalar module on ARMv7.
 - **AOT toolchain / packaging** (§8.4): compile `.wasm`->`.aot` locally per node via
   `wamrc` at activation, or distribute per-arch `.aot`; LLVM availability per arch.
-- **Pinned per-arch AOT target flags** as consensus parameters (§8.3); WAMR max-memory
-  setting for the 2 GiB cap (§8.5) and WAMR aux-stack size.
+- **Pinned per-arch AOT target flags** as consensus parameters (§8.3). *Done:* the
+  2 GiB memory split (`max_memory_pages = 32512` + 16 MiB custom-allocator ceiling)
+  and `WASM_STACK_BYTES = 1 MiB` are implemented in the bridge (§8.5).
 - Node hardware floor for dynamic-algo validation vs. primitive-only/pruned nodes (§8.4).
-- WAMR vendoring: pinned to commit `b70d708` (see §8.1); replace `src/wasm3/`, rewrite
-  the execution bridge (`wasmexec.{h,cpp}`) against WAMR's AOT API, and add the offline
-  `wamrc` AOT-compile step with the pinned per-arch target flags.
+- WAMR vendoring: *done* -- pinned to commit `b70d708`, vendored to `src/wamr/`, bridge
+  rewritten against WAMR's AOT API (§8.1). *Still open:* the offline `wamrc`
+  AOT-compile step with pinned per-arch target flags at algo activation.
 - **Structural caps** (§8.8): the exact per-function + module-level metrics and their
   values (consensus); the pinned `wamrc` opt pipeline; a `wamrc` fuzzing harness to
   validate the compile bound.
-- **Fast JIT fallback** (§8.8): benchmark WAMR Fast JIT runtime speed on the LLM
-  verifier to quantify the AOT-vs-bounded-compile tradeoff.
+- **Fast JIT fallback** (§8.8): *evaluated -- not viable* (no SIMD; crashes on the
+  trunk). Compile-bound rests on the LLVM-AOT path (structural caps).
 - Data availability of LLM validation examples: inline merkle-branch proofs carried in
   the `OP_SOLUTION` stream (fold the proof format in — see the voting doc).
 - Reserve flow rate `k` (=1 for now; the future `<ctype>` field would let contracts pick

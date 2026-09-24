@@ -5,6 +5,7 @@
 #ifndef BITCOIN_DYNAMICALGO_WASMEXEC_H
 #define BITCOIN_DYNAMICALGO_WASMEXEC_H
 
+#include <dynamicalgo/gasclasses.h>
 #include <span.h>
 
 #include <cstdint>
@@ -37,28 +38,36 @@
 // pinned per-arch target flags (doc sec 8.3); wasm_runtime_load also accepts a
 // plain .wasm (JIT/interp builds), which is useful for tests.
 //
-// CPU is bounded by gas (doc sec 8.6): the module is instrumented before AOT
-// compilation to call an imported host function `metering.usegas(i32 cost)` at
-// each basic block, charging that block's weighted cost. This bridge supplies
-// `usegas`, accumulates the cost, and traps the moment it exceeds gas_limit --
-// so execution can never exceed the cap, deterministically on every node. A
-// module that is not instrumented never calls usegas (gas_used stays 0). Pass a
-// very large gas_limit to *measure* an algo's cost without capping it.
+// CPU is bounded by PER-CLASS gas (doc sec 8.6): the module is instrumented before
+// AOT compilation to call an imported host function `metering.usegas(i32 class,
+// i32 n)` at each basic block, once per opcode class present, charging that block's
+// per-class execution count (and, for the combined BULK budget, the runtime size N
+// of each bulk op). This bridge supplies `usegas`, accumulates each class's usage,
+// and traps the moment ANY class exceeds its consensus limit (dynamicalgo::GAS_LIMIT
+// / GAS_BULK_LIMIT) -- so execution can never exceed the caps, deterministically on
+// every node. A module that is not instrumented never calls usegas (usage stays 0).
+// Set meter_uncapped to *measure* an algo's per-class cost without capping it (used
+// offline at algo approval, never on the consensus path).
 struct AlgoVerifyResult {
     bool ok{false};             //!< engine loaded the module and ran verify() cleanly
     bool solution_valid{false}; //!< verify() returned 0 (solution meets target)
     uint32_t alpha_q32{0};      //!< dynamic-miner fraction of the reward, Q32
     uint32_t beta_q32{0};       //!< primitive-miner fraction of (1-alpha), Q32
-    uint64_t gas_used{0};       //!< weighted gas charged via metering.usegas (0 if uninstrumented)
-    bool out_of_gas{false};     //!< execution was aborted by the gas cap
+    uint64_t gas_used{0};       //!< total count-class executions charged (0 if uninstrumented)
+    uint64_t class_used[dynamicalgo::GC_COUNT_N]{}; //!< per-count-class executions (index by GasClass 0..14)
+    uint64_t bulk_bytes{0};     //!< combined BULK bytes charged (memory+table fill/copy/init/grow)
+    int32_t gas_class{-1};      //!< class id that hit its cap (a GasClass), or -1 if none
+    bool out_of_gas{false};     //!< execution was aborted by a gas cap
     std::string error;          //!< human-readable reason when !ok
 };
 
-//! Run a dynamic-algo verifier module under a gas cap. On any engine-level failure
-//! (bad module, missing export, marshaling failure, out-of-gas, other trap) the
-//! result has ok=false and a populated error; callers must treat that as "no valid
-//! dynamic solution", never as a valid one. gas_limit is the maximum weighted gas
-//! the module may charge before it is trapped (a consensus constant, doc sec 8.6).
+//! Run a dynamic-algo verifier module under the per-class gas caps. On any
+//! engine-level failure (bad module, missing export, marshaling failure,
+//! out-of-gas, other trap) the result has ok=false and a populated error; callers
+//! must treat that as "no valid dynamic solution", never as a valid one. The gas
+//! limits are consensus constants (dynamicalgo::GAS_LIMIT / GAS_BULK_LIMIT, doc sec
+//! 8.6), not a parameter. meter_uncapped disables the caps for offline measurement
+//! only and MUST be false on the consensus path.
 AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
                                Span<const unsigned char> prev_hash,
                                Span<const unsigned char> payout,
@@ -66,6 +75,6 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
                                Span<const unsigned char> txs,
                                Span<const unsigned char> last_n_blocks,
                                Span<const unsigned char> solution,
-                               uint64_t gas_limit);
+                               bool meter_uncapped = false);
 
 #endif // BITCOIN_DYNAMICALGO_WASMEXEC_H
