@@ -145,6 +145,7 @@ void BlockAssembler::resetBlock()
 
     pblock->nTime = TicksSinceEpoch<std::chrono::seconds>(NodeClock::now());
     m_lock_time_cutoff = pindexPrev->GetMedianTimePast();
+    m_include_witness = DeploymentActiveAfter(pindexPrev,m_chainstate.m_chainman, Consensus::DEPLOYMENT_SEGWIT);
 
     int nPackagesSelected = 0;
     int nDescendantsUpdated = 0;
@@ -263,6 +264,9 @@ bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& packa
         if (!IsFinalTx(it->GetTx(), nHeight, m_lock_time_cutoff)) {
             return false;
         }
+	if (!m_include_witness && it->GetTx().HasWitness()) {
+	    return false;
+	}
     }
     return true;
 }

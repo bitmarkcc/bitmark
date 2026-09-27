@@ -723,6 +723,19 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
     if (tx.IsCoinBase())
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "coinbase");
 
+    if (!DeploymentActiveAfter(m_active_chainstate.m_chain.Tip(), m_active_chainstate.m_chainman, Consensus::DEPLOYMENT_SEGWIT)) {
+	if (tx.HasWitness()) {
+	    return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "no-witness-yet");
+	}
+	for (const CTxOut& txout : tx.vout) {
+	    int witness_version;
+	    std::vector<unsigned char> witness_program;
+	    if (txout.scriptPubKey.IsWitnessProgram(witness_version, witness_program)) {
+		return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "witness-output-premature");
+	    }
+	}
+    }
+    
     // Rather not work on nonstandard transactions (unless -testnet/-regtest)
     std::string reason;
     if (m_pool.m_require_standard && !IsStandardTx(tx, m_pool.m_max_datacarrier_bytes, m_pool.m_permit_bare_multisig, m_pool.m_dust_relay_feerate, reason)) {
@@ -4274,6 +4287,16 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
                                  strprintf("rejected nVersion=0x%08x block for prev height %d", block.nVersion, pindexPrev->nHeight));
     }
 
+    const bool on_fork{pindexPrev->IsSuperMajority(4, 75, 100)};
+    if ((block.IsAuxpow() || block.GetAlgo() != Algo::SCRYPT) && !on_fork) {
+	return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-version-fork",
+			     "new block format requires fork activation");
+    }
+
+    if (on_fork && (block.nVersion < 4/* || GetBlockVersion(block.nVersion) < 4*/)) {
+	return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, strprintf("bad-version(0x%08x)", block.nVersion),strprintf("version %d < 4 after fork activation", GetBlockVersion(block.nVersion)));
+    }
+    
     return true;
 }
 

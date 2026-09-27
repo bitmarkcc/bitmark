@@ -6,7 +6,7 @@ uint256 CPureBlockHeader::GetHash() const
 {
     if (GetAlgo() == Algo::EQUIHASH) {
         return GetHashE();
-    } else if (GetAlgo() == Algo::CRYPTONIGHT && this->vector_format) {
+    } else if (GetAlgo() == Algo::CRYPTONIGHT && this->vector_format) { // todo bugfix?
         return Hash256(BEGIN(vector_rep[0]), END(vector_rep[vector_rep.size() - 1]));
     }
     return Hash256(BEGIN(nVersion), END(nNonce));

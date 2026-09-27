@@ -175,7 +175,7 @@ public:
     {
         // return nVersion & BLOCK_VERSION_CHAIN;
         if (vector_format) {
-            if (vector_rep.size() < 4) return 0;
+            if (vector_rep.size() < 5) return 0;
             for (int i = 0; i < 4; i++) {
                 ((unsigned char*)&nVersion)[i] = vector_rep[4 - i];
             }

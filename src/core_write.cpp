@@ -155,10 +155,11 @@ bool ExtractMarking(const CScript& scriptPubKey, const TxoutType type, UniValue&
 {
     if (type == TxoutType::NULL_DATA) {
 	std::string data = HexStr(scriptPubKey);
-	marking.pushKV("data",data.substr(4));
+	marking.pushKV("data", data.size() > 4 ? data.substr(4) : "");
 	return true;
     }
     else if (type == TxoutType::MULTISIG) {
+	// todo bugfix?
 	std::string d1name;
 	size_t iPK = 0;
 	size_t nPubkey = 0;

@@ -182,10 +182,10 @@ bool GetBlockVariant(const int nVersion)
 
 bool CBlockIndex::OnFork() const
 {
-    if (this->pprev->IsSuperMajority(4, 75, 100))
-        return true;
-
-    return false;
+    //if (this->pprev && this->pprev->IsSuperMajority(4, 75, 100))
+    //  return true;
+    //return false;
+    return nHeight >= 450947;
 }
 
 bool CBlockIndex::IsSuperMajority(int minVersion, unsigned int nRequired, unsigned int nToCheck) const
