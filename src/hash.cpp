@@ -14,6 +14,7 @@
 #include <crypto/cryptonight/crypto/hash-ops.h>
 
 #include <bit>
+#include <cstring>
 #include <string>
 
 unsigned int MurmurHash3(unsigned int nHashSeed, Span<const unsigned char> vDataToHash)
@@ -175,6 +176,10 @@ void hash_equihash(const char* input, char* output)
 
 void hash_cryptonight(const char* input, char* output, int len)
 {
+    if (len < 43) {
+	memset(output, 0xff, 32);
+	return;
+    }
     cn_slow_hash((const void*)input, len, (char*)output, 1, 0);
 }
 

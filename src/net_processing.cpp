@@ -4435,6 +4435,10 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         }
         }
 
+	if (!CheckHeadersPoW({cmpctblock.header}, m_chainparams.GetConsensus(), *peer)) {
+	    return;
+	}
+
         const CBlockIndex *pindex = nullptr;
         BlockValidationState state;
         if (!m_chainman.ProcessNewBlockHeaders({cmpctblock.header}, /*min_pow_checked=*/true, state, &pindex)) {

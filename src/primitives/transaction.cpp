@@ -75,7 +75,8 @@ CMutableTransaction::CMutableTransaction(const CTransaction& tx) :
     nVersion(tx.nVersion),
     nLockTime(tx.nLockTime),
     vector_format(tx.vector_format),
-    vector_rep(tx.vector_rep)
+    vector_rep(tx.vector_rep),
+    keccak_hash(tx.keccak_hash)
 {}
 
 Txid CMutableTransaction::GetHash() const
@@ -142,7 +143,7 @@ CTransaction::CTransaction(CMutableTransaction&& tx) :
     nVersion(tx.nVersion),
     nLockTime(tx.nLockTime),
     vector_format(std::move(tx.vector_format)),
-    vector_rep(std::move(tx.vector_format)),
+    vector_rep(std::move(tx.vector_rep)),
     keccak_hash(std::move(tx.keccak_hash)),
     m_has_witness{ComputeHasWitness()},
     hash{ComputeHash()},
@@ -295,6 +296,8 @@ bool CAuxPow::check(const uint256& hashAuxBlock, int nChainId) const
         if (script.size() > 1000)
             return error("script sig too big\n");
     } else {
+	if (vin.empty())
+	    return error("AUX PoW coinbase has no inputs");
         script.resize(vin[0].scriptSig.size());
         std::copy(vin[0].scriptSig.begin(), vin[0].scriptSig.end(), script.begin());
     }

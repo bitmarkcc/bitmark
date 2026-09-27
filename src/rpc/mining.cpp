@@ -1243,6 +1243,9 @@ static RPCHelpMan submitheader()
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block header decode failed");
     }
     ChainstateManager& chainman = EnsureAnyChainman(request.context);
+    if (!CheckProofOfWork(h, chainman.GetConsensus())) {
+	throw JSONRPCError(RPC_VERIFY_ERROR, "high-hash");
+    }
     {
         LOCK(cs_main);
         if (!chainman.m_blockman.LookupBlockIndex(h.hashPrevBlock)) {
@@ -1311,6 +1314,12 @@ static RPCHelpMan getauxblock()
 		if (request.params.size() == 3)
 		    miningAlgoChosen = static_cast<Algo>(request.params[2].getInt<int>());
 
+		const std::string addr_in = gArgs.GetArg("-miningaddress", "");
+		const CTxDestination dest = DecodeDestination(addr_in);
+		if (!IsValidDestination(dest)) {
+		    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "getauxblock requires a valid -miningaddress");
+		}
+		
 		static unsigned int nTransactionsUpdatedLast;
 		const CTxMemPool& mempool = EnsureMemPool(node);
 		
@@ -1320,7 +1329,6 @@ static RPCHelpMan getauxblock()
 		static CBlockIndex* pindexPrev;
 		static int64_t time_start;
 		static std::unique_ptr<CBlockTemplate> pblocktemplate;
-		const std::string addr_in = gArgs.GetArg("-miningaddress", "");
 		
 		if (pindexPrev != active_chain.Tip() || miningAlgoChosen != miningAlgoGAB ||
 		    (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - time_start > 5))
@@ -1399,7 +1407,9 @@ static RPCHelpMan getauxblock()
 	    ss >> TX_NO_WITNESS(pow);
 	    blockptr->auxpow = std::make_shared<CAuxPow>(pow);
 	    blockptr->SetAuxpow(true);
-	    assert(block.GetHash() == hash);
+	    if (blockptr->GetHash() != hash) {
+		throw JSONRPCError(RPC_INTERNAL_ERROR, "block hash changed after attaching auxpow");
+	    }
 
 	    bool new_block;
 	    bool accepted = chainman.ProcessNewBlock(blockptr, /*force_processing=*/true, /*min_pow_checked=*/true, /*new_block=*/&new_block);

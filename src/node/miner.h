@@ -181,6 +181,7 @@ private:
     // Chain context for the block
     int nHeight;
     int64_t m_lock_time_cutoff;
+    bool m_include_witness{true};
 
     /** Bitmark: mempool transactions this template must NOT contain. Two kinds:
      *  solution-pot CLAIMS when this block has no valid solution (see ExcludePotClaims),

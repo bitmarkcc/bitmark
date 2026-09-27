@@ -176,6 +176,7 @@ void BlockAssembler::resetBlock()
 
     pblock->nTime = TicksSinceEpoch<std::chrono::seconds>(NodeClock::now());
     m_lock_time_cutoff = pindexPrev->GetMedianTimePast();
+    m_include_witness = DeploymentActiveAfter(pindexPrev,m_chainstate.m_chainman, Consensus::DEPLOYMENT_SEGWIT);
 
     if (onMultiPoWFork) {
 	CBlockIndex* pprevAlgo = pindexPrev;
@@ -427,10 +428,15 @@ bool BlockAssembler::TestPackage(uint64_t packageSize, int64_t packageSigOpsCost
 
 // Perform transaction-level checks before adding to block:
 // - transaction finality (locktime)
+// - no witness data when segwit is not active
+// - Bitmark: not an excluded solution tx
 bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& package) const
 {
     for (CTxMemPool::txiter it : package) {
         if (!IsFinalTx(it->GetTx(), nHeight, m_lock_time_cutoff)) {
+            return false;
+        }
+        if (!m_include_witness && it->GetTx().HasWitness()) {
             return false;
         }
         // Bitmark: an unjudged solution tx must not reach the block (see m_exclude).

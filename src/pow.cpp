@@ -479,6 +479,10 @@ bool CheckAuxPowProofOfWork(const CBlockHeader& block, const Consensus::Params& 
         return error("%s : AUX equihash solution failed", __func__);
     }
 
+    if (algo == Algo::CRYPTONIGHT && block.auxpow->parentBlock.vector_format && block.auxpow->parentBlock.vector_rep.size() < 43) {
+	return error("%s: AUX cryptonight parent block too short", __func__);
+    }
+
     if (!CheckProofOfWork(block.auxpow->getParentBlockPoWHash(algo), block.nBits, params, block.GetAlgo())) {
         return error("%s : AUX proof of work failed", __func__);
     }

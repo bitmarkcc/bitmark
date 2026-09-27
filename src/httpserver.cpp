@@ -58,6 +58,7 @@ public:
     void operator()() override
     {
         func(req.get(), path);
+	//todo bugfix?
     }
 
     std::unique_ptr<HTTPRequest> req;
