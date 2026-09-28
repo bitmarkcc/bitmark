@@ -182,11 +182,12 @@ bool GetBlockVariant(const int nVersion)
 
 bool CBlockIndex::OnFork() const
 {
-    // Regtest: the Multi-PoW fork is active from the start (matches the miner's
-    // onMultiPoWFork), so per-algo logic works in tests without reaching a huge height.
-    if (Params().IsRegTest())
-	return true;
-    else if (!Params().IsTestChain() && this->nHeight >= 450947)
+    // Mainnet: the Multi-PoW fork activated at a fixed (buried) height. Test chains
+    // (testnet AND regtest): gate on the v4 supermajority, so regtest reaches the fork
+    // the same way rather than from genesis. (A regtest fork-from-genesis special case
+    // shifted the SSF cadence and subsidy and broke the unit-test fixtures; the miner's
+    // onMultiPoWFork must match this -- see node/miner.cpp.)
+    if (!Params().IsTestChain() && this->nHeight >= 450947)
 	return true;
     else if (Params().IsTestChain() && this->pprev && this->pprev->IsSuperMajority(4, 75, 100))
 	return true;

@@ -147,10 +147,15 @@ void BlockAssembler::resetBlock()
 	}
 	onMultiPoWFork = nHeight >= 376;
     }
-    // Regtest: the Multi-PoW fork is active from the start so that setminingalgo can
-    // mine blocks of any algo (needed to activate the per-algo version-5 fork in tests).
-    if (chainparams.GetChainType() == ChainType::REGTEST) {
-	onMultiPoWFork = true;
+    else if (chainparams.GetChainType() == ChainType::REGTEST) {
+	// Regtest stays pre-fork here: the miner does not set algo bits or SSF key-block
+	// flags, so blocks are plain v5 (algo SCRYPT) and the SSF cadence/scaling machinery
+	// stays dormant. OnFork() still activates for validation via the v4 supermajority
+	// (~height 75), but with no SSF key blocks the subsidy is the unscaled base on both
+	// the miner and validation sides -- consistent, and matching the pre-c8d8cdd7e
+	// behavior the unit-test fixtures expect. (A fork-from-genesis special case here set
+	// algo/SSF flags that shifted the SSF cadence and subsidy and broke those fixtures.)
+	onMultiPoWFork = false;
     }
 
     if (onMultiPoWFork)
