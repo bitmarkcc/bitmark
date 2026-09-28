@@ -20,6 +20,9 @@
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <cuckoocache.h>
+#include <dynamicalgo/reward.h>
+#include <dynamicalgo/solution.h>
+#include <dynamicalgo/wasmexec.h>
 #include <flatfile.h>
 #include <hash.h>
 #include <kernel/chain.h>
@@ -2818,6 +2821,106 @@ static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& vie
     return true;
 }
 
+// Bitmark: resolve the dynamic algo active for mPoW `slot` as of the parent chain
+// (evaluated on `pprev`, so a block can never self-activate). Returns the OP_PUSHCODE
+// branch-tip hash of the winning, matured anchored-window vote, or nullopt when the
+// slot is primitive-only (no algo voted in).
+//
+// SEAM (Phase 6.4, doc dynamic-algo-voting.md sec "Activation"): the anchored-window
+// tally + activation-delay resolution is not implemented yet, so this returns nullopt
+// unconditionally -- every slot is primitive-only and chain behavior is unchanged. When
+// it lands, ConnectBlock below immediately begins enforcing the dynamic reward split.
+static std::optional<uint256> GetActiveAlgoBranch(const CBlockIndex* pprev, int slot,
+                                                  const Consensus::Params& params)
+{
+    (void)pprev;
+    (void)slot;
+    (void)params;
+    return std::nullopt;
+}
+
+// Bitmark: the dynamic-algo reward split (doc sec 4, 7 steps 3-5). When the block's
+// slot has an active dynamic algo, this assembles the slot's materialized module, runs
+// verify() on the block's assembled solution under the consensus gas/memory limits,
+// derives the alpha/beta split, enforces the payout floor on the coinbase, and returns
+// the coinbase-value ceiling. With no active algo it yields the primitive ceiling
+// (subsidy + fees), i.e. today's behavior. Returns false (state set) on a
+// consensus-invalid block: unavailable module, malformed solution set, module fault /
+// gas or memory breach, or an unmet payout floor.
+static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
+                                   const CBlockIndex* pindex, CAmount subsidy, CAmount fees,
+                                   CAmount& max_coinbase_value, BlockValidationState& state)
+    EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+{
+    max_coinbase_value = subsidy + fees; // primitive default (unchanged behavior)
+
+    const int slot = static_cast<int>(pindex->GetAlgo());
+    const std::optional<uint256> branch =
+        GetActiveAlgoBranch(pindex->pprev, slot, chainstate.m_chainman.GetConsensus());
+    if (!branch) return true; // slot is primitive-only
+
+    // Assemble the slot's materialized algo module from the OP_PUSHCODE code DB.
+    std::vector<unsigned char> module;
+    std::string reason;
+    const PushCodeStatus st = chainstate.AssemblePushCode(*branch, module, reason);
+    if (st != PushCodeStatus::COMPLETE) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "dynamic-algo-unavailable", reason);
+    }
+
+    // Collect the block's OP_SOLUTION outputs: seq=0 is the payout scriptPubKey, seq=1..N-1
+    // concatenated is the solution fed to verify() (doc sec 2.1).
+    dynamicalgo::BlockSolution sol;
+    std::string serr;
+    if (!dynamicalgo::ExtractBlockSolution(block, sol, serr)) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-solution", serr);
+    }
+
+    // Run verify() under the consensus gas/memory limits. alpha/beta are read even when
+    // no solution is present (empty solution), since the split's no-solution branch needs
+    // them (doc sec 3).
+    // TODO (verifier ABI, still open): the framing of input 2 (current block's
+    // non-coinbase txs) and input 1 (the n previous slot blocks) is not yet pinned -- it
+    // is co-designed with the reference verifier -- so both are passed empty here. The
+    // prev_hash, payout, nbits and solution inputs are final.
+    const uint256 prev = pindex->pprev ? pindex->pprev->GetBlockHash() : uint256();
+    const AlgoVerifyResult vr = RunAlgoVerify(
+        module,
+        Span<const unsigned char>{prev.begin(), prev.size()},
+        sol.payout,
+        block.nBits,
+        /*txs=*/Span<const unsigned char>{},
+        /*last_n_blocks=*/Span<const unsigned char>{},
+        sol.bytes);
+    if (!vr.ok) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
+                             vr.out_of_gas ? "dynamic-algo-out-of-gas" : "dynamic-algo-fault",
+                             vr.error);
+    }
+
+    // alpha/beta are Q32 u32, so 0 <= alpha,beta < 1 is automatic (doc sec 3): no check.
+    // A valid dynamic solution requires both verify()==0 and actual solution outputs.
+    const bool valid = vr.solution_valid && sol.found;
+    const dynamicalgo::RewardSplit split =
+        dynamicalgo::ComputeRewardSplit(subsidy, fees, vr.alpha_q32, vr.beta_q32, valid);
+    max_coinbase_value = split.max_coinbase_value;
+
+    if (valid && split.required_payout > 0) {
+        // Payment floor (doc sec 4.3): the coinbase must pay >= required_payout to the
+        // committed payout scriptPubKey. Sum matching coinbase outputs (>= is the rule;
+        // a rational miner pays exactly). Seed binding (inside verify) already prevents
+        // redirecting the payout without invalidating the solution.
+        const CScript payout_spk(sol.payout.data(), sol.payout.data() + sol.payout.size());
+        CAmount paid = 0;
+        for (const CTxOut& o : block.vtx[0]->vout) {
+            if (o.scriptPubKey == payout_spk) paid += o.nValue;
+        }
+        if (paid < split.required_payout) {
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-dynamic-payout");
+        }
+    }
+    return true;
+}
+
 /** Apply the effects of this block (with given index) on the UTXO set represented by coins.
  *  Validity checks that depend on the UTXO set are also done; ConnectBlock()
  *  can fail if those validity checks fail (among other reasons). */
@@ -3165,7 +3268,17 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
              Ticks<SecondsDouble>(time_connect),
              Ticks<MillisecondsDouble>(time_connect) / num_blocks_total);
 
-    CAmount blockReward = nFees + GetBlockSubsidy(pindex, params.GetConsensus());
+    // SSF-scaled subsidy (scale defaults true), i.e. S in the reward math (doc sec 4).
+    const CAmount subsidy = GetBlockSubsidy(pindex, params.GetConsensus());
+    CAmount blockReward = subsidy + nFees; // coinbase-value ceiling (primitive default)
+    if (flags & SCRIPT_VERIFY_PUSHCODE) {
+        // Bitmark dynamic-algo reward split (doc sec 4, 7). When the block's slot has an
+        // active dynamic algo, this runs verify(), sets blockReward to the dynamic
+        // ceiling, and enforces the payout floor; otherwise blockReward is unchanged.
+        if (!CheckDynamicAlgoReward(*this, block, pindex, subsidy, nFees, blockReward, state)) {
+            return false; // state populated by the helper
+        }
+    }
     if (block.vtx[0]->GetValueOut() > blockReward) {
         LogPrintf("ERROR: ConnectBlock(): coinbase pays too much (actual=%d vs limit=%d)\n", block.vtx[0]->GetValueOut(), blockReward);
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-amount");

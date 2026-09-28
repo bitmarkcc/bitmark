@@ -80,9 +80,11 @@ transaction (they fund it with a small UTXO of their own — a tx cannot be inpu
 It carries both the payout commitment and the solution chunks, and the block's PoW
 commits to it via the merkle root like any tx.
 
-**Payout commitment.** The dynamic miner's payout scriptPubKey is declared in the
-solution tx (e.g. as the `seq = 0` header of the solution stream, or a dedicated
-marker output). It serves two roles:
+**Payout commitment.** The dynamic miner's payout scriptPubKey is the **`seq = 0`
+chunk** of the solution stream; the solution bytes fed to `verify()` are the
+concatenation of `seq = 1..N-1`. (One uniform rule for both the solution-tx and
+coinbase forms — no separate marker output — and a scriptPubKey easily fits one
+`≤ 520 B` chunk.) It serves two roles:
 1. **Seed binding.** `seed = Hash256(payout_scriptPubKey || prev_block_hash)`. The
    solution is bound to the payout, so no one can redirect the dynamic share by
    rewriting the payout — that changes the seed and the solution no longer verifies.
@@ -106,12 +108,22 @@ OP_RETURN OP_SOLUTION <seq> <chunk>
 - Chunk ≤ 520 bytes (`MAX_SCRIPT_ELEMENT_SIZE`). Consensus cap `MAX_SOLUTION_BYTES`
   on the per-block total bounds block size and verification cost.
 
-**Delivery.** In the base model the dynamic miner hands the solution tx to the pool
-out-of-band (dynamic miners sell solutions; pools include them and pay the bound
-payout), so it need not be relayable. Optionally we can make solution txs relay across
-the p2p network so any pool can pick them up — that needs standardness rules for
-`OP_SOLUTION` (multiple OP_RETURNs allowed, `MAX_SOLUTION_BYTES`). Start out-of-band;
-add relay later (§9).
+**Delivery.** The primary model is ordinary **mempool relay**: the dynamic miner funds
+the solution tx with a small input, leaves a relay fee, and broadcasts it p2p like any
+transaction; it propagates to every pool, and whichever pool mines it includes it and
+pays the bound payout. This is safe *because of seed binding* — the payout scriptPubKey
+is committed inside the solution and `seed = Hash256(payout ‖ prev_hash)`, so whoever
+mines the tx MUST pay `α·r` to the dynamic miner's committed address (rewriting it
+changes the seed and the solution no longer verifies). So the author is paid regardless
+of who mines it, which makes relay permissionless — no private sale needed, and no
+front-running risk. The relay fee lands in `nFees` and the coinbase claims it.
+
+Enabling this is purely **policy/mempool work, not consensus** (§9): relax standardness
+so a tx may carry multiple `OP_RETURN OP_SOLUTION` outputs, and add a per-tx relay-size
+cap (a policy limit, distinct from any consensus rule). Out-of-band hand-off (a dynamic
+miner selling a solution directly to a pool) remains possible as a fallback but is no
+longer the assumed path. Either way, **consensus is identical**: `ConnectBlock` scans
+the whole block for `OP_SOLUTION` outputs (§7) and does not care how the tx arrived.
 
 ### 2.2 Alternative: solution in the coinbase
 The separate solution tx (§2.1) is the form that makes standard GBT pool integration
@@ -296,6 +308,21 @@ With `r = subsidy + total_fees`, `S = subsidy`, `F = total_fees`:
 
 Everything floors downward, uses the same `fp_mul` on every node, and is constructed so
 the total is always `≤ r`. RESOLVED (was the last open reward-math item).
+
+**Negative subsidy (SSF near-peak region).** Bitmark's SSF can drive the scaled subsidy
+`S` **below zero** in a narrow region (hashrate above ~97.6% of peak) — a pre-existing
+property of `GetBlockSubsidy` that consensus must preserve (correcting it would be a hard
+fork). The split handles this soft-fork-safely, *without* touching `GetBlockSubsidy` or the
+primitive coinbase check:
+- **Valid solution:** the split keys off `r = S + F`, not `S`. When fees cover the
+  shortfall (`r > 0`) the dynamic miner still earns `α·r` — the reward simply comes from
+  fees — and the ceiling is `r = S + F` (exactly the old-node ceiling). If `r ≤ 0` nothing
+  is owed and the block fails the existing `> S+F` coinbase check anyway.
+- **No solution:** `β·(1−α)·S` would move a negative `S` *up* toward zero, exceeding the
+  primitive ceiling `S+F` and breaking soft-fork safety. So for `S < 0` the primitive `S`
+  is emitted unchanged (ceiling `= S+F`, identical to old nodes).
+`fp_mul` is thus only ever given non-negative inputs, and `max_coinbase_value ≤ S+F` holds
+in every region. Enforced in `dynamicalgo/reward.cpp` (`ComputeRewardSplit`).
 
 ---
 
@@ -850,15 +877,62 @@ under their limits (binding class VAR at ~52% of budget, combined BULK ≈ 2.05 
   validation-set selection must itself be grinding-resistant; the prev-block-hash half
   is not grindable without redoing that block's PoW.
 
-### 8.8 Bounding AOT compilation (deterministic, without a governance dependency)
+### 8.8 Bounding AOT compilation
+
+> **STATUS: deferred (decided 2026-09-24).** The deterministic static caps below
+> are the intended long-term design but are **not being built now**. Rationale: an
+> algo with pathological compile cost is very unlikely to pass governance, and even
+> if one did, the dynamic solution is *optional per block* -- miners simply mine
+> **primitive** (non-dynamic) blocks for that slot until a replacement algo is voted
+> in, so a bad algo degrades the dynamic slot rather than halting the chain. This
+> consciously makes **governance vetting + the activation lead time the security root
+> for compile cost, for now** (a reversal of the "don't rely on social vetting"
+> stance below, taken deliberately as a prioritization call).
+>
+> **Residual risk being accepted:** the primitive-block fallback fully covers a
+> merely *slow* algo (nodes lag at activation then catch up -- the §8.4 hardware-floor
+> case, no fork). The one case it does *not* cover is an algo that **compiles on some
+> nodes but OOMs / never finishes on others** while a miner produces a dynamic block
+> against it -- that is a fast/slow validity split, not just degraded service.
+> Governance review + lead time is what carries this risk until the caps below are
+> implemented. Execution-time gas (§8.6) is unaffected and remains enforced.
+
+**Measured anchors (trunk / MoE verifiers, 2026-09-24).** Per-function maxima over
+the real verifiers, to anchor future caps (legit algos need very little; caps get
+generous headroom + `wamrc` fuzzing at the caps to fix the safe ceiling). Tool:
+walks the code section with the instrumenter's opcode decoder. Notably clang emits
+**only empty (`0x40`) block types** (0 non-empty across the module), so conditionals
+lower to `br_if`/`select` (max `if` = 0) and the operand-stack depth below is exact,
+not estimated.
+
+| per-function metric | trunk (SIMD) | MoE | drives (LLVM/wamrc) |
+|---|---:|---:|---|
+| instructions | 4,449 | 4,449 | SSA values, most passes |
+| body bytes | 8,839 | 8,839 | decode + overall |
+| ctrl structures (block+loop+if) | 263 | 263 | ~basic-block count |
+| blocks / loops | 211 / 52 | 211 / 52 | CFG size, loop passes |
+| branches (br/br_if/br_table) | 381 | 381 | CFG edges |
+| calls | 63 | 63 | inlining / callgraph |
+| scalar mem ops | 416 | 416 | mem/alias analysis |
+| params + locals | 125 | 101 | register pressure |
+| control-nesting depth | 35 | 35 | dominator-tree depth |
+| loop-nesting depth | 5 | 5 | nested-loop passes |
+| operand-stack depth (exact) | 42 | 27 | intra-expr live temps |
+| br_table fan-out | 57 | 57 | jump-table CFG edges |
+
+Module-level (trunk SIMD): 196 defined functions, 1 table, 2 globals, 1 memory,
+2 data + 1 elem segment, ~86 KB code. All values are tiny for LLVM, so the caps,
+when built, can sit far above the trunk and still never bother a legitimate algo.
+
+**Intended approach when revisited** -- deterministic caps, no governance dependency:
 
 `wamrc` compile time/memory can blow up on adversarial `.wasm` (LLVM passes are
 superlinear in some per-function metrics, and for arbitrary input the cost is not
 statically predictable). Compilation is rare -- once per algo activation (~8 algos,
-with a long governance lead time before the algo is active) -- but it must be bounded
-**without relying on social vetting as the security root** (that would undercut
-trustlessness). Governance and the activation lead time are defense-in-depth, not the
-guarantee.
+with a long governance lead time before the algo is active) -- but the goal is to
+bound it **without relying on social vetting as the security root** (that would
+undercut trustlessness). Governance and the activation lead time are defense-in-depth,
+not the guarantee.
 
 - **Per-function structural caps (consensus, static):** cap the *per-function* metrics
   that drive superlinear passes -- instruction count, basic-block count, operand/SSA +
@@ -897,18 +971,33 @@ guarantee.
 
 ## 9. Open items / parameters
 
-- `MAX_SOLUTION_BYTES` value; exact payout-commitment layout in the solution tx (or
-  coinbase) and how the verifier locates it.
+- **SSF over-payment fix (bundle into the dynamic-algo activation soft fork).** The
+  legacy `GetBlockSubsidy` truncates the SSF penalty via `convert_to<uint32_t>()`, so
+  near an algo's hashrate peak the scaled subsidy comes out ABOVE the value the formula
+  intends. It is bounded `≤ baseSubsidy` (so NOT an inflation/supply bug -- the emission
+  cap holds), but it over-pays vs the formula in that region. This is soft-fork-fixable
+  (a *tightening*): add `GetBlockSubsidyCorrected()` computing the penalty in wide
+  integers, and from the fork's activation height enforce
+  `coinbase ≤ nFees + min(S_buggy, S_correct)`; feed that same corrected/`min` `S` into
+  `ComputeRewardSplit` (one-line change at the ConnectBlock call site) so the ceiling and
+  `α·r` agree. NOT in scope: the near-peak NEGATIVE region is the formula's own behavior
+  and clamping it up to 0 is a *raise* = hard fork; leave it (the dynamic split already
+  handles negative `S` safely, §4.4). Priority: finish the dynamic-algo mechanism first.
+- Solution assembly: RESOLVED -- no consensus `MAX_SOLUTION_BYTES` (block weight + gas
+  bound it, §2.1); payout scriptPubKey is the `seq=0` chunk, solution is `seq=1..N-1`
+  (§2.1); assembled by `dynamicalgo::ExtractBlockSolution`.
 - `submitsolution`-style RPC for handing a solution tx to the node, and the node-side
   template policy that injects it + the `dynamic` GBT field (§6bis).
-- Relay of solution txs: keep out-of-band, or add `OP_SOLUTION` relay standardness
-  (multiple OP_RETURNs, `MAX_SOLUTION_BYTES`) so solutions propagate p2p (§2.1).
-- Gas metering: mechanism + 13 count classes + combined BULK budget + measured
-  trunk profile + per-class limits + per-op times all calibrated (§8.6). **Still
-  open (implementation):** the runtime currently ships a single combined `usegas`
-  counter; the per-class split needs wiring into both the instrumenter (per-class
-  charges + bulk-N via a scratch local/global) and the runtime (per-class counters
-  + per-class limits + the 8 GiB BULK budget).
+- Relay of solution txs (policy, not consensus): mempool relay is the primary delivery
+  model (§2.1). Needs `OP_SOLUTION` standardness (allow multiple `OP_RETURN`s) + a per-tx
+  relay-size cap so solutions propagate p2p. Out-of-band hand-off stays as a fallback.
+- Gas metering (§8.6): **implemented.** Mechanism + 15 count classes + combined BULK
+  budget + measured trunk profile + per-class limits + per-op times calibrated, and
+  per-class enforcement wired end-to-end: shared taxonomy/limits in
+  `src/dynamicalgo/gasclasses.h`, per-class + bulk-N-via-scratch-global charges in
+  `gasinstrument.cpp`, per-class counters + limits + 8 GiB BULK budget + per-class
+  trap in `wasmexec.cpp`. Instrumenter output verified to type-check/compile on the
+  trunk, MoE, and non-SIMD verifiers; trunk counts all sit under the limits.
 - Materialized-algo store: format and where the ~8 activated modules live; re-vote
   swap-in.
 - Per-height/per-algo RSF index: storage format and rebuild-on-reindex.
@@ -923,9 +1012,11 @@ guarantee.
 - WAMR vendoring: *done* -- pinned to commit `b70d708`, vendored to `src/wamr/`, bridge
   rewritten against WAMR's AOT API (§8.1). *Still open:* the offline `wamrc`
   AOT-compile step with pinned per-arch target flags at algo activation.
-- **Structural caps** (§8.8): the exact per-function + module-level metrics and their
-  values (consensus); the pinned `wamrc` opt pipeline; a `wamrc` fuzzing harness to
-  validate the compile bound.
+- **Structural caps / compile-time bound** (§8.8): **deferred (2026-09-24).** Relying
+  on governance vetting + activation lead time + the primitive-block fallback for now
+  (see §8.8 STATUS). Trunk/MoE per-function metrics measured and recorded as future
+  anchors. Still to build when revisited: exact consensus cap values, the pinned
+  `wamrc` opt pipeline, and a `wamrc` fuzzing harness.
 - **Fast JIT fallback** (§8.8): *evaluated -- not viable* (no SIMD; crashes on the
   trunk). Compile-bound rests on the LLVM-AOT path (structural caps).
 - Data availability of LLM validation examples: inline merkle-branch proofs carried in

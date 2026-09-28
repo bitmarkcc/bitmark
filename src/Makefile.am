@@ -172,6 +172,8 @@ BITCOIN_CORE_H = \
   deploymentinfo.h \
   deploymentstatus.h \
   dynamicalgo/gasclasses.h \
+  dynamicalgo/reward.h \
+  dynamicalgo/solution.h \
   dynamicalgo/wasmexec.h \
   external_signer.h \
   flatfile.h \
@@ -487,6 +489,8 @@ libbitcoin_node_a_SOURCES = \
   txmempool.cpp \
   txorphanage.cpp \
   txrequest.cpp \
+  dynamicalgo/reward.cpp \
+  dynamicalgo/solution.cpp \
   dynamicalgo/wasmexec.cpp \
   validation.cpp \
   validationinterface.cpp \
@@ -985,8 +989,10 @@ if BUILD_BITCOIN_KERNEL_LIB
 lib_LTLIBRARIES += $(LIBBITCOINKERNEL)
 
 libbitcoinkernel_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS) $(PTHREAD_FLAGS)
-libbitcoinkernel_la_LIBADD = $(LIBBITCOIN_CRYPTO) $(LIBLEVELDB) $(LIBMEMENV) $(LIBSECP256K1)
-libbitcoinkernel_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS)
+libbitcoinkernel_la_LIBADD = $(LIBBITCOIN_CRYPTO) $(LIBLEVELDB) $(LIBMEMENV) $(LIBSECP256K1) $(LIBWAMR)
+# Bitmark: dynamic-algo verification is consensus, so the kernel builds the WAMR bridge
+# (dynamicalgo/wasmexec.cpp) and links the vendored WAMR runtime; it needs WAMR's headers.
+libbitcoinkernel_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -I$(srcdir)/wamr/core/iwasm/include $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS)
 
 # libbitcoinkernel requires default symbol visibility, explicitly specify that
 # here so that things still work even when user configures with
@@ -1013,6 +1019,9 @@ libbitcoinkernel_la_SOURCES = \
   dbwrapper.cpp \
   deploymentinfo.cpp \
   deploymentstatus.cpp \
+  dynamicalgo/reward.cpp \
+  dynamicalgo/solution.cpp \
+  dynamicalgo/wasmexec.cpp \
   flatfile.cpp \
   hash.cpp \
   kernel/chain.cpp \
