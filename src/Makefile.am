@@ -171,6 +171,7 @@ BITCOIN_CORE_H = \
   dbwrapper.h \
   deploymentinfo.h \
   deploymentstatus.h \
+  dynamicalgo/algovote.h \
   dynamicalgo/gasclasses.h \
   dynamicalgo/reward.h \
   dynamicalgo/solution.h \
@@ -489,6 +490,7 @@ libbitcoin_node_a_SOURCES = \
   txmempool.cpp \
   txorphanage.cpp \
   txrequest.cpp \
+  dynamicalgo/algovote.cpp \
   dynamicalgo/reward.cpp \
   dynamicalgo/solution.cpp \
   dynamicalgo/wasmexec.cpp \
@@ -1019,6 +1021,7 @@ libbitcoinkernel_la_SOURCES = \
   dbwrapper.cpp \
   deploymentinfo.cpp \
   deploymentstatus.cpp \
+  dynamicalgo/algovote.cpp \
   dynamicalgo/reward.cpp \
   dynamicalgo/solution.cpp \
   dynamicalgo/wasmexec.cpp \

@@ -5,6 +5,7 @@
 #include <addresstype.h>
 #include <chain.h>
 #include <coins.h>
+#include <dynamicalgo/algovote.h>
 #include <consensus/amount.h>
 #include <core_io.h>
 #include <key_io.h>
@@ -46,35 +47,10 @@ constexpr int YEAR_BLOCKS = 720 * 365;   // 262800 blocks (~1 year), for the fee
 
 using valtype = std::vector<unsigned char>;
 
-// Slot is stored as a 1-byte value in vSolutions (0..NUM_ALGOS-1).
-int DecodeSlot(const valtype& v) { return v.empty() ? 0 : v[0]; }
-
-// Relative timelock (CScriptNum, up to 5 bytes) from a STAKE_VOTE's vSolutions.
-int64_t DecodeLock(const valtype& v)
-{
-    if (v.empty()) return 0;
-    return CScriptNum(v, /*fRequireMinimal=*/false, 5).getint();
-}
-
-// Total transaction fees in a block (sum of inputs - outputs over non-coinbase
-// txs). Needs the block's undo data for the spent-input values.
-CAmount BlockTotalFees(const CBlock& block, const CBlockUndo& undo)
-{
-    CAmount fees{0};
-    for (size_t i = 1; i < block.vtx.size(); ++i) {
-        if (i - 1 >= undo.vtxundo.size()) break;
-        CAmount in{0}, out{0};
-        for (const Coin& c : undo.vtxundo[i - 1].vprevout) in += c.out.nValue;
-        for (const CTxOut& o : block.vtx[i]->vout) out += o.nValue;
-        if (in > out) fees += in - out;
-    }
-    return fees;
-}
-
-struct Tally {
-    CAmount fee_weight{0}; // sum of floor(fee / num_outputs) over this branch's FEE_VOTE outputs
-    CAmount stake{0};      // sum of locked stake amounts over this branch's STAKE_VOTE outputs
-};
+// The vote parsing, per-block tally, fee floor and window-winner logic live in the shared
+// consensus module dynamicalgo/algovote.h, so this informational RPC and the consensus
+// activation resolver read votes and pick winners identically.
+using Tally = dynamicalgo::VoteTally; // { fee_weight, stake }
 
 } // namespace
 
@@ -174,29 +150,10 @@ static RPCHelpMan getalgovote()
                     if (!chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) continue;
                     CBlockUndo undo;
                     const bool have_undo{pindex->nHeight > 0 && chainman.m_blockman.UndoReadFromDisk(undo, *pindex)};
-                    if (have_undo) fees[h - search_lo] = BlockTotalFees(block, undo);
-
-                    for (size_t i = 1; i < block.vtx.size(); ++i) { // skip coinbase
-                        const CTransaction& tx = *block.vtx[i];
-                        CAmount fee_share{0};
-                        if (have_undo && i - 1 < undo.vtxundo.size() && !tx.vout.empty()) {
-                            CAmount in{0}, out{0};
-                            for (const Coin& c : undo.vtxundo[i - 1].vprevout) in += c.out.nValue;
-                            for (const CTxOut& o : tx.vout) out += o.nValue;
-                            const CAmount fee{in - out};
-                            if (fee > 0) fee_share = fee / (CAmount)tx.vout.size();
-                        }
-                        for (const CTxOut& o : tx.vout) {
-                            std::vector<valtype> sols;
-                            const TxoutType type{Solver(o.scriptPubKey, sols)};
-                            if (type == TxoutType::FEE_VOTE && DecodeSlot(sols[1]) == slot) {
-                                votes[h][uint256(sols[0])].fee_weight += fee_share;
-                            } else if (type == TxoutType::STAKE_VOTE && DecodeSlot(sols[1]) == slot
-                                       && DecodeLock(sols[2]) >= voting_period) {
-                                votes[h][uint256(sols[0])].stake += o.nValue;
-                            }
-                        }
-                    }
+                    if (!have_undo) undo = CBlockUndo{}; // empty on failure: fees 0, FEE_VOTE weight 0
+                    fees[h - search_lo] = dynamicalgo::BlockTotalFees(block, undo);
+                    std::map<uint256, Tally> bv{dynamicalgo::BlockVotesForSlot(block, undo, slot, voting_period)};
+                    if (!bv.empty()) votes[h] = std::move(bv);
                 }
 
                 // Prefix sums of block fees -> O(1) year-fee (the fee floor's basis).
@@ -208,7 +165,7 @@ static RPCHelpMan getalgovote()
                     const int ye{f - 1};
                     if (ye < search_lo) return 0;
                     const int ys{std::max(search_lo, ye - YEAR_BLOCKS + 1)};
-                    return (pref[ye - search_lo + 1] - pref[ys - search_lo]) / 730;
+                    return dynamicalgo::VoteFeeFloor(pref[ye - search_lo + 1] - pref[ys - search_lo]);
                 };
 
                 // Pass 2: latest anchored winning window. A candidate window starts at a
@@ -233,12 +190,8 @@ static RPCHelpMan getalgovote()
 
                     uint256 b;
                     bool found{false};
-                    for (const auto& [cb, t] : cand) {
-                        if (ftot > 0 && ktot > 0 && ftot >= floor
-                            && (__int128)4 * t.fee_weight >= (__int128)3 * ftot
-                            && (__int128)4 * t.stake >= (__int128)3 * ktot) {
-                            b = cb; found = true; break;
-                        }
+                    if (const auto win{dynamicalgo::VoteWindowWinner(cand, floor)}) {
+                        b = *win; found = true;
                     }
 
                     if (rep_f < 0) { // latest candidate window: report it if no winner
