@@ -148,19 +148,17 @@ void BlockAssembler::resetBlock()
 	onMultiPoWFork = nHeight >= 376;
     }
     else if (chainparams.GetChainType() == ChainType::REGTEST) {
-	// Regtest stays pre-fork here: the miner does not set algo bits or SSF key-block
-	// flags, so blocks are plain v5 (algo SCRYPT) and the SSF cadence/scaling machinery
-	// stays dormant. OnFork() still activates for validation via the v4 supermajority
-	// (~height 75), but with no SSF key blocks the subsidy is the unscaled base on both
-	// the miner and validation sides -- consistent, and matching the pre-c8d8cdd7e
-	// behavior the unit-test fixtures expect. (A fork-from-genesis special case here set
-	// algo/SSF flags that shifted the SSF cadence and subsidy and broke those fixtures.)
-	onMultiPoWFork = false;
+	// Regtest activates the Multi-PoW fork at fixed height 750, matching OnFork() for the
+	// block being built (nHeight = pindexPrev->nHeight + 1 here). 750 > COINBASE_MATURITY
+	// (720) keeps the default test fixtures pre-fork; once functional tests mine past 750
+	// the miner sets the algo so multi-algo mining (per-algo v5) works. A fixed height
+	// keeps OnFork() O(1) -- see the note in chain.cpp OnFork().
+	onMultiPoWFork = nHeight >= 750;
     }
 
     if (onMultiPoWFork)
 	pblock->SetAlgo(algo);
-    
+
     // -regtest only: allow overriding block.nVersion with
     // -blockversion=N to test forking scenarios
     if (chainparams.MineBlocksOnDemand()) {

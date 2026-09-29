@@ -182,13 +182,19 @@ bool GetBlockVariant(const int nVersion)
 
 bool CBlockIndex::OnFork() const
 {
-    // Mainnet: the Multi-PoW fork activated at a fixed (buried) height. Test chains
-    // (testnet AND regtest): gate on the v4 supermajority, so regtest reaches the fork
-    // the same way rather than from genesis. (A regtest fork-from-genesis special case
-    // shifted the SSF cadence and subsidy and broke the unit-test fixtures; the miner's
-    // onMultiPoWFork must match this -- see node/miner.cpp.)
+    // Mainnet: the Multi-PoW fork activated at a fixed (buried) height. Testnet gates on
+    // the v4 supermajority (its version schedule reaches 75-of-100 near height 376).
+    // Regtest activates at a fixed height 750, chosen > COINBASE_MATURITY (720, the number
+    // of blocks the default C++ test fixtures mine) so those fixtures stay PRE-fork (SSF
+    // machinery dormant, stable tip hash) while functional tests cross it by mining. A
+    // fixed height keeps this O(1): OnFork() is called inside per-block loops (e.g. the
+    // RSF / money-supply walks), so a supermajority scan here would make long-chain tests
+    // (the reserve-fee expiry aging) quadratic. The miner's onMultiPoWFork must match --
+    // see node/miner.cpp.
     if (!Params().IsTestChain() && this->nHeight >= 450947)
 	return true;
+    else if (Params().IsRegTest())
+	return this->nHeight >= 750;
     else if (Params().IsTestChain() && this->pprev && this->pprev->IsSuperMajority(4, 75, 100))
 	return true;
 

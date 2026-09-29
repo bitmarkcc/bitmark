@@ -103,7 +103,12 @@ class ReserveFeeTest(BitcoinTestFramework):
         bad_algo_spk = reservefee_spk(8, 0x8000, pkh)  # algo 8 is out of [0, NUM_ALGOS)
 
         # ---- Phase 1: covenant NOT active (version-4 chain) ----
-        self.gen(COINBASE_MATURITY + 5)
+        # Mine > 750 v4 blocks to cross the regtest Multi-PoW fork gate (v4 supermajority
+        # of 750/1000, > COINBASE_MATURITY so the C++ unit-test fixtures stay pre-fork).
+        # This is what lets phase 2's setminingalgo actually set per-algo bits (the miner
+        # only calls SetAlgo once the Multi-PoW fork is active). The reserve covenant
+        # itself is still inert here -- it needs the per-algo VERSION-5 fork (phase 2).
+        self.gen(760)
         tx = self.wallet.create_self_transfer()["tx"]
         tx.vout[0].scriptPubKey = bad_algo_spk
         self.gen_block_with(tx.serialize().hex())  # inert NOP -> accepted
