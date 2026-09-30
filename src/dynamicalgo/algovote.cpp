@@ -4,6 +4,7 @@
 
 #include <dynamicalgo/algovote.h>
 
+#include <arith_uint256.h>
 #include <coins.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
@@ -39,10 +40,11 @@ CAmount BlockTotalFees(const CBlock& block, const CBlockUndo& undo)
     return fees;
 }
 
-std::map<uint256, VoteTally> BlockVotesForSlot(const CBlock& block, const CBlockUndo& undo,
-                                               int slot, int voting_period)
+std::map<int, std::map<uint256, VoteTally>> BlockVotesAllSlots(const CBlock& block,
+                                                               const CBlockUndo& undo,
+                                                               int voting_period)
 {
-    std::map<uint256, VoteTally> out;
+    std::map<int, std::map<uint256, VoteTally>> out;
     for (size_t i = 1; i < block.vtx.size(); ++i) { // skip coinbase
         const CTransaction& tx = *block.vtx[i];
         // The FEE_VOTE weight is this tx's fee split evenly across its outputs, so a
@@ -58,24 +60,42 @@ std::map<uint256, VoteTally> BlockVotesForSlot(const CBlock& block, const CBlock
         for (const CTxOut& v : tx.vout) {
             std::vector<std::vector<unsigned char>> sols;
             const TxoutType type{Solver(v.scriptPubKey, sols)};
-            if (type == TxoutType::FEE_VOTE && DecodeVoteSlot(sols[1]) == slot) {
-                out[uint256(sols[0])].fee_weight += fee_share;
-            } else if (type == TxoutType::STAKE_VOTE && DecodeVoteSlot(sols[1]) == slot
-                       && DecodeVoteLock(sols[2]) >= voting_period) {
+            if (type == TxoutType::FEE_VOTE) {
+                out[DecodeVoteSlot(sols[1])][uint256(sols[0])].fee_weight += fee_share;
+            } else if (type == TxoutType::STAKE_VOTE && DecodeVoteLock(sols[2]) >= voting_period) {
                 // For now a STAKE_VOTE contributes ONLY to stake, not to fee_weight -- its
                 // tx's fee-share is not also credited to the fee constituency. Possible
                 // future amendment: also add fee_share here so a stake-voting tx's fee
                 // counts on the fee side too. Keeping the split simple until it works.
-                out[uint256(sols[0])].stake += v.nValue;
+                out[DecodeVoteSlot(sols[1])][uint256(sols[0])].stake += v.nValue;
             }
         }
     }
     return out;
 }
 
-CAmount VoteFeeFloor(CAmount year_fees)
+std::map<uint256, VoteTally> BlockVotesForSlot(const CBlock& block, const CBlockUndo& undo,
+                                               int slot, int voting_period)
 {
-    return year_fees / 730;
+    std::map<int, std::map<uint256, VoteTally>> all{BlockVotesAllSlots(block, undo, voting_period)};
+    const auto it = all.find(slot);
+    if (it == all.end()) return {};
+    return std::move(it->second);
+}
+
+CAmount VoteFeeFloor(CAmount fees_sum, int64_t num_blocks, int voting_period)
+{
+    if (fees_sum <= 0 || num_blocks <= 0 || voting_period <= 0) return 0;
+    // floor = (fees_sum / num_blocks) * voting_period / 16, evaluated as
+    //     (fees_sum * voting_period) / (num_blocks * 16)
+    // so the per-block average is not truncated first. The product needs a wide
+    // intermediate: fees_sum can reach MAX_MONEY (~2^51) and voting_period 5760 (~2^13),
+    // which overflows int64. arith_uint256 is already used for consensus money math and
+    // is portable (no __int128).
+    arith_uint256 acc{static_cast<uint64_t>(fees_sum)};
+    acc *= arith_uint256{static_cast<uint64_t>(voting_period)};
+    acc /= arith_uint256{static_cast<uint64_t>(num_blocks) * 16};
+    return static_cast<CAmount>(acc.GetLow64());
 }
 
 std::optional<uint256> VoteWindowWinner(const std::map<uint256, VoteTally>& tallies,

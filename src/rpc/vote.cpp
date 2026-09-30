@@ -160,12 +160,15 @@ static RPCHelpMan getalgovote()
                 std::vector<CAmount> pref(fees.size() + 1, 0);
                 for (size_t i = 0; i < fees.size(); ++i) pref[i + 1] = pref[i] + fees[i];
                 auto fee_floor_at = [&](int f) -> CAmount {
-                    // 6.25% of an avg window's fees over the YEAR_BLOCKS ending at f-1
-                    // == year_fees / 730. (year fees may be truncated to search_lo.)
+                    // 6.25% of an AVERAGE voting window's fees, over the fee history
+                    // ending at f-1 (== year_fees / 730 once a full year is available;
+                    // normalized by the number of blocks actually summed, which here may
+                    // be truncated to search_lo).
                     const int ye{f - 1};
                     if (ye < search_lo) return 0;
                     const int ys{std::max(search_lo, ye - YEAR_BLOCKS + 1)};
-                    return dynamicalgo::VoteFeeFloor(pref[ye - search_lo + 1] - pref[ys - search_lo]);
+                    return dynamicalgo::VoteFeeFloor(pref[ye - search_lo + 1] - pref[ys - search_lo],
+                                                     ye - ys + 1, voting_period);
                 };
 
                 // Pass 2: latest anchored winning window. A candidate window starts at a

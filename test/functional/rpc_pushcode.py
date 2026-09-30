@@ -13,11 +13,12 @@ forward reference (which assembles as "incomplete").
 
 from io import BytesIO
 
-from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import CTransaction
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 from test_framework.wallet import MiniWallet, MiniWalletMode
+
+NUM_ALGOS = 8
 
 
 def tx_vout_scripts(raw_hex):
@@ -33,8 +34,32 @@ class PushCodeRPCTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
         self.setup_clean_chain = True
-        # Default -blockversion is CURRENT_VERSION (5), so mining any run of
-        # blocks past the regtest threshold activates OP_PUSHCODE.
+        # Default -blockversion is CURRENT_VERSION (5), so every block mined here
+        # signals the dynamic-algo fork; activate_fork() below is what crosses the
+        # per-algo gate. That run mines the memory-hard algos (equihash /
+        # cryptonight / ...), whose PoW is slow even at regtest difficulty, so allow
+        # generous RPC time.
+        self.rpc_timeout = 600
+
+    def activate_fork(self, wallet):
+        """Mine a chain with OP_PUSHCODE active.
+
+        Two gates have to be crossed. First the regtest Multi-PoW fork (height 750),
+        which is what makes the miner set the per-algo version bits; 760 blocks also
+        puts the wallet past coinbase maturity so it has spendable coins. Then the
+        version-5 dynamic-algo fork, which requires the supermajority WITHIN EACH
+        mPoW algo (regtest: 9 of each algo's last 12 blocks) -- so a single-algo run
+        never activates it, however long. Mine every algo in turn via setminingalgo.
+        """
+        node = self.nodes[0]
+        self.generate(wallet, 760)
+        for a in range(NUM_ALGOS):
+            node.setminingalgo(a)
+            # One block at a time: a single 15-block generate() can exceed the RPC
+            # timeout for the memory-hard algos.
+            for _ in range(15):  # >= 12 => each algo's last 12 are v5 once all signalled
+                self.generate(wallet, 1)
+        node.setminingalgo(0)
 
     def mine_script(self, script_hex):
         """Put one PUSHCODE output (the given scriptPubKey) in a mined block."""
@@ -52,10 +77,9 @@ class PushCodeRPCTest(BitcoinTestFramework):
         node = self.nodes[0]
         self.wallet = MiniWallet(node, mode=MiniWalletMode.ADDRESS_OP_TRUE)
 
-        # Mine past coinbase maturity; this also drives base-version-5 blocks well
-        # past the regtest activation threshold, so OP_PUSHCODE is active and the
-        # code DB records entries.
-        self.generate(self.wallet, COINBASE_MATURITY + 120)
+        # Get OP_PUSHCODE active (and the wallet funded), so the code DB records
+        # entries and getpushcode can assemble them.
+        self.activate_fork(self.wallet)
 
         # ---- createpushcodescript validation (no chain needed) ----
         assert_raises_rpc_error(-8, "a NEW entry needs a non-empty code chunk",

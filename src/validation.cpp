@@ -20,6 +20,8 @@
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <cuckoocache.h>
+#include <dynamicalgo/activation.h>
+#include <dynamicalgo/algovote.h>
 #include <dynamicalgo/reward.h>
 #include <dynamicalgo/solution.h>
 #include <dynamicalgo/wasmexec.h>
@@ -272,6 +274,9 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const Ch
 
 // Bitmark: content hashes of a block's OP_PUSHCODE outputs (defined below).
 static std::vector<uint256> CollectPushCodeHashes(const CBlock& block);
+
+// Bitmark: the dynamic-algo activation rule's parameters for this chain (defined below).
+static dynamicalgo::ActivationParams AlgoActivationParams(const Consensus::Params& params);
 
 static void LimitMempoolSize(CTxMemPool& pool, CCoinsViewCache& coins_cache)
     EXCLUSIVE_LOCKS_REQUIRED(::cs_main, pool.cs)
@@ -2417,6 +2422,25 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         }
     }
 
+    // Bitmark: retreat the dynamic-algo activation store by this block -- un-slide the
+    // window and fee sum and restore any per-slot activation this block made (from the
+    // undo record it wrote). Only meaningful once the store has reached this height; if
+    // it never recorded this block (pre-activation), ComputeDisconnect reports the height
+    // mismatch and there is nothing to undo.
+    if (m_blockman.m_activation_db) {
+        dynamicalgo::CActivationState st;
+        if (m_blockman.m_activation_db->ReadState(st) && st.height == pindex->nHeight) {
+            dynamicalgo::CDisconnectWrite w;
+            if (!dynamicalgo::ComputeDisconnect(*m_blockman.m_activation_db,
+                                                AlgoActivationParams(m_chainman.GetConsensus()),
+                                                pindex->nHeight, pindex->pprev->GetBlockHash(), w)
+                || !m_blockman.m_activation_db->ApplyDisconnect(w)) {
+                error("DisconnectBlock(): failed to undo the dynamic-algo activation state");
+                return DISCONNECT_FAILED;
+            }
+        }
+    }
+
     // move best block pointer to prevout block
     view.SetBestBlock(pindex->pprev->GetBlockHash());
 
@@ -2645,15 +2669,54 @@ bool Chainstate::ReconcileActivationDB()
     if (!tip) return true; // empty chain
 
     uint256 best;
-    if (db->ReadBestBlock(best) && best == tip->GetBlockHash()) {
-        return true; // already consistent
+    dynamicalgo::CActivationState st;
+    const bool have_best{db->ReadBestBlock(best)};
+    const bool have_state{db->ReadState(st)};
+
+    // In sync: the marker names the tip AND the running bookkeeping is at the tip's
+    // height. Both matter -- the store's contents (the window tallies and the fee sum's
+    // block count) are only identical across nodes if it was built from the fork
+    // activation height, so a marker alone is not evidence that it was.
+    if (have_best && best == tip->GetBlockHash() && have_state && st.height == tip->nHeight) {
+        return true;
     }
-    // Phase 6.5b step 2: ConnectBlock does not yet populate this store, so there is no
-    // per-slot activation state to roll back -- just point the best-block marker at the
-    // active tip. The next step (incremental tally + ConnectBlock/DisconnectBlock wiring)
-    // replaces this with the same crash-recovery roll-back / -reindex logic as
-    // ReconcileCodeDB above.
-    return db->WriteBestBlock(tip->GetBlockHash());
+
+    // Legitimately empty: the dynamic-algo fork is not active at the tip, so no block has
+    // ever written the store. Keep the marker on the tip so the next startup is a no-op.
+    if (!have_state && !(GetBlockScriptFlags(*tip, m_chainman) & SCRIPT_VERIFY_PUSHCODE)) {
+        return db->WriteBestBlock(tip->GetBlockHash());
+    }
+
+    // Crash recovery: the store is written every block while the coins DB flushes
+    // periodically, so after a crash it can be AHEAD of the connected tip on the same
+    // chain. Roll it back block by block, exactly as DisconnectBlock would.
+    const CBlockIndex* pindex_c = have_best ? m_blockman.LookupBlockIndex(best) : nullptr;
+    if (pindex_c && have_state && pindex_c->GetAncestor(tip->nHeight) == tip) {
+        const dynamicalgo::ActivationParams aparams{AlgoActivationParams(m_chainman.GetConsensus())};
+        for (const CBlockIndex* pindex = pindex_c; pindex && pindex != tip; pindex = pindex->pprev) {
+            const uint256 new_best = pindex->pprev ? pindex->pprev->GetBlockHash() : uint256();
+            dynamicalgo::CDisconnectWrite w;
+            if (!dynamicalgo::ComputeDisconnect(*db, aparams, pindex->nHeight, new_best, w)
+                || !db->ApplyDisconnect(w)) {
+                LogPrintf("ReconcileActivationDB: cannot roll back block %s\n",
+                          pindex->GetBlockHash().ToString());
+                return false; // require -reindex
+            }
+        }
+        LogPrintf("ReconcileActivationDB: rolled the dynamic-algo activation store back to "
+                  "the active tip %s\n", tip->GetBlockHash().ToString());
+        return true;
+    }
+
+    // Anything else -- the store is behind, was never built for an already-active fork
+    // (e.g. upgrading a node whose chain had passed activation), or sits on another fork
+    // -- needs a full rebuild, which -reindex performs via normal block connection from
+    // the fork height onward.
+    LogPrintf("ReconcileActivationDB: activation store (best block %s, state height %d) is "
+              "inconsistent with active tip %s at height %d; -reindex required\n",
+              have_best ? best.ToString() : "none", have_state ? st.height : -1,
+              tip->GetBlockHash().ToString(), tip->nHeight);
+    return false;
 }
 
 PushCodeStatus Chainstate::AssemblePushCode(const uint256& hash, std::vector<unsigned char>& out,
@@ -2844,42 +2907,67 @@ static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& vie
     return true;
 }
 
-// Bitmark: resolve the dynamic algo active for mPoW `slot` as of the parent chain
-// (evaluated on `pprev`, so a block can never self-activate). Returns the OP_PUSHCODE
-// branch-tip hash of the winning, matured anchored-window vote, or nullopt when the
-// slot is primitive-only (no algo voted in).
-//
-// SEAM (Phase 6.4, doc dynamic-algo-voting.md sec "Activation"): the anchored-window
-// tally + activation-delay resolution is not implemented yet, so this returns nullopt
-// unconditionally -- every slot is primitive-only and chain behavior is unchanged. When
-// it lands, ConnectBlock below immediately begins enforcing the dynamic reward split.
-static std::optional<uint256> GetActiveAlgoBranch(const CBlockIndex* pprev, int slot,
-                                                  const Consensus::Params& params)
+// Bitmark: the activation rule's consensus parameters for this chain. The activation
+// delay, fee-floor horizon and reorg margin are protocol constants (their defaults); only
+// the voting period is per-chain.
+static dynamicalgo::ActivationParams AlgoActivationParams(const Consensus::Params& params)
 {
-    (void)pprev;
-    (void)slot;
-    (void)params;
+    dynamicalgo::ActivationParams p;
+    p.voting_period = params.nVotingPeriod;
+    p.num_slots = NUM_ALGOS;
+    return p;
+}
+
+// Bitmark: this block's vote contributions for the activation store -- every slot's
+// per-branch tallies, flattened for storage, in one pass over the block. Votes naming a
+// slot outside [0, NUM_ALGOS) are meaningless, so they are dropped rather than stored.
+static dynamicalgo::CBlockVotes CollectBlockVotes(const CBlock& block, const CBlockUndo& undo,
+                                                  int voting_period)
+{
+    dynamicalgo::CBlockVotes out;
+    for (const auto& [slot, branches] : dynamicalgo::BlockVotesAllSlots(block, undo, voting_period)) {
+        if (slot < 0 || slot >= NUM_ALGOS) continue;
+        for (const auto& [branch, tally] : branches) {
+            out.entries.push_back(dynamicalgo::CVoteEntry{static_cast<uint8_t>(slot), branch, tally});
+        }
+    }
+    return out;
+}
+
+// Bitmark: the dynamic algo active for mPoW `slot` at the block being connected. The
+// per-slot activation store (dynamicalgo/activationdb.h) holds the state as of the
+// parent, but a block that itself activates this slot must already use the NEW branch --
+// the activation height IS the first height the branch is used -- so an activation
+// computed for this very block takes precedence over the stored value. Returns nullopt
+// when the slot is primitive-only (no algo voted in, or a voided activation).
+static std::optional<uint256> ActiveAlgoBranch(const dynamicalgo::CActivationDB& db, int slot,
+                                               const std::vector<dynamicalgo::CSlotEntry>& pending)
+{
+    for (const dynamicalgo::CSlotEntry& e : pending) {
+        if (static_cast<int>(e.slot) != slot) continue;
+        if (e.act.IsActive()) return e.act.branch;
+        return std::nullopt;
+    }
+    dynamicalgo::CSlotActivation act;
+    if (db.ReadSlot(slot, act) && act.IsActive()) return act.branch;
     return std::nullopt;
 }
 
-// Bitmark: the dynamic-algo reward split (doc sec 4, 7 steps 3-5). When the block's
-// slot has an active dynamic algo, this assembles the slot's materialized module, runs
+// Bitmark: the dynamic-algo reward split (doc sec 4, 7 steps 3-5). `branch` is the algo
+// active for this block's slot (nullopt == primitive-only, which yields the primitive
+// ceiling subsidy + fees). When set, this assembles the slot's materialized module, runs
 // verify() on the block's assembled solution under the consensus gas/memory limits,
 // derives the alpha/beta split, enforces the payout floor on the coinbase, and returns
-// the coinbase-value ceiling. With no active algo it yields the primitive ceiling
-// (subsidy + fees), i.e. today's behavior. Returns false (state set) on a
-// consensus-invalid block: unavailable module, malformed solution set, module fault /
-// gas or memory breach, or an unmet payout floor.
+// the coinbase-value ceiling. Returns false (state set) on a consensus-invalid block:
+// unavailable module, malformed solution set, module fault / gas or memory breach, or an
+// unmet payout floor.
 static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
                                    const CBlockIndex* pindex, CAmount subsidy, CAmount fees,
+                                   const std::optional<uint256>& branch,
                                    CAmount& max_coinbase_value, BlockValidationState& state)
     EXCLUSIVE_LOCKS_REQUIRED(cs_main)
 {
     max_coinbase_value = subsidy + fees; // primitive default (unchanged behavior)
-
-    const int slot = static_cast<int>(pindex->GetAlgo());
-    const std::optional<uint256> branch =
-        GetActiveAlgoBranch(pindex->pprev, slot, chainstate.m_chainman.GetConsensus());
     if (!branch) return true; // slot is primitive-only
 
     // Assemble the slot's materialized algo module from the OP_PUSHCODE code DB.
@@ -3291,6 +3379,49 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
              Ticks<SecondsDouble>(time_connect),
              Ticks<MillisecondsDouble>(time_connect) / num_blocks_total);
 
+    // Bitmark: resolve this block's dynamic-algo activation (doc dynamic-algo-voting.md
+    // sec "Activation"). Computed HERE, before the reward check, because an activation
+    // landing at this height takes effect for this very block, and because it must be
+    // computed under fJustCheck too so validity never depends on whether we are actually
+    // connecting. This is sound: a block's own votes and fees cannot affect its own
+    // activation -- the window it evaluates ends at height-721 -- so nothing here depends
+    // on the store write made further below. The write itself happens only when
+    // connecting for real.
+    dynamicalgo::CConnectWrite algo_write;
+    bool have_algo_write{false};
+    std::optional<uint256> active_branch;
+    const bool algo_fork_active{(flags & SCRIPT_VERIFY_PUSHCODE) != 0};
+    if (algo_fork_active && !m_blockman.m_activation_db) {
+        return FatalError(m_chainman.GetNotifications(), state,
+                          "Dynamic-algo activation database not open");
+    }
+    // Start tracking at the first block for which the fork is active, and keep tracking
+    // every block after that even if the miner-signalled gate later lapses -- the store's
+    // running sums are only valid if they advance with the chain without gaps.
+    if (m_blockman.m_activation_db
+        && (algo_fork_active || [&] { dynamicalgo::CActivationState s; return m_blockman.m_activation_db->ReadState(s); }())) {
+        dynamicalgo::CActivationDB& adb = *m_blockman.m_activation_db;
+        const dynamicalgo::ActivationParams aparams{AlgoActivationParams(params.GetConsensus())};
+        // A winning branch only activates if it assembles; a pure function of the chain,
+        // so every node decides this identically (doc sec "Activation").
+        const auto assembles = [&](const uint256& branch) {
+            std::vector<unsigned char> code;
+            std::string why;
+            return AssemblePushCode(branch, code, why) == PushCodeStatus::COMPLETE;
+        };
+        if (!dynamicalgo::ComputeConnect(adb, aparams, pindex->nHeight, nFees,
+                                         CollectBlockVotes(block, blockundo, aparams.voting_period),
+                                         pindex->GetBlockHash(), assembles, algo_write)) {
+            // The store is not one block behind: a local database problem, not a defect in
+            // the block, so this is fatal rather than a block-validity failure.
+            return FatalError(m_chainman.GetNotifications(), state,
+                              "Dynamic-algo activation database is out of sync with the chain; "
+                              "please restart with -reindex");
+        }
+        have_algo_write = true;
+        active_branch = ActiveAlgoBranch(adb, static_cast<int>(pindex->GetAlgo()), algo_write.slot_updates);
+    }
+
     // SSF-scaled subsidy (scale defaults true), i.e. S in the reward math (doc sec 4).
     const CAmount subsidy = GetBlockSubsidy(pindex, params.GetConsensus());
     CAmount blockReward = subsidy + nFees; // coinbase-value ceiling (primitive default)
@@ -3298,7 +3429,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         // Bitmark dynamic-algo reward split (doc sec 4, 7). When the block's slot has an
         // active dynamic algo, this runs verify(), sets blockReward to the dynamic
         // ceiling, and enforces the payout floor; otherwise blockReward is unchanged.
-        if (!CheckDynamicAlgoReward(*this, block, pindex, subsidy, nFees, blockReward, state)) {
+        if (!CheckDynamicAlgoReward(*this, block, pindex, subsidy, nFees, active_branch, blockReward, state)) {
             return false; // state populated by the helper
         }
     }
@@ -3350,6 +3481,17 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         }
         if (!m_blockman.m_code_db->ApplyBlock(pushcode_entries, pindex->GetBlockHash())) {
             return FatalError(m_chainman.GetNotifications(), state, "Failed to write OP_PUSHCODE code entries");
+        }
+    }
+
+    // Bitmark: advance the dynamic-algo activation store by this block (the slid window
+    // and fee sum, this block's vote digest, and any activation landing here), in one
+    // atomic batch with its new best block. Computed above, before the reward check, so
+    // that check already saw any activation this block makes.
+    if (have_algo_write) {
+        if (!m_blockman.m_activation_db->ApplyConnect(algo_write)) {
+            return FatalError(m_chainman.GetNotifications(), state,
+                              "Failed to write the dynamic-algo activation state");
         }
     }
 

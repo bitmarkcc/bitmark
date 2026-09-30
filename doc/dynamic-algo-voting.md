@@ -95,14 +95,34 @@ relative lock is automatic from confirmation.)
   slot"; the fee floor adds an ABSOLUTE participation requirement so a slot cannot
   be captured by tiny turnout.
 
-### Fee participation floor (added 2026-09-02)
+### Fee participation floor (added 2026-09-02; normalized 2026-09-30)
     year_fees  = total tx fees over the 720*365 = 262800 blocks ending at the block
                  right before the voting window (i.e. ending at f - 1)
     fee_floor  = 0.0625 * (year_fees / 365 * 8)     [ = year_fees / 730 ]
 i.e. 6.25% of an AVERAGE 5760-block window's fees measured over the trailing year.
 So the fee-weight cast for the slot (Ftot) must be at least ~1/16 of a typical
-window's total fees. Consensus should track year_fees as a running sum (like the
-money supply), not recompute 262800 blocks each time.
+window's total fees. Consensus tracks year_fees as a running sum (like the money
+supply), not recompute 262800 blocks each time.
+
+NORMALIZED FORM (what consensus implements). Consensus can only record block fees
+from the fork-activation height onward -- recovering pre-fork fees would mean
+reading a full year of undo data, which a pruned node does not have. A raw
+truncated sum would therefore leave the floor near zero for the first year, so the
+floor is normalized by the number of blocks actually summed:
+
+    fee_floor  = 0.0625 * (fees_sum / num_blocks) * VOTING_PERIOD
+               = (fees_sum * VOTING_PERIOD) / (num_blocks * 16)
+
+which is EXACTLY year_fees / 730 once a full year is recorded (num_blocks = 262800,
+VOTING_PERIOD = 5760), and keeps the floor's meaning ("6.25% of an average window")
+while history is still filling. Evaluated with a 256-bit intermediate, since
+fees_sum * VOTING_PERIOD overflows 64 bits at MAX_MONEY.
+
+MINIMUM HISTORY. No activation may land until at least VOTING_PERIOD blocks of fee
+history have been recorded (num_blocks >= VOTING_PERIOD). Without it the earliest
+eligible window -- which needs only VOTING_PERIOD + 720 + 1 blocks after the fork --
+would be judged against a floor averaged over a single block's fees. The guard
+defers the first possible activation to fork + 2*VOTING_PERIOD + 720.
 
 ## Activation (ANCHORED window; revised 2026-09-03)
 

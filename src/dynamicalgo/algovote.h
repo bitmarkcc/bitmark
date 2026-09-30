@@ -6,6 +6,7 @@
 #define BITCOIN_DYNAMICALGO_ALGOVOTE_H
 
 #include <consensus/amount.h>
+#include <serialize.h>
 #include <uint256.h>
 
 #include <cstdint>
@@ -31,9 +32,16 @@ class CBlockUndo;
 namespace dynamicalgo {
 
 //! Accumulated vote weight for one branch (content hash) within a slot's window.
+//! Serializable so the activation store can persist per-block and running tallies.
 struct VoteTally {
     CAmount fee_weight{0}; //!< sum of floor(fee/num_outputs) over this branch's FEE_VOTE outputs
     CAmount stake{0};      //!< sum of qualifying STAKE_VOTE output values for this branch
+
+    SERIALIZE_METHODS(VoteTally, obj) { READWRITE(obj.fee_weight, obj.stake); }
+
+    bool IsEmpty() const { return fee_weight == 0 && stake == 0; }
+    VoteTally& operator+=(const VoteTally& o) { fee_weight += o.fee_weight; stake += o.stake; return *this; }
+    VoteTally& operator-=(const VoteTally& o) { fee_weight -= o.fee_weight; stake -= o.stake; return *this; }
 };
 
 //! Slot index from a vote's Solver `slot` push (1 byte; empty push == slot 0).
@@ -47,16 +55,33 @@ int64_t DecodeVoteLock(const std::vector<unsigned char>& v);
 //! that the fee floor is measured against.
 CAmount BlockTotalFees(const CBlock& block, const CBlockUndo& undo);
 
-//! This block's per-branch vote tallies for `slot`. `voting_period` is the minimum
-//! relative lock a STAKE_VOTE must carry to count (consensus.nVotingPeriod). Empty when
-//! the block carries no votes for the slot. `undo` supplies the input values FEE_VOTE
-//! fee-shares need; it must be the undo for `block`.
+//! Every slot's per-branch vote tallies from one block, keyed slot -> branch -> tally, in
+//! a single pass over the block. `voting_period` is the minimum relative lock a STAKE_VOTE
+//! must carry to count (consensus.nVotingPeriod). `undo` supplies the input values the
+//! FEE_VOTE fee-shares need; it must be the undo for `block`. Empty when the block carries
+//! no votes. This is the single parse implementation; the per-slot form below filters it.
+std::map<int, std::map<uint256, VoteTally>> BlockVotesAllSlots(const CBlock& block,
+                                                               const CBlockUndo& undo,
+                                                               int voting_period);
+
+//! This block's per-branch vote tallies for one `slot`. Empty when the block carries no
+//! votes for it.
 std::map<uint256, VoteTally> BlockVotesForSlot(const CBlock& block, const CBlockUndo& undo,
                                                int slot, int voting_period);
 
-//! The fee participation floor: 6.25% of an average voting window's fees over the trailing
-//! year == year_fees / 730 (doc sec "Fee participation floor").
-CAmount VoteFeeFloor(CAmount year_fees);
+//! The fee participation floor: 6.25% of an AVERAGE voting window's fees, measured over
+//! the recorded fee history (doc sec "Fee participation floor"):
+//!
+//!     floor = 0.0625 * (fees_sum / num_blocks) * voting_period
+//!
+//! `fees_sum` is the total block fees over `num_blocks` consecutive blocks. With a full
+//! year recorded (num_blocks == 720*365 and voting_period == 5760) this is exactly
+//! year_fees / 730, the doc's formula. Normalizing by num_blocks keeps the floor's
+//! meaning when less than a year of history exists -- consensus can only record fees
+//! from the fork-activation height onward (pre-fork fees would need a full year of undo
+//! data, unavailable on a pruned node), so a raw truncated sum would leave the floor
+//! near zero for the first year. Returns 0 when there is no history.
+CAmount VoteFeeFloor(CAmount fees_sum, int64_t num_blocks, int voting_period);
 
 //! The unique winning branch of a window from its accumulated per-branch tallies and the
 //! window's fee floor: the branch with >= 75% of total fee-weight AND >= 75% of total
