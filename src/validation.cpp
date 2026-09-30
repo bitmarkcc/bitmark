@@ -2633,6 +2633,29 @@ bool Chainstate::ReconcileCodeDB()
     return false;
 }
 
+bool Chainstate::ReconcileActivationDB()
+{
+    AssertLockHeld(cs_main);
+    dynamicalgo::CActivationDB* db = m_blockman.m_activation_db.get();
+    if (!db) return true;
+    // A snapshot (assumeutxo) chainstate never populates the consensus side-DBs for its
+    // trusted history (the background chainstate owns that), so nothing to reconcile.
+    if (m_from_snapshot_blockhash) return true;
+    const CBlockIndex* tip = m_chain.Tip();
+    if (!tip) return true; // empty chain
+
+    uint256 best;
+    if (db->ReadBestBlock(best) && best == tip->GetBlockHash()) {
+        return true; // already consistent
+    }
+    // Phase 6.5b step 2: ConnectBlock does not yet populate this store, so there is no
+    // per-slot activation state to roll back -- just point the best-block marker at the
+    // active tip. The next step (incremental tally + ConnectBlock/DisconnectBlock wiring)
+    // replaces this with the same crash-recovery roll-back / -reindex logic as
+    // ReconcileCodeDB above.
+    return db->WriteBestBlock(tip->GetBlockHash());
+}
+
 PushCodeStatus Chainstate::AssemblePushCode(const uint256& hash, std::vector<unsigned char>& out,
                                             std::string& reason)
 {

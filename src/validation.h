@@ -779,6 +779,13 @@ public:
      *  the divergence cannot be reconciled and a -reindex is required. */
     bool ReconcileCodeDB() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
+    /** Bitmark: reconcile the dynamic-algo per-slot activation DB with the active
+     *  chain tip at startup, like ReconcileCodeDB. See src/dynamicalgo/activationdb.h.
+     *  (Phase 6.5b step 2: the store is not yet populated by ConnectBlock, so this only
+     *  keeps its best-block marker synced to the tip; the crash-recovery roll-back is
+     *  added with the ConnectBlock/DisconnectBlock wiring in the next step.) */
+    bool ReconcileActivationDB() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
     /** Bitmark: assemble the code of OP_PUSHCODE branch tip `hash` from the code
      *  DB, materializing each part's chunk from the block files. Returns
      *  INCOMPLETE if a referenced ancestor entry or its chunk is unavailable, or

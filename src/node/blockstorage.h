@@ -8,6 +8,7 @@
 #include <attributes.h>
 #include <chain.h>
 #include <dbwrapper.h>
+#include <dynamicalgo/activationdb.h>
 #include <flatfile.h>
 #include <pushcodedb.h>
 #include <kernel/blockmanager_opts.h>
@@ -290,6 +291,12 @@ public:
     //! in ConnectBlock/DisconnectBlock; read during ConnectBlock to resolve
     //! content-hash references. See src/pushcodedb.h.
     std::unique_ptr<CCodeDB> m_code_db GUARDED_BY(::cs_main);
+
+    //! Dynamic-algo per-slot activation consensus store (Bitmark, phase 6.5b).
+    //! Tracks the active algo branch per mPoW slot from the OP_VOTE tally; updated
+    //! synchronously in ConnectBlock/DisconnectBlock and read by the reward path's
+    //! GetActiveAlgoBranch. See src/dynamicalgo/activationdb.h.
+    std::unique_ptr<dynamicalgo::CActivationDB> m_activation_db GUARDED_BY(::cs_main);
 
     bool WriteBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     bool LoadBlockIndexDB(const std::optional<uint256>& snapshot_blockhash)

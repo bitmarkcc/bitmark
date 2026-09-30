@@ -59,6 +59,17 @@ static ChainstateLoadResult CompleteChainstateInitialization(
         .memory_only = options.block_tree_db_in_memory,
         .wipe_data = options.reindex});
 
+    // Bitmark: open the dynamic-algo per-slot activation consensus store next to the
+    // block index. Shares the reindex/in-memory options; wiped on reindex so it is
+    // rebuilt in lockstep with the block index. See src/dynamicalgo/activationdb.h.
+    auto& pactivationdb{chainman.m_blockman.m_activation_db};
+    pactivationdb.reset();
+    pactivationdb = std::make_unique<dynamicalgo::CActivationDB>(DBParams{
+        .path = chainman.m_options.datadir / "blocks" / "algoactivation",
+        .cache_bytes = static_cast<size_t>(cache_sizes.block_tree_db),
+        .memory_only = options.block_tree_db_in_memory,
+        .wipe_data = options.reindex});
+
     if (options.reindex) {
         pblocktree->WriteReindexing(true);
         //If we're reindexing in prune mode, wipe away unusable block files and all undo data files
@@ -166,6 +177,11 @@ static ChainstateLoadResult CompleteChainstateInitialization(
     // -reindex if the divergence cannot be reconciled.
     if (!chainman.ActiveChainstate().ReconcileCodeDB()) {
         return {ChainstateLoadStatus::FAILURE, _("The OP_PUSHCODE code database is inconsistent with the block chain. Please restart with -reindex.")};
+    }
+
+    // Bitmark: likewise reconcile the dynamic-algo activation DB with the active tip.
+    if (!chainman.ActiveChainstate().ReconcileActivationDB()) {
+        return {ChainstateLoadStatus::FAILURE, _("The dynamic-algo activation database is inconsistent with the block chain. Please restart with -reindex.")};
     }
 
     if (!options.reindex) {
