@@ -168,29 +168,88 @@ solution tx can use almost all of it, so a single block's solution is ≤ ~1 MB.
 Whatever an algo needs to validate ONE block must fit in that block.
 
 ### 2.5 Multi-block solutions
-`verify()` input 1 is "the n previous slot blocks", so an algo may also read the
-`OP_SOLUTION` outputs of prior slot-blocks (found by the same whole-block scan). A
-running data stream (e.g. accumulating LLM LoRA deltas) SPANS multiple blocks: each
-block contributes its chunk; `verify()` for the current block uses the window. `n` is
-bounded by the pruned-node keep window (`MAX_PUSHCODE_LENGTH` + the per-slot floor,
-see `pushcode-port-27xb.md`), so the whole stream is guaranteed on disk. Pure hash-PoW
-algos (keccak/whirlpool) ignore the window and use only the current block's chunk (the
-nonce).
+An algo may read the FULL BLOCK DATA of its own slot's previous blocks, and so the
+`OP_SOLUTION` outputs in them (found by the same whole-block scan). A running data
+stream (e.g. accumulating LLM LoRA deltas) SPANS multiple blocks: each block
+contributes its chunk; `verify()` for the current block uses the window. Those blocks
+are fetched on demand through the `chain.*` imports (§3.1), not passed as a buffer.
+`n` is `MIN_SLOT_BLOCKS_ON_DISK` = 32850 (~1 year of one slot), which is exactly what
+the per-slot prune floor guarantees is retained (`pushcode-port-27xb.md`), so the
+whole window is on disk on every node. Pure hash-PoW algos (keccak/whirlpool) ignore
+the window entirely and use only the current block's chunk (the nonce).
+
+The window is **reachable, not traversable in one call**: the per-call I/O budgets
+(§8.7) are far below 32850 blocks, because reading the whole window every block would
+be minutes of disk I/O. An algo whose state is the fold of all history (the llm.c
+LoRA chain is one) therefore cannot re-derive that state inside `verify()`; it must
+receive it pre-folded — via on-chain weight-state checkpoint epochs, or node-held
+state. That is a separate mechanism, still open, and the accessor ABI forecloses
+neither.
 
 ---
 
 ## 3. Dynamic-algo I/O contract
 
 ```
-int verify(prev_hash,                 // input 4: 32 bytes
-           payout, payout_len,        // input 3
-           nbits,                     // input 5: u32 compact target
-           txs, txs_len,              // input 2: current block's non-coinbase txs
-           last_n_blocks, last_n_len, // input 1: the n previous slot blocks
-           solution, solution_len,    // the block's assembled OP_SOLUTION bytes
-           out_ab)                    // OUT: 8 bytes = α (u32) || β (u32), LE
+int verify(prev_hash,              // 32 bytes: the parent block hash
+           payout, payout_len,     // the dynamic miner's payout scriptPubKey
+           nbits,                  // u32 compact target
+           solution, solution_len, // the block's assembled OP_SOLUTION bytes
+           out_ab)                 // OUT: 8 bytes = α (u32) || β (u32), LE
   -> 0 iff the solution is VALID (meets the per-slot difficulty), else non-zero.
 ```
+
+The slot's previous blocks are reached through IMPORTS rather than an argument
+(§3.1). Every argument above is therefore fixed before the block is built:
+`prev_hash` and `nbits` come from the parent chain, `payout` and `solution` are the
+dynamic miner's own. A solution stays valid no matter what the pool later does with
+the block's transaction set — which is what makes mempool relay (§2.1) work at all.
+
+**Why the block's own transactions are NOT an input.** An earlier draft passed the
+current block's non-coinbase txs. That is circular: the solution lives in a tx
+*inside* the block, so the tx set would determine the solution and the solution
+would be part of the tx set. Even excluding the solution tx itself, a pool adding or
+dropping any other tx would silently invalidate a solution the dynamic miner had
+already produced — and the dynamic miner does not control the final block. Nothing
+was load-bearing about tx binding: `seed = Hash256(payout || prev_block_hash)`
+already prevents redirecting a solution to another payout or replaying it onto a
+different parent.
+
+### 3.1 Chain access (imports)
+A multi-block algo needs earlier `OP_SOLUTION` chunks (§2.5). Those are **not**
+marshaled in: the window is up to `MIN_SLOT_BLOCKS_ON_DISK` = 32850 blocks (~1 year
+of one slot), far too much to copy per call. The module imports two accessors and
+pulls only what it needs:
+
+```
+chain.slot_block_count() -> i32
+    Addressable window size: min(the slot's blocks back to the Multi-PoW fork,
+    MIN_SLOT_BLOCKS_ON_DISK). A function of the CHAIN, never of local disk state —
+    the per-slot prune floor guarantees the whole window is retained, so a pruned
+    and an archival node return the same number. It reaches 32850 about a year
+    after the fork; before that it is the smaller true count. Free (no read).
+
+chain.slot_block(index, ptr, cap) -> i32
+    Writes the serialized block at `index` (0 = newest, i.e. the parent-most recent
+    slot block) to `ptr`, returning its size. Negative means nothing was written:
+      -1  no such block (index >= slot_block_count())
+      -2  [ptr, ptr+size) outside module memory
+      -3  cap smaller than the block's size
+```
+
+Block bytes use the **`TX_NO_WITNESS` serialization**, and that is part of the ABI:
+it is the one unconditional framing. `TX_WITH_WITNESS` emits the extended
+marker/flag format only when a tx actually carries witness data, so the shape of the
+bytes would depend on block content; mainnet and testnet pin `SegwitHeight` to
+`INT_MAX` so segwit never activates, but the machinery is still present and
+regtest/signet can enable it. A consensus input that α/β depend on must not be able
+to change framing. This also matches the txid/merkle-root basis rather than wtxid.
+
+Fetches are metered by their own budgets (§8.7), because a fetch costs the module
+one guest instruction but costs the node a real disk read. A block inside the window
+that a node cannot read is a LOCAL fault (corruption, a prune lock that did not
+hold), never block invalidity: the node raises a fatal error rather than rejecting
+the block, since rejecting would fork it off the chain.
 `α, β` are written as two little-endian **`u32` in Q32 fixed point** — the stored
 integer is `value · 2^32`, i.e. `α = out_ab[0..4] / 2^32`. The whole `u32` range maps
 onto `[0, 1)`, so `0 ≤ α, β < 1` is automatic (no validity check, no NaN/Inf/negative
@@ -199,9 +258,10 @@ float→fixed scaling internally, where wasm's IEEE-754 `f32` is deterministic (
 bit-identical cross-machine for the llm.c verifier) — but no float ever crosses the ABI
 or enters the node's money path.
 
-`α, β` are deterministic functions of the block CONTEXT (inputs 1,2,4,5), NOT of
-`solution`, so they are defined even when the solution is absent/invalid (the node
-calls `verify()` with an empty solution just to read `α, β` in the no-solution case).
+`α, β` are deterministic functions of the block CONTEXT (`prev_hash`, `nbits`, and
+whatever the algo reads through the `chain.*` imports), NOT of `solution`, so they are
+defined even when the solution is absent/invalid (the node calls `verify()` with an
+empty solution just to read `α, β` in the no-solution case).
 `seed = Hash256(payout || prev_block_hash)`.
 
 The reference algos `whirlpool_algo.c` / `keccak_algo.c` implement this signature,
@@ -588,8 +648,10 @@ the parent chain per `dynamic-algo-voting.md`, so a block can't self-activate):
    `payout_scriptPubKey` from the same source. (If no `OP_SOLUTION` outputs exist,
    there is no solution this block → go to the no-solution branch of step 6.)
 4. **Execute.** Load the slot's materialized algo module; run
-   `verify(prev_hash, payout, nbits, non-coinbase txs, last n slot blocks, solution,
-   out_ab)` under the gas/memory limits (§8). A limit breach or module fault ⇒ invalid.
+   `verify(prev_hash, payout, nbits, solution, out_ab)` under the gas/memory/I-O
+   limits (§8), with the slot's previous blocks served through the `chain.*` imports
+   (§3.1). A limit breach or module fault ⇒ invalid; a slot block that must be
+   retained but cannot be read is a local fault ⇒ fatal error, not invalid.
    Require `0 ≤ α < 1`, `0 ≤ β < 1`. For the no-solution branch, run `verify()` with an
    empty solution solely to read `α, β`.
 5. **Reward split** (with `r = subsidy + total_fees`, integer α,β per §4.4):
@@ -867,12 +929,46 @@ wasmtime) on the trunk, MoE, and non-SIMD verifiers; measured trunk counts all s
 under their limits (binding class VAR at ~52% of budget, combined BULK ≈ 2.05 GB of
 8 GiB).
 
-### 8.7 ABI (unchanged)
+### 8.7 Chain-access I/O bound, and ABI notes
+
+The `chain.slot_block()` accessor (§3.1) needs budgets of its own, because **neither
+the gas classes nor the memory cap bound disk reads**:
+
+- A fetch costs the module ONE `call` instruction but costs the node a block read.
+  The `GC_CALL` budget is 320,000,000, so charging one CALL per fetch would permit
+  ~320M reads — tens of terabytes.
+- Memory does not bound it either: a module can fetch every block into the *same*
+  buffer, so its footprint stays flat while I/O runs unbounded.
+- Reusing the 8 GiB `BULK` budget would at least bound it, but a disk byte costs
+  ~100× a `memory.fill` byte, so they cannot share a limit, and 8 GiB of reads is
+  ~82 s on a spinning disk — more than doubling the §8.6 worst case.
+
+So two dedicated consensus budgets, per `verify()` call, bounding different things:
+
+| Budget | Limit | Bounds | Worst case |
+|---|---|---|---|
+| `GAS_IO_CALLS_LIMIT` | 1024 fetches | fixed per-fetch overhead (index walk, seek, deserialize) that even a tiny block pays — i.e. IOPS | ~7 s at ~150 IOPS (HDD); negligible on SSD |
+| `GAS_IO_BYTES_LIMIT` | 256 MiB | transfer volume | ~2.5 s at ~100 MB/s (HDD); ~0.5 s on SSD |
+
+They cross over usefully: 1024 × `MAX_BLOCK_SERIALIZED_SIZE` far exceeds the byte
+cap, so BYTES binds for large blocks and CALLS binds for small ones. Combined worst
+case ≈ 10 s of I/O next to ≈ 38 s of compute — same order, not dominating. Exceeding
+either traps exactly like a count-class overrun. The call is charged BEFORE the
+lookup, so an out-of-range probe is not free.
+
+These caps deliberately do **not** permit folding the whole 32850-block window in one
+call (see §2.5): that would be minutes of I/O per block on any budget worth having.
+
+ABI notes:
 
 - The node marshals inputs above `__heap_base` and calls `verify()` with the offsets;
   reads the i32 result and the 8-byte `out_ab` (two Q32 `u32`, §3). No float crosses
   the ABI, so the money path is integer-only. `host.c` was the wasm3-era prototype;
   the WAMR bridge replaces it.
+- The module is freestanding apart from the host functions it may import:
+  `metering.usegas` (§8.6) and `chain.slot_block_count` / `chain.slot_block` (§3.1).
+  Guest code cannot charge the host-side budgets: `usegas` ignores any class id at or
+  above `GC_USEGAS_MAX`, which is where the I/O class ids live.
 - Grinding resistance: the seed's payout half is miner-controlled, so an LLM algo's
   validation-set selection must itself be grinding-resistant; the prev-block-hash half
   is not grindable without redoing that block's PoW.
@@ -998,6 +1094,23 @@ not the guarantee.
   `gasinstrument.cpp`, per-class counters + limits + 8 GiB BULK budget + per-class
   trap in `wasmexec.cpp`. Instrumenter output verified to type-check/compile on the
   trunk, MoE, and non-SIMD verifiers; trunk counts all sit under the limits.
+- Verifier ABI (§3, §3.1): **resolved and implemented.** `verify()` takes
+  `prev_hash, payout, nbits, solution, out_ab`; the block's own txs are NOT an input
+  (circular — §3); the slot's previous blocks are reached through the
+  `chain.slot_block_count` / `chain.slot_block` imports over a 32850-block window,
+  framed `TX_NO_WITNESS`, metered by the §8.7 I/O budgets, with an unreadable
+  in-window block escalating to a fatal error rather than invalidating the block.
+  Node side: `SlotBlockSource` (`dynamicalgo/wasmexec.h`) + `ChainSlotBlockSource`
+  (`validation.cpp`).
+- **Stateful-algo history delivery (OPEN, and the successor to the ABI work).** The
+  I/O budgets make the slot window reachable but not traversable in one call (§2.5),
+  so an algo whose state is the fold of all history — the llm.c LoRA chain — cannot
+  re-derive it inside `verify()`. Options: on-chain weight-state checkpoint epochs
+  (`llm.c doc/btm-proof-of-useful-work.md`, "checkpoint epochs"), or node-held state
+  passed to `verify()` (that doc's "resident state in an embedded node"). The
+  resident-RAM variant costs ~1.76 GB per stateful slot, ~14 GB if all 8 slots run
+  one, so the disk-backed form (a memoization like `llmc/btmcache.h`, loaded per
+  call) is the one to pursue. The accessor ABI forecloses neither.
 - Materialized-algo store: format and where the ~8 activated modules live; re-vote
   swap-in.
 - Per-height/per-algo RSF index: storage format and rebuild-on-reindex.

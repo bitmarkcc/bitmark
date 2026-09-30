@@ -2953,6 +2953,72 @@ static std::optional<uint256> ActiveAlgoBranch(const dynamicalgo::CActivationDB&
     return std::nullopt;
 }
 
+namespace {
+//! Serves a verifier module its own mPoW slot's previous blocks through the chain.*
+//! imports (doc sec 2.5, 3). The window is this block's parent chain restricted to
+//! blocks of the same algo, back to the Multi-PoW fork boundary, capped at
+//! MIN_SLOT_BLOCKS_ON_DISK. That cap is exactly what the per-slot prune floor
+//! guarantees is retained (pushcodedb.h), so the window is a function of the CHAIN
+//! and is identical on a pruned and an archival node -- which is what keeps
+//! verify()'s inputs, and therefore alpha/beta, in consensus.
+class ChainSlotBlockSource final : public SlotBlockSource
+{
+    node::BlockManager& m_blockman;
+    const CBlockIndex* m_pprev;
+    Algo m_algo;
+    //! index 0 == newest. Built on first use in ONE backward pass: calling
+    //! GetPrevAlgoBlockIndex per step would restart its inner pprev scan each time.
+    //! Up to 32850 pointers (~256 KiB) and ~8x that many index hops, paid once per
+    //! verify() and only for a slot that has an active algo.
+    mutable std::vector<const CBlockIndex*> m_window;
+    mutable bool m_built{false};
+
+    //! The bridge reaches these through the abstract base, so cs_main cannot be
+    //! required statically; assert it instead. Held in practice because the whole
+    //! verify() call runs synchronously inside ConnectBlock.
+    void Build() const
+    {
+        AssertLockHeld(::cs_main);
+        if (m_built) return;
+        m_built = true;
+        for (const CBlockIndex* p = m_pprev; p != nullptr && p->OnFork(); p = p->pprev) {
+            if (p->GetAlgo() != m_algo) continue;
+            m_window.push_back(p);
+            if (m_window.size() >= static_cast<size_t>(MIN_SLOT_BLOCKS_ON_DISK)) break;
+        }
+    }
+
+public:
+    ChainSlotBlockSource(node::BlockManager& blockman, const CBlockIndex* pprev, Algo algo)
+        : m_blockman{blockman}, m_pprev{pprev}, m_algo{algo} {}
+
+    uint32_t Count() const override
+    {
+        Build();
+        return static_cast<uint32_t>(m_window.size());
+    }
+
+    bool Read(uint32_t index, std::vector<unsigned char>& out) const override
+    {
+        Build();
+        if (index >= m_window.size()) return false;
+        CBlock block;
+        if (!m_blockman.ReadBlockFromDisk(block, *m_window[index])) return false;
+        // TX_NO_WITNESS deliberately, and it is part of the ABI: it is the one
+        // UNCONDITIONAL framing. TX_WITH_WITNESS emits the extended marker/flag
+        // format only when a tx actually has witness data, so the shape of these
+        // bytes would depend on block content -- and while mainnet and testnet pin
+        // SegwitHeight to INT_MAX (segwit never activates), the serialization
+        // machinery is still present and regtest/signet can enable it. A consensus
+        // input that verify()'s alpha/beta depend on must not be able to change
+        // framing. This also matches the txid/merkle-root basis rather than wtxid.
+        out.clear();
+        VectorWriter{out, 0, TX_NO_WITNESS(block)};
+        return true;
+    }
+};
+} // namespace
+
 // Bitmark: the dynamic-algo reward split (doc sec 4, 7 steps 3-5). `branch` is the algo
 // active for this block's slot (nullopt == primitive-only, which yields the primitive
 // ceiling subsidy + fees). When set, this assembles the slot's materialized module, runs
@@ -2988,20 +3054,26 @@ static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
 
     // Run verify() under the consensus gas/memory limits. alpha/beta are read even when
     // no solution is present (empty solution), since the split's no-solution branch needs
-    // them (doc sec 3).
-    // TODO (verifier ABI, still open): the framing of input 2 (current block's
-    // non-coinbase txs) and input 1 (the n previous slot blocks) is not yet pinned -- it
-    // is co-designed with the reference verifier -- so both are passed empty here. The
-    // prev_hash, payout, nbits and solution inputs are final.
+    // them (doc sec 3). The slot's previous blocks are not passed in: the module pulls
+    // the ones it needs through the chain.* imports, metered by the I/O budgets.
     const uint256 prev = pindex->pprev ? pindex->pprev->GetBlockHash() : uint256();
+    const ChainSlotBlockSource slot_blocks{chainstate.m_blockman, pindex->pprev,
+                                           pindex->GetAlgo()};
     const AlgoVerifyResult vr = RunAlgoVerify(
         module,
         Span<const unsigned char>{prev.begin(), prev.size()},
         sol.payout,
         block.nBits,
-        /*txs=*/Span<const unsigned char>{},
-        /*last_n_blocks=*/Span<const unsigned char>{},
-        sol.bytes);
+        sol.bytes,
+        &slot_blocks);
+    if (vr.chain_unavailable) {
+        // A block consensus says is inside the window could not be read HERE. That is
+        // local damage (corruption, or a prune lock that did not hold), not a property
+        // of the block being validated -- rejecting it would fork this node off the
+        // chain. Same reasoning as an activation-store desync.
+        return FatalError(chainstate.m_chainman.GetNotifications(), state,
+                          "Cannot read a dynamic-algo slot block that must be retained: " + vr.error);
+    }
     if (!vr.ok) {
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                              vr.out_of_gas ? "dynamic-algo-out-of-gas" : "dynamic-algo-fault",

@@ -54,7 +54,16 @@ enum GasClass : int32_t {
     GC_BULK_MEM = 15,   //!< memory.fill/copy/init      (N = bytes,        x1)
     GC_BULK_GROW = 16,  //!< memory.grow                (N = 64 KiB pages, x65536)
     GC_BULK_TABLE = 17, //!< table.fill/copy/init/grow  (N = elements,     x8)
-    GC_CLASS_MAX = 18,
+    //! One past the last id the instrumenter may emit through usegas. Everything
+    //! above is charged by the HOST, never by instrumented guest code.
+    GC_USEGAS_MAX = 18,
+
+    // -- host-charged chain-access budgets (ids 18..19): charged by the exec
+    //    bridge when the module calls a `chain` import (doc sec 8.7). Never
+    //    emitted by usegas, so an instrumented module cannot touch them.
+    GC_IO_CALLS = 18,   //!< one charge per chain.slot_block() fetch
+    GC_IO_BYTES = 19,   //!< block bytes delivered by chain.slot_block()
+    GC_CLASS_MAX = 20,
 };
 
 //! Per-class execution limits (max executions), doc sec 8.6. Indexed by the count
@@ -81,6 +90,32 @@ static constexpr uint64_t GAS_LIMIT[GC_COUNT_N] = {
 
 //! Combined bulk-bytes budget: 8 GiB across memory/table fill+copy+init+grow.
 static constexpr uint64_t GAS_BULK_LIMIT = 8ull * 1024 * 1024 * 1024;
+
+//! Chain-access budgets, per verify() call (doc sec 8.7).
+//!
+//! Neither GAS_LIMIT[GC_CALL] nor the memory cap bounds disk reads: a chain fetch
+//! costs the module ONE `call` instruction but costs the node a block read, so the
+//! 320M CALL budget would permit ~320M reads, and a module can fetch every block
+//! into the same buffer so its memory footprint stays flat. These two budgets are
+//! what bound it, and they bound different things:
+//!
+//!   CALLS - the fixed per-fetch overhead (block-index walk, file seek,
+//!           deserialization) that even a tiny block pays; bounds IOPS.
+//!   BYTES - transfer volume; bounds throughput.
+//!
+//! They cross over usefully: 1024 x MAX_BLOCK_SERIALIZED_SIZE far exceeds the byte
+//! cap, so BYTES binds for large blocks and CALLS binds for small ones. Worst case
+//! is ~10 s on a spinning disk (1024 seeks at ~150 IOPS + 256 MiB at ~100 MB/s),
+//! an order below the ~38 s compute budget, and negligible on an SSD.
+//!
+//! NOTE: these caps deliberately do NOT permit folding the whole accessible window
+//! (MIN_SLOT_BLOCKS_ON_DISK = 32850 blocks) in one call -- that would be minutes of
+//! I/O per block on any budget worth having. The window is REACHABLE (any index),
+//! not traversable in a single verify(); a stateful algo must receive its history
+//! pre-folded (on-chain checkpoint epochs or node-held state), not re-derive it.
+//! CONSENSUS constants, fixed network-wide.
+static constexpr uint64_t GAS_IO_CALLS_LIMIT = 1024;
+static constexpr uint64_t GAS_IO_BYTES_LIMIT = 256ull * 1024 * 1024;
 
 //! Byte-factor for a bulk sub-kind: multiply the raw N size operand to get bytes.
 //! memory ops already count bytes; memory.grow counts 64 KiB pages; table ops
