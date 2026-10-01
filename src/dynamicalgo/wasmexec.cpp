@@ -21,12 +21,21 @@ namespace {
 //! measured. See doc/dynamic-algo-mining.md sec 8.5.
 constexpr uint32_t WASM_STACK_BYTES = 1024 * 1024;
 
-//! Total per-verifier memory is capped at 2 GiB, split so the two channels sum
-//! exactly: linear memory (mmap'd, hardware-bounds-checked) + all WAMR runtime
-//! allocations (instance structs, tables, exec stack) via the custom allocator.
-//!   linear cap   = 32512 pages x 64 KiB = 2032 MiB (1.984375 GiB)
-//!   alloc ceiling = 16 MiB (WASM_ALLOC_CEILING)
-//!   total        = 2032 + 16 = 2048 MiB = 2 GiB exactly.
+//! Per-verifier memory is bounded at ~2 GiB across two channels: linear memory
+//! (mmap'd, hardware-bounds-checked) + all WAMR runtime allocations (instance
+//! structs, tables, exec stack) via the custom allocator.
+//!   module linear cap = 32512 pages x 64 KiB = 2032 MiB (1.984375 GiB)
+//!   alloc ceiling     = 16 MiB (WASM_ALLOC_CEILING)
+//!   plus the host-managed app heap, which lives INSIDE linear memory in addition
+//!   to the cap: inputs_total + 64 KiB, so 2 pages for a small solution and ~17
+//!   for a 1 MB one => total <= ~2049 MiB (not exactly 2048; see doc sec 8.5).
+//! The module ceiling is kept FIXED rather than reduced by the heap: the heap
+//! depends on the block's solution length, and a consensus memory limit must not
+//! vary with block content. Every node still grants the same 32512 growable pages
+//! for a given block, so memory.grow fails at the identical point everywhere.
+//! WAMR only LOWERS a module's declared max, so this is a ceiling that bounds a
+//! large algo but never blocks one; a module that never grows keeps its own
+//! smaller max and WAMR logs a benign "cannot override max memory".
 //! The trunk verifier measured 31,163 pages (1.902 GiB), leaving ~84 MiB headroom.
 //! CONSENSUS constants, fixed network-wide (doc sec 8.5). max_memory_pages is
 //! enforced per-instance by WAMR; the alloc ceiling is process-global (see
@@ -144,11 +153,18 @@ int32_t bitmark_slot_block(wasm_exec_env_t exec_env, int32_t index_raw, int32_t 
     // per block passes a buffer of at least MAX_BLOCK_SERIALIZED_SIZE.
     if (size > static_cast<uint64_t>(static_cast<uint32_t>(cap_raw))) return SLOT_BLOCK_TOO_SMALL;
 
+    // An out-of-bounds destination traps rather than returning a code: WAMR's check
+    // sets the "out of bounds memory access" exception itself before returning false,
+    // so the call is already doomed and the return value is never observed. That is
+    // the same thing a plain i32.store out of bounds would do.
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
     const uint64_t ptr = static_cast<uint32_t>(ptr_raw);
-    if (!wasm_runtime_validate_app_addr(inst, ptr, size)) return SLOT_BLOCK_BAD_ADDR;
+    if (!wasm_runtime_validate_app_addr(inst, ptr, size)) return 0;
     void* native = wasm_runtime_addr_app_to_native(inst, ptr);
-    if (native == nullptr) return SLOT_BLOCK_BAD_ADDR;
+    if (native == nullptr) {
+        wasm_runtime_set_exception(inst, "out of bounds memory access");
+        return 0;
+    }
     std::memcpy(native, blk.data(), size);
     return static_cast<int32_t>(size);
 }

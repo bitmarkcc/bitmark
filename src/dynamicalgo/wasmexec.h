@@ -77,8 +77,14 @@
 //! `chain.slot_block` failure codes. Negative == nothing was written. These are
 //! part of the consensus ABI (doc sec 3): a module compiled against them must see
 //! the same values on every node.
+//!
+//! A destination buffer outside the module's memory is NOT in this list: it traps,
+//! like any other out-of-bounds wasm access. WAMR's bounds check raises the
+//! exception itself before returning (wasm_memory.c, "out of bounds memory
+//! access"), so a recoverable code here would be unreachable -- and trapping is
+//! both the standard wasm semantics for an OOB write and deterministic, since the
+//! bounds depend only on the module's own declared memory.
 static constexpr int32_t SLOT_BLOCK_NO_BLOCK = -1;  //!< index >= slot_block_count()
-static constexpr int32_t SLOT_BLOCK_BAD_ADDR = -2;  //!< [ptr, ptr+size) outside module memory
 static constexpr int32_t SLOT_BLOCK_TOO_SMALL = -3; //!< cap < the block's serialized size
 
 //! The slot's own previous blocks, as seen by a verifier module. Supplied by the

@@ -233,8 +233,12 @@ chain.slot_block(index, ptr, cap) -> i32
     Writes the serialized block at `index` (0 = newest, i.e. the parent-most recent
     slot block) to `ptr`, returning its size. Negative means nothing was written:
       -1  no such block (index >= slot_block_count())
-      -2  [ptr, ptr+size) outside module memory
-      -3  cap smaller than the block's size
+      -3  cap smaller than the block's size (the read still happened, so it is
+          still charged; pass >= MAX_BLOCK_SERIALIZED_SIZE to never see this)
+    A destination outside the module's own memory TRAPS instead of returning a
+    code, exactly as an out-of-bounds i32.store would -- the engine's bounds check
+    raises the exception itself, and the bounds depend only on the module's own
+    declared memory, so this stays deterministic.
 ```
 
 Block bytes use the **`TX_NO_WITNESS` serialization**, and that is part of the ABI:
@@ -777,21 +781,39 @@ These target flags are consensus parameters.
   consensus fork. Small ARMv7 / low-RAM devices that cannot meet the floor may run
   pruned/SPV or validate only the primitive PoW.
 
-### 8.5 Memory bounds (total 2 GiB per verifier)
+### 8.5 Memory bounds (~2 GiB per verifier)
 
-Total per-verifier resident memory is capped at **2 GiB**, split so WAMR's two
-allocation paths sum exactly (implemented in `src/dynamicalgo/wasmexec.cpp`):
+Per-verifier resident memory is bounded at **~2 GiB** across WAMR's two allocation
+paths, plus a small input-sized app heap (implemented in
+`src/dynamicalgo/wasmexec.cpp`):
 
 - **Linear memory** (guest params/activations/heap; `mmap`'d, hardware-bounds-
   checked, enforced per-instance): `max_memory_pages = 32512` = **2032 MiB
   (1.984375 GiB)**, via `wasm_runtime_instantiate_ex`. WAMR only *lowers* a module's
-  declared max, so the effective cap is `min(module max, 32512)` -- deterministic.
+  declared max (`wasm_runtime_get_max_mem` returns `min(module max, 32512)`), so the
+  cap is a CEILING -- it can never stop a large algo from running, it only bounds one.
+  *Verified*: a module that grows memory reaches exactly 32512 pages before
+  `memory.grow` begins failing. A module that never grows keeps its own (smaller)
+  recorded max and WAMR logs a benign "cannot override max memory" -- raising a
+  ceiling is meaningless for a module that will not use it.
+- **The host-managed app heap sits INSIDE linear memory, in addition to that cap.**
+  `wasmexec.cpp` sizes it `inputs_total + 64 KiB`, so a verifier instance peaks at
+  32512 pages plus the heap: *measured* 32514 pages (2032.125 MiB) for a small
+  solution, and ~17 pages (~1.06 MiB) for a 1 MB one, since `inputs_total` includes
+  the payout and solution lengths.
 - **WAMR runtime allocations** (instance structs, tables, exec-env operand stack;
   via `runtime_malloc`): a **custom allocator** installed at `wasm_runtime_full_init`
   (`Alloc_With_Allocator`) enforcing a **16 MiB ceiling** -- it returns NULL past the
   ceiling, so a runaway `table.grow` (tables live here, *outside* the linear cap)
   fails deterministically instead of OOMing the node, closing the table-space channel.
-- 2032 + 16 = 2048 MiB = **2 GiB exactly.**
+- So the total is **2032 MiB + the app heap + 16 MiB ≈ 2049 MiB** worst case, i.e.
+  2 GiB plus the heap -- not the exact 2048 MiB this section previously claimed. The
+  module's own ceiling is deliberately kept FIXED at 32512 pages rather than reduced
+  by the heap, because the heap's size depends on the block's solution length and a
+  consensus memory limit must not vary with block content. Determinism is unaffected:
+  every node grants the same 32512 growable pages for the same block, so
+  `memory.grow` fails at the identical point everywhere. Only the node's own RSS
+  varies by up to ~1 MiB, which is not an observable the module can branch on.
 
 Notes:
 - `WASM_STACK_BYTES = 1 MiB` is the exec-env operand-stack size (consensus constant:
@@ -804,7 +826,12 @@ Notes:
   verification fits ~16 GB commodity RAM; 2 GiB sits under wasm32 dlmalloc's ~2 GiB
   single-allocation ceiling; E=64 is the largest wasm32-safe MoE config.
 - **Measured**: the trunk grows linear memory to **31,163 pages (1.902 GiB)**,
-  ~84 MiB (4.3%) under the 32512 cap -- deliberately tight (E=64 ≈ 2 GiB).
+  ~84 MiB (4.3%) under the 32512 cap -- deliberately tight (E=64 ≈ 2 GiB). Note the
+  trunk *does* grow memory, so it keeps a large declared max and the 32512 ceiling
+  applies to it normally.
+- An algo that wants more than its initial memory must of course emit `memory.grow`
+  (any module with a real allocator does); a module compiled to never grow is held
+  at its own recorded max, which is its own choice, not a limit imposed here.
 - **Caveat**: the custom allocator is process-global, so the 16 MiB ceiling bounds
   concurrent instances collectively -- strictly per-instance only for one verify at a
   time; N-way parallel scales it to N x 16 MiB (linear stays per-instance).

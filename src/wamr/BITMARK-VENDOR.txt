@@ -1,5 +1,69 @@
 WAMR vendored for the bitmark dynamic-algo AOT runtime.
 Upstream: https://github.com/bytecodealliance/wasm-micro-runtime
-Pinned commit: b70d708d46be750bfcf008218b42c7b98c49368a
-Excluded from upstream: core/iwasm/compilation (LLVM AOT compiler, offline wamrc only),
-  core/iwasm/fast-jit (asmjit), core/deps, and all non-core dirs.
+Pinned commit: b70d708d46be750bfcf008218b42c7b98c49368a  (WAMR 2.4.3)
+
+Two things are built from this tree, with different feature sets:
+
+1. libvmlib.a -- the AOT RUNTIME linked into bitmarkd/test_bitmark (see
+   CMakeLists.txt here, driven by src/Makefile.am). AOT only: no interpreter,
+   no JIT, no libc, no GC. This is the consensus execution engine.
+
+2. wamrc -- the offline AOT COMPILER (wamr-compiler/), which turns an on-chain
+   .wasm algo module into the .aot that (1) can load. Built as a companion
+   binary so the compiler and the runtime come from the SAME pinned commit:
+   aot_loader.c checks `version == AOT_CURRENT_VERSION` exactly, so a wamrc
+   from any other WAMR release emits .aot files this runtime refuses to load.
+   wamrc links LLVM; bitmarkd does not.
+
+Vendored for (1), the runtime:
+  core/                      minus the exclusions below
+
+Vendored additionally for (2), wamrc:
+  wamr-compiler/                       the tool itself (main.c + CMakeLists)
+  core/iwasm/compilation/              the LLVM AOT compiler
+  core/iwasm/interpreter/*.c           NOT to interpret anything -- WAMR's
+                                       .wasm PARSER lives here, and wamrc has
+                                       to parse the module it compiles. The
+                                       runtime build leaves WAMR_BUILD_INTERP=0,
+                                       so none of these objects reach bitmarkd
+                                       (verified: libvmlib.a is byte-identical
+                                       before and after vendoring them).
+  core/iwasm/libraries/thread-mgr/     required by wamr-compiler's CMakeLists,
+  core/iwasm/libraries/shared-heap/    which forces THREAD_MGR on. Harmless:
+                                       the .aot's MULTI_THREAD feature flag
+                                       comes from wamrc's CLI (default off),
+                                       not from how wamrc was built.
+
+Still excluded from upstream:
+  core/iwasm/fast-jit                  (asmjit)
+  core/deps                            (only a README + a tensorflow script)
+  core/iwasm/libraries/*               except thread-mgr and shared-heap above
+  all other non-core dirs
+
+No upstream file is patched. wamrc's feature set is configured entirely from
+the cmake command line (see src/Makefile.am); notably WAMR_BUILD_LIBC_WASI=0,
+LIBC_BUILTIN=0, LIBC_UVWASI=0, LIB_PTHREAD=0 and LIB_WASI_THREADS=0, which is
+what keeps core/iwasm/libraries/ out of the tree, and WAMR_BUILD_INTERP=1,
+which is needed only for the parser described above.
+
+Feature-flag compatibility (why the .aot loads). aot_loader.c:check_feature_flags
+rejects a module whose header advertises a feature the runtime was built without,
+and aot_emit_aot_file.c derives those flags from wamrc's COMPILE OPTIONS, not
+from what the module actually uses. The two must therefore agree:
+
+  feature          runtime   wamrc default   flagged in .aot
+  bulk-memory      1         on              yes     match
+  simd             1         on              yes     match
+  gc               0         off             yes     match
+  multi-thread     0         off             yes     match
+  ref-types        0         on              yes     see below
+  bulk-memory-opt  0         on              NO      inert (config.h only)
+  call-indirect-   0         --              NO      invisible: the .aot does
+    overlong                                         not carry wasm encodings
+
+ref-types looked like a mismatch (clang advertises +reference-types by default
+in the target_features custom section, and wamrc defaults enable_ref_types=true)
+but measured as a non-issue: compiling the keccak reference algo with and
+without --disable-ref-types produced BYTE-IDENTICAL .aot files, and the default
+one loads in the ref-types=0 runtime. Re-check this if an algo ever uses an
+actual reference-types instruction (table.get/set/grow/fill, externref).
