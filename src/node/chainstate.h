@@ -33,6 +33,10 @@ struct ChainstateLoadOptions {
     int64_t check_blocks{DEFAULT_CHECKBLOCKS};
     int64_t check_level{DEFAULT_CHECKLEVEL};
     std::function<void()> coins_error_cb;
+    //! Bitmark: -wamrc, an explicit path to the companion AOT compiler that
+    //! materializes an on-chain dynamic algo. Empty means resolve it the normal way
+    //! (install bindir, then PATH); see dynamicalgo::FindWamrc.
+    std::string wamrc_path;
 };
 
 //! Chainstate load status. Simple applications can just check for the success

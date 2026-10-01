@@ -2724,7 +2724,8 @@ PushCodeStatus Chainstate::AssemblePushCode(const uint256& hash, std::vector<uns
 {
     AssertLockHeld(cs_main);
     CCodeDB* codedb = m_blockman.m_code_db.get();
-    if (!codedb) { reason = "pushcode-no-db"; return PushCodeStatus::INCOMPLETE; }
+    // No code DB open is a local problem, never a statement about the chain.
+    if (!codedb) { reason = "pushcode-no-db"; return PushCodeStatus::UNAVAILABLE; }
 
     // Materialize a part's code chunk by reading one of its on-disk copies: the
     // containing tx at a location's code_pos (as in the tx index), taking the code
@@ -3036,12 +3037,39 @@ static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
     max_coinbase_value = subsidy + fees; // primitive default (unchanged behavior)
     if (!branch) return true; // slot is primitive-only
 
-    // Assemble the slot's materialized algo module from the OP_PUSHCODE code DB.
-    std::vector<unsigned char> module;
+    // Assemble the slot's algo module (a .wasm) from the OP_PUSHCODE code DB. A branch
+    // the CHAIN says cannot be assembled is block invalidity -- that verdict is a pure
+    // function of the confirmed chain, so every node agrees. UNAVAILABLE is different:
+    // this node could not read code the chain does have (pruned past the keep window, a
+    // damaged block file, no code DB), which says nothing about the block. Rejecting on
+    // that would fork this node off the chain, so it escalates instead.
+    std::vector<unsigned char> wasm;
     std::string reason;
-    const PushCodeStatus st = chainstate.AssemblePushCode(*branch, module, reason);
+    const PushCodeStatus st = chainstate.AssemblePushCode(*branch, wasm, reason);
+    if (st == PushCodeStatus::UNAVAILABLE) {
+        return FatalError(chainstate.m_chainman.GetNotifications(), state,
+                          "Cannot read the dynamic-algo code for branch " + branch->GetHex() +
+                          " (" + reason + "); it must be retained but is not available here");
+    }
     if (st != PushCodeStatus::COMPLETE) {
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "dynamic-algo-unavailable", reason);
+    }
+
+    // The runtime is AOT-only, so execute the compiled form, materializing it the
+    // first time this branch is seen. Unlike assembly, failing here is a LOCAL
+    // problem: the .aot is a per-architecture artifact, so an x86 node succeeding
+    // where an ARM node fails must not decide block validity -- that would split
+    // consensus. Hence FatalError, with an operator-facing message naming the exact
+    // command to reproduce. Governance is the defence against an algo that cannot
+    // be compiled; see dynamicalgo/modulestore.h.
+    if (!chainstate.m_blockman.m_module_store) {
+        return FatalError(chainstate.m_chainman.GetNotifications(), state,
+                          "Dynamic-algo module store not open");
+    }
+    std::vector<unsigned char> module;
+    std::string module_err;
+    if (!chainstate.m_blockman.m_module_store->GetOrCompile(*branch, wasm, module, module_err)) {
+        return FatalError(chainstate.m_chainman.GetNotifications(), state, module_err);
     }
 
     // Collect the block's OP_SOLUTION outputs: seq=0 is the payout scriptPubKey, seq=1..N-1
@@ -3475,20 +3503,32 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         dynamicalgo::CActivationDB& adb = *m_blockman.m_activation_db;
         const dynamicalgo::ActivationParams aparams{AlgoActivationParams(params.GetConsensus())};
         // A winning branch only activates if it assembles; a pure function of the chain,
-        // so every node decides this identically (doc sec "Activation").
+        // so every node decides this identically (doc sec "Activation"). UNAVAILABLE is
+        // NOT such a verdict -- it means this node could not read its own copy -- so it
+        // maps to UNKNOWN and makes ComputeConnect refuse rather than void an activation
+        // the rest of the network performs.
         const auto assembles = [&](const uint256& branch) {
             std::vector<unsigned char> code;
             std::string why;
-            return AssemblePushCode(branch, code, why) == PushCodeStatus::COMPLETE;
+            switch (AssemblePushCode(branch, code, why)) {
+            case PushCodeStatus::COMPLETE:    return dynamicalgo::BranchAssembly::YES;
+            case PushCodeStatus::UNAVAILABLE: return dynamicalgo::BranchAssembly::UNKNOWN;
+            case PushCodeStatus::INCOMPLETE:
+            case PushCodeStatus::INVALID:     break;
+            }
+            return dynamicalgo::BranchAssembly::NO;
         };
+        std::string algo_err;
         if (!dynamicalgo::ComputeConnect(adb, aparams, pindex->nHeight, nFees,
                                          CollectBlockVotes(block, blockundo, aparams.voting_period),
-                                         pindex->GetBlockHash(), assembles, algo_write)) {
-            // The store is not one block behind: a local database problem, not a defect in
-            // the block, so this is fatal rather than a block-validity failure.
+                                         pindex->GetBlockHash(), assembles, algo_write,
+                                         algo_err)) {
+            // Either the store is not one block behind, or assemblability could not be
+            // determined here. Both are local problems, not defects in the block, so
+            // this is fatal rather than a block-validity failure.
             return FatalError(m_chainman.GetNotifications(), state,
-                              "Dynamic-algo activation database is out of sync with the chain; "
-                              "please restart with -reindex");
+                              "Dynamic-algo activation cannot be computed: " + algo_err +
+                              ". If this persists, restart with -reindex");
         }
         have_algo_write = true;
         active_branch = ActiveAlgoBranch(adb, static_cast<int>(pindex->GetAlgo()), algo_write.slot_updates);

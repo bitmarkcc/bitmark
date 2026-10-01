@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 
 // Dynamic-algo activation resolution (Bitmark, phase 6.5b step 3).
 //
@@ -50,20 +51,35 @@ struct ActivationParams {
     int reorg_margin{1000};
 };
 
-//! Can this branch be assembled to completion right now? (AssemblePushCode == COMPLETE.)
-using BranchAssembler = std::function<bool(const uint256& branch)>;
+//! Whether a winning branch can be assembled. Tri-state ON PURPOSE: a node that
+//! cannot READ its own copy of the code (pruned past the keep window, damaged block
+//! file, code DB not open) has learned nothing about the chain, and must not answer
+//! "no". Answering "no" would void the activation and PERSIST that decision in the
+//! activation store, permanently diverging from every node that could read it --
+//! local data loss silently becoming a chain split.
+enum class BranchAssembly {
+    YES,     //!< assembles to completion
+    NO,      //!< the CHAIN says it cannot (incomplete or invalid): voids activation
+    UNKNOWN, //!< THIS node could not determine it; the caller must escalate, not decide
+};
+
+//! Can this branch be assembled right now? (Wraps AssemblePushCode.)
+using BranchAssembler = std::function<BranchAssembly(const uint256& branch)>;
 
 //! Compute the store write for CONNECTING the block at `height`, whose total fees and
 //! per-slot votes are supplied (both derived from the block and its undo data). Reads the
 //! prior incremental state from `db`, slides the window and the fee sum by one block, and
 //! decides any activations landing at `height`.
 //!
-//! Returns false if the store's state does not correspond to `height - 1` (the caller must
-//! reconcile or reindex); the store is not modified either way -- the caller applies `out`.
+//! Returns false, with `err` set, when this node cannot compute the result: the store's
+//! state does not correspond to `height - 1` (reconcile or reindex), or assemblability
+//! came back UNKNOWN. BOTH are local faults, so the caller must raise a fatal error --
+//! never reject the block, and never apply a partial result. The store is not modified
+//! either way; the caller applies `out`.
 bool ComputeConnect(const CActivationDB& db, const ActivationParams& params,
                     int32_t height, CAmount block_fees, const CBlockVotes& votes,
                     const uint256& block_hash, const BranchAssembler& assembles,
-                    CConnectWrite& out);
+                    CConnectWrite& out, std::string& err);
 
 //! Compute the store write for DISCONNECTING the block at `height`: reverses the slide and
 //! restores the per-slot activations recorded in that block's undo record. Returns false if

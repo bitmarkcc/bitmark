@@ -9,6 +9,7 @@
 #include <chain.h>
 #include <dbwrapper.h>
 #include <dynamicalgo/activationdb.h>
+#include <dynamicalgo/modulestore.h>
 #include <flatfile.h>
 #include <pushcodedb.h>
 #include <kernel/blockmanager_opts.h>
@@ -297,6 +298,13 @@ public:
     //! synchronously in ConnectBlock/DisconnectBlock and read by the reward path's
     //! GetActiveAlgoBranch. See src/dynamicalgo/activationdb.h.
     std::unique_ptr<dynamicalgo::CActivationDB> m_activation_db GUARDED_BY(::cs_main);
+
+    //! Materialized dynamic-algo modules (Bitmark). The chain carries a .wasm, the
+    //! AOT-only runtime executes a .aot, so this holds the compiled module per
+    //! branch and produces a missing one with the companion wamrc. Purely DERIVED,
+    //! per-architecture data -- never consensus, safe to delete, rebuilt on demand.
+    //! See src/dynamicalgo/modulestore.h.
+    std::unique_ptr<dynamicalgo::ModuleStore> m_module_store GUARDED_BY(::cs_main);
 
     bool WriteBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     bool LoadBlockIndexDB(const std::optional<uint256>& snapshot_blockhash)

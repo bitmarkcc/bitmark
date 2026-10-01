@@ -55,6 +55,11 @@ std::string PushCodeStatusName(PushCodeStatus s)
     case PushCodeStatus::COMPLETE: return "complete";
     case PushCodeStatus::INCOMPLETE: return "incomplete";
     case PushCodeStatus::INVALID: return "invalid";
+    // Distinct from "incomplete" on purpose: the chain HAS this code, but this node
+    // cannot read it (pruned past the keep window, damaged block file, code DB not
+    // open). Reporting that as "incomplete" would send an operator looking for a
+    // missing on-chain entry instead of at their own storage.
+    case PushCodeStatus::UNAVAILABLE: return "unavailable";
     }
     return "unknown";
 }
@@ -225,7 +230,7 @@ static RPCHelpMan getpushcode()
         RPCResult{
             RPCResult::Type::OBJ, "", "",
             {
-                {RPCResult::Type::STR, "status", "\"complete\", \"incomplete\", or \"invalid\""},
+                {RPCResult::Type::STR, "status", "\"complete\", \"incomplete\", \"invalid\", or \"unavailable\" (present on chain but not readable here)"},
                 {RPCResult::Type::STR_HEX, "code", /*optional=*/true, "The assembled code (only when complete)"},
                 {RPCResult::Type::NUM, "length", /*optional=*/true, "Assembled code length in bytes (only when complete)"},
                 {RPCResult::Type::STR, "reason", /*optional=*/true, "Why assembly did not complete (when not complete)"},

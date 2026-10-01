@@ -211,15 +211,19 @@ BOOST_FIXTURE_TEST_CASE(assemble_replace_and_delete, AssemblyFixture)
 
 BOOST_FIXTURE_TEST_CASE(assemble_incomplete, AssemblyFixture)
 {
-    // Dangling reference: tip's parent is not in the DB (forward ref / never).
+    // Dangling reference: the tip's parent ENTRY is not in the DB (forward ref, or
+    // never). That is a property of the chain, so INCOMPLETE -- every node agrees.
     uint256 h1 = Add(1, Child(MkHash(999), PUSHCODE_OP_INSERT), B);
     std::vector<unsigned char> out;
     BOOST_CHECK(Assemble(h1, out) == PushCodeStatus::INCOMPLETE);
 
-    // Chunk unavailable (e.g. pruned block file) is also INCOMPLETE, not invalid.
+    // An unreadable chunk (pruned or damaged block file) is UNAVAILABLE, deliberately
+    // NOT INCOMPLETE: the entry IS in the DB, so the chain has this code and only THIS
+    // node cannot read it. Reporting it as INCOMPLETE would let local data loss void a
+    // dynamic-algo activation or reject a block the rest of the network accepts.
     uint256 h0 = Add(0, NewRoot(), A);
     unavailable.insert(last_vout); // h0's chunk
-    BOOST_CHECK(Assemble(h0, out) == PushCodeStatus::INCOMPLETE);
+    BOOST_CHECK(Assemble(h0, out) == PushCodeStatus::UNAVAILABLE);
 }
 
 BOOST_FIXTURE_TEST_CASE(assemble_repush_survives_prune, AssemblyFixture)
@@ -242,9 +246,10 @@ BOOST_FIXTURE_TEST_CASE(assemble_repush_survives_prune, AssemblyFixture)
     BOOST_CHECK(Assemble(h0, out) == PushCodeStatus::COMPLETE);
     BOOST_CHECK(out == A);
 
-    // Both copies gone -> INCOMPLETE (nothing on disk).
+    // Both copies gone -> UNAVAILABLE: nothing readable on THIS disk, which says
+    // nothing about the chain (the entry is still in the DB).
     unavailable.insert(recent.vout);
-    BOOST_CHECK(Assemble(h0, out) == PushCodeStatus::INCOMPLETE);
+    BOOST_CHECK(Assemble(h0, out) == PushCodeStatus::UNAVAILABLE);
 }
 
 BOOST_FIXTURE_TEST_CASE(assemble_out_of_range, AssemblyFixture)

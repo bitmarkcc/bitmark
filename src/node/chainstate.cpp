@@ -70,6 +70,33 @@ static ChainstateLoadResult CompleteChainstateInitialization(
         .memory_only = options.block_tree_db_in_memory,
         .wipe_data = options.reindex});
 
+    // Bitmark: open the materialized dynamic-algo module store. NOT under blocks/
+    // and NOT wiped on reindex: a module is keyed by its branch content hash, so a
+    // rebuilt index cannot invalidate one, and recompiling is expensive. Probe the
+    // compiler once here so a missing or broken one is reported at startup instead
+    // of surfacing as a fatal error the first time an algo activates.
+    auto& pmodulestore{chainman.m_blockman.m_module_store};
+    pmodulestore.reset();
+    pmodulestore = std::make_unique<dynamicalgo::ModuleStore>(
+        chainman.m_options.datadir / "algomodules",
+        dynamicalgo::FindWamrc(options.wamrc_path));
+    {
+        const dynamicalgo::AotTarget& t{dynamicalgo::PinnedAotTarget()};
+        std::string probe_err;
+        if (!t.supported) {
+            LogPrintf("Dynamic-algo AOT: %s\n", t.why_unsupported);
+        } else if (!pmodulestore->ProbeCompiler(probe_err)) {
+            LogPrintf("Dynamic-algo AOT: %s. This node cannot compile an on-chain "
+                      "algo and will stop when one activates unless the compiled "
+                      "module is supplied in %s. Set -wamrc=<path> to point at it.\n",
+                      probe_err,
+                      fs::PathToString(chainman.m_options.datadir / "algomodules"));
+        } else {
+            LogPrintf("Dynamic-algo AOT: using %s for target %s\n",
+                      fs::PathToString(pmodulestore->CompilerPath()), t.tag);
+        }
+    }
+
     if (options.reindex) {
         pblocktree->WriteReindexing(true);
         //If we're reindexing in prune mode, wipe away unusable block files and all undo data files

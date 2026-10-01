@@ -163,11 +163,24 @@ static constexpr int64_t MAX_PUSHCODE_DEPTH = MAX_PUSHCODE_LENGTH;
 // LENGTH keeps more than this; it only extends the window for sluggish slots.
 static constexpr int MIN_SLOT_BLOCKS_ON_DISK = 90 * 365;
 
-/** Outcome of assembling a branch tip's code. */
+/** Outcome of assembling a branch tip's code.
+ *
+ *  The split between INCOMPLETE and UNAVAILABLE is CONSENSUS-CRITICAL. The first
+ *  three are properties of the CHAIN, so every node reaches the same verdict.
+ *  UNAVAILABLE is a property of THIS node's storage. Conflating them lets local
+ *  data loss change a consensus decision: a node would reject a block, or void a
+ *  dynamic-algo activation and persist that in its activation DB, while the rest of
+ *  the network accepts it. Callers must escalate UNAVAILABLE (fatal error) rather
+ *  than treat it as invalidity or as "does not assemble". */
 enum class PushCodeStatus {
     COMPLETE,    // `out` holds the fully-assembled code
-    INCOMPLETE,  // a referenced ancestor entry (or its chunk) is not available yet
+    INCOMPLETE,  // a referenced ancestor ENTRY is not on the chain yet (e.g. a
+                 // forward reference); deterministic, as the code DB is built from
+                 // the chain
     INVALID,     // a consensus limit was exceeded or an op index was out of range
+    UNAVAILABLE, // the entry IS on the chain but its code chunk could not be read
+                 // HERE: pruned past the keep window, a damaged or missing block
+                 // file, or no code DB open. LOCAL fault.
 };
 
 /** Fetch the raw code chunk of an entry (the code param of one of the PUSHCODE

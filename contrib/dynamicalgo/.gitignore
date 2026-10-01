@@ -1,0 +1,5 @@
+# Build artifacts (clang/wamrc output is not reproducible across toolchain versions)
+*.wasm
+*.aot
+aot_harness
+store_harness

@@ -40,6 +40,10 @@ struct VoteChain {
     CActivationDB db;
     int32_t height{0};
     std::set<uint256> assemblable;
+    //! Branches this node cannot read (a local storage fault), as distinct from ones
+    //! the chain says do not assemble.
+    std::set<uint256> unreadable;
+    std::string last_err;
 
     explicit VoteChain(const fs::path& path)
         : db{DBParams{.path = path,
@@ -69,8 +73,15 @@ struct VoteChain {
         CBlockVotes bv;
         bv.entries = votes;
         CConnectWrite w;
-        const auto assembles = [&](const uint256& b) { return assemblable.count(b) > 0; };
-        if (!ComputeConnect(db, params, height, fees, bv, BlockHash(height), assembles, w)) return false;
+        const auto assembles = [&](const uint256& b) {
+            if (unreadable.count(b) > 0) return BranchAssembly::UNKNOWN;
+            return assemblable.count(b) > 0 ? BranchAssembly::YES : BranchAssembly::NO;
+        };
+        last_err.clear();
+        if (!ComputeConnect(db, params, height, fees, bv, BlockHash(height), assembles, w, last_err)) {
+            --height; // nothing was applied, so the chain did not advance
+            return false;
+        }
         return db.ApplyConnect(w);
     }
 
@@ -229,6 +240,36 @@ BOOST_AUTO_TEST_CASE(unassemblable_winner_voids_activation)
     BOOST_CHECK(ok.Active(0) == b);
 }
 
+BOOST_AUTO_TEST_CASE(unreadable_winner_refuses_to_decide)
+{
+    // THE important distinction: a branch the chain says cannot be assembled voids the
+    // activation (previous test), but a branch this NODE merely cannot read tells us
+    // nothing about the chain. Deciding "no" there would void an activation the rest of
+    // the network performs AND persist it in the store, so the computation must refuse
+    // and let the caller escalate to a fatal error instead.
+    const uint256 b{VoteChain::Branch(12)};
+
+    VoteChain c{m_args.GetDataDirBase() / "algoact"};
+    c.assemblable.insert(b);
+    c.unreadable.insert(b); // local storage fault wins over "assembles"
+    BOOST_REQUIRE(c.RunUpToActivation(b, /*fee=*/100, /*stake=*/50));
+
+    // Height 26 would activate, but assemblability is indeterminate here.
+    BOOST_CHECK(!c.Connect(1000));
+    BOOST_CHECK(!c.last_err.empty());
+    BOOST_CHECK_EQUAL(c.height, 25);     // nothing applied
+    BOOST_CHECK_EQUAL(c.StateHeight(), 25);
+    BOOST_CHECK(!c.Active(0));
+
+    // Once the node can read it again, the same height activates normally -- the refusal
+    // was not a verdict, just a deferral.
+    c.unreadable.clear();
+    BOOST_REQUIRE(c.Connect(1000));
+    BOOST_CHECK_EQUAL(c.StateHeight(), 26);
+    BOOST_CHECK(c.Active(0) == b);
+    BOOST_CHECK_EQUAL(c.ActivationHeight(0), 26);
+}
+
 BOOST_AUTO_TEST_CASE(min_fee_history_guard)
 {
     // A window anchored at f = 1 would otherwise activate at height 16, but by then no fee
@@ -318,12 +359,14 @@ BOOST_AUTO_TEST_CASE(compute_rejects_a_desynced_store)
     // A connect that is not the store's height + 1 must be refused rather than silently
     // corrupting the running sums, and likewise a disconnect of a height the store does
     // not currently reflect.
-    const auto assembles = [](const uint256&) { return true; };
+    const auto assembles = [](const uint256&) { return BranchAssembly::YES; };
     CConnectWrite cw;
+    std::string err;
     BOOST_CHECK(!ComputeConnect(c.db, c.params, /*height=*/99, 1000, CBlockVotes{},
-                                VoteChain::BlockHash(99), assembles, cw));
+                                VoteChain::BlockHash(99), assembles, cw, err));
+    BOOST_CHECK(!err.empty()); // the caller needs something to report
     BOOST_CHECK(!ComputeConnect(c.db, c.params, /*height=*/3, 1000, CBlockVotes{},
-                                VoteChain::BlockHash(3), assembles, cw));
+                                VoteChain::BlockHash(3), assembles, cw, err));
     CDisconnectWrite dw;
     BOOST_CHECK(!ComputeDisconnect(c.db, c.params, /*height=*/2, VoteChain::BlockHash(1), dw));
 }

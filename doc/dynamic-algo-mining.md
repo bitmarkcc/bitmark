@@ -268,9 +268,14 @@ defined even when the solution is absent/invalid (the node calls `verify()` with
 empty solution just to read `α, β` in the no-solution case).
 `seed = Hash256(payout || prev_block_hash)`.
 
-The reference algos `whirlpool_algo.c` / `keccak_algo.c` implement this signature,
-writing `α = β = 0.5` (`0x80000000` in Q32) on a valid solution and `α = 0, β = 0.5` on
-no valid solution — recovering the r/2 // r/4 split.
+The reference algos in `contrib/dynamicalgo/` (`keccak_algo.c`, `whirlpool_algo.c`)
+implement this signature, writing `α = β = 0.5` (`0x80000000` in Q32) on a valid
+solution and `α = 0, β = 0.5` on no valid solution — recovering the r/2 // r/4 split.
+Both are pure hash-PoW: stateless, importing nothing. That directory also holds
+`chain_probe.c`, a fixture driving every `chain.*` accessor and both I/O budgets, and
+two harnesses that run a module through the node's own `RunAlgoVerify` and through the
+full `.wasm` → `wamrc` → `.aot` → execute pipeline. See its README for the build and
+for guidance on writing an algo.
 
 ---
 

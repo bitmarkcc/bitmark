@@ -6,6 +6,8 @@
 
 #include <dynamicalgo/algovote.h>
 
+#include <tinyformat.h>
+
 #include <map>
 #include <set>
 #include <utility>
@@ -48,7 +50,7 @@ public:
 bool ComputeConnect(const CActivationDB& db, const ActivationParams& params,
                     int32_t height, CAmount block_fees, const CBlockVotes& votes,
                     const uint256& block_hash, const BranchAssembler& assembles,
-                    CConnectWrite& out)
+                    CConnectWrite& out, std::string& err)
 {
     const int32_t VP{params.voting_period};
     const int32_t D{params.activation_delay};
@@ -59,7 +61,11 @@ bool ComputeConnect(const CActivationDB& db, const ActivationParams& params,
     // block -- the store legitimately starts empty at fork activation.
     CActivationState prev;
     if (db.ReadState(prev)) {
-        if (prev.height != height - 1) return false;
+        if (prev.height != height - 1) {
+            err = strprintf("activation store is at height %d, cannot connect height %d",
+                            prev.height, height);
+            return false;
+        }
     } else {
         prev = CActivationState{height - 1, 0, 0};
     }
@@ -121,10 +127,22 @@ bool ComputeConnect(const CActivationDB& db, const ActivationParams& params,
             CSlotActivation prior;
             db.ReadSlot(slot, prior);
             if (prior.IsActive() && prior.branch == *winner) continue; // already this algo
-            // A winner that cannot be assembled voids the activation; the slot keeps its
-            // previous algo (assembly is a pure function of the chain, so this is
-            // identical on every node).
-            if (!assembles(*winner)) continue;
+            // A winner the CHAIN says cannot be assembled voids the activation; the
+            // slot keeps its previous algo. That verdict is a pure function of the
+            // chain, so it is identical on every node.
+            const BranchAssembly asm_result{assembles(*winner)};
+            if (asm_result == BranchAssembly::UNKNOWN) {
+                // This node could not read its own copy of the code, so it has learned
+                // nothing about the chain. Deciding either way here would write a
+                // divergent activation into the store and keep it forever, so refuse
+                // to compute at all and let the caller escalate.
+                err = strprintf("cannot determine whether branch %s assembles (local "
+                                "storage fault); refusing to decide slot %d activation "
+                                "at height %d",
+                                winner->GetHex(), slot, height);
+                return false;
+            }
+            if (asm_result == BranchAssembly::NO) continue;
             out.slot_updates.push_back(CSlotEntry{static_cast<uint8_t>(slot),
                                                   CSlotActivation{*winner, height}});
             out.slot_undo.push_back(CSlotEntry{static_cast<uint8_t>(slot), prior});

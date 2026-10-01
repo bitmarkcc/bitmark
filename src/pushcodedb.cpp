@@ -153,11 +153,15 @@ PushCodeStatus AssemblePushCode(const CCodeDB& db, const uint256& hash,
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         const CCodeEntry& e = *it;
         // A delete carries no code param, so there is nothing to fetch; every other
-        // op materializes its chunk from the block files (unavailable => INCOMPLETE).
+        // op materializes its chunk from the block files. The entry was found in the
+        // code DB, so the chain HAS it -- failing to read the chunk is therefore a
+        // local storage fault (pruned past the keep window, damaged block file), not
+        // a property of the chain. It must NOT be reported as INCOMPLETE, or local
+        // data loss would change this node's consensus verdict.
         std::vector<unsigned char> chunk;
         if (!e.is_delete && !fetch(e, chunk)) {
             reason = "pushcode-chunk-unavailable";
-            return PushCodeStatus::INCOMPLETE;
+            return PushCodeStatus::UNAVAILABLE;
         }
         if (!e.has_parent) {
             parts.assign(1, std::move(chunk)); // NEW root

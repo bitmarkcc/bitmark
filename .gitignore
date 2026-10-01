@@ -115,6 +115,11 @@ qrc_*.cpp
 .DS_Store
 build
 
+# Out-of-tree CMake build dir for the vendored wamrc AOT compiler. The bare "build"
+# above already covers src/wamr/build (the runtime), but the pattern does not match
+# "build-wamrc", so it needs naming explicitly.
+build-wamrc
+
 # Previous releases
 releases
 

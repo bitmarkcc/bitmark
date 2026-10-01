@@ -37,6 +37,11 @@ LIBSECP256K1=secp256k1/libsecp256k1.la
 # WAMR AOT runtime (dynamic-algo execution), built via its own CMake into a static
 # lib. See doc/dynamic-algo-mining.md sec 8; pinned to WAMR commit b70d708.
 LIBWAMR=wamr/build/libvmlib.a
+# wamrc, the companion AOT compiler from that same pinned commit: it turns an
+# on-chain .wasm algo into the .aot the runtime loads. Built as a separate binary
+# so LLVM stays out of bitmarkd, and from the same commit because aot_loader.c
+# requires an exact AOT_CURRENT_VERSION match (sec 8.4, BITMARK-VENDOR.txt).
+WAMRC=wamr/build-wamrc/wamrc
 
 if ENABLE_ZMQ
 LIBBITCOIN_ZMQ=libbitcoin_zmq.a
@@ -82,6 +87,44 @@ $(LIBWAMR): $(srcdir)/wamr/CMakeLists.txt
 	$(AM_V_at)cd wamr/build && $(CMAKE) -DCMAKE_BUILD_TYPE=Release \
 	  -DCMAKE_C_COMPILER="$(CC)" -DWAMR_BUILD_TARGET="$(WAMR_BUILD_TARGET)" \
 	  "$(abs_srcdir)/wamr" >/dev/null && $(MAKE) $(AM_MAKEFLAGS)
+
+if BUILD_WAMRC
+# wamrc, out-of-tree via upstream's own CMakeLists (no patches). Its feature set
+# is set entirely here, and has to agree with the runtime's or the .aot it emits
+# will be refused by aot_loader.c:check_feature_flags:
+#   INTERP=1  NOT to interpret anything -- WAMR's .wasm PARSER lives in
+#             core/iwasm/interpreter and wamrc must parse what it compiles. None
+#             of it reaches bitmarkd; the runtime build above keeps INTERP=0.
+#   LIBC_*/LIB_PTHREAD/LIB_WASI_THREADS=0  matches the import-free runtime, and
+#             is what keeps core/iwasm/libraries out of the vendored tree.
+# LLVM is found via the cmake package dir that configure resolved from
+# llvm-config --cmakedir. $(firstword) because automake's $(CXX) carries flags
+# (e.g. "g++ -std=c++20") while CMAKE_CXX_COMPILER wants only the program.
+$(WAMRC): $(srcdir)/wamr/wamr-compiler/CMakeLists.txt
+	$(AM_V_at)$(MKDIR_P) wamr/build-wamrc
+	$(AM_V_at)cd wamr/build-wamrc && $(CMAKE) -DCMAKE_BUILD_TYPE=Release \
+	  -DCMAKE_C_COMPILER="$(firstword $(CC))" \
+	  -DCMAKE_CXX_COMPILER="$(firstword $(CXX))" \
+	  -DLLVM_DIR="$(WAMRC_LLVM_DIR)" \
+	  -DWAMR_BUILD_TARGET="$(WAMR_BUILD_TARGET)" \
+	  -DWAMR_BUILD_INTERP=1 \
+	  -DWAMR_BUILD_LIBC_WASI=0 -DWAMR_BUILD_LIBC_BUILTIN=0 \
+	  -DWAMR_BUILD_LIBC_UVWASI=0 -DWAMR_BUILD_LIB_PTHREAD=0 \
+	  -DWAMR_BUILD_LIB_WASI_THREADS=0 \
+	  "$(abs_srcdir)/wamr/wamr-compiler" >/dev/null && $(MAKE) $(AM_MAKEFLAGS)
+	$(AM_V_at)test -x wamr/build-wamrc/wamrc || \
+	  cp wamr/build-wamrc/wamrc-* wamr/build-wamrc/wamrc
+
+# Built alongside the daemon and installed next to it: the node execs it to
+# materialize an activated algo. ($(WAMRC) is upstream's `wamrc` symlink to
+# wamrc-<version>; INSTALL_PROGRAM follows it.)
+all-local: $(WAMRC)
+install-exec-local: $(WAMRC)
+	$(MKDIR_P) "$(DESTDIR)$(bindir)"
+	$(INSTALL_PROGRAM) $(WAMRC) "$(DESTDIR)$(bindir)/wamrc"
+uninstall-local:
+	-rm -f "$(DESTDIR)$(bindir)/wamrc"
+endif
 
 # Make is not made aware of per-object dependencies to avoid limiting building parallelization
 # But to build the less dependent modules first, we manually select their order here:
@@ -175,6 +218,7 @@ BITCOIN_CORE_H = \
   dynamicalgo/activationdb.h \
   dynamicalgo/algovote.h \
   dynamicalgo/gasclasses.h \
+  dynamicalgo/modulestore.h \
   dynamicalgo/reward.h \
   dynamicalgo/solution.h \
   dynamicalgo/wasmexec.h \
@@ -494,6 +538,7 @@ libbitcoin_node_a_SOURCES = \
   txrequest.cpp \
   dynamicalgo/activation.cpp \
   dynamicalgo/activationdb.cpp \
+  dynamicalgo/modulestore.cpp \
   dynamicalgo/algovote.cpp \
   dynamicalgo/reward.cpp \
   dynamicalgo/solution.cpp \
@@ -1027,6 +1072,7 @@ libbitcoinkernel_la_SOURCES = \
   deploymentstatus.cpp \
   dynamicalgo/activation.cpp \
   dynamicalgo/activationdb.cpp \
+  dynamicalgo/modulestore.cpp \
   dynamicalgo/algovote.cpp \
   dynamicalgo/reward.cpp \
   dynamicalgo/solution.cpp \
@@ -1127,9 +1173,10 @@ CTAES_DIST += crypto/ctaes/test.c
 
 CLEANFILES = $(EXTRA_LIBRARIES)
 
-# WAMR is built out-of-tree by CMake ($(LIBWAMR)); drop its build dir on clean.
+# WAMR is built out-of-tree by CMake ($(LIBWAMR) runtime, $(WAMRC) compiler);
+# drop both build dirs on clean.
 clean-local:
-	-rm -rf wamr/build
+	-rm -rf wamr/build wamr/build-wamrc
 
 CLEANFILES += *.gcda *.gcno
 CLEANFILES += compat/*.gcda compat/*.gcno

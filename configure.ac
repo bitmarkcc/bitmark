@@ -1940,6 +1940,72 @@ case $host_cpu in
 esac
 AC_SUBST([WAMR_BUILD_TARGET])
 
+dnl wamrc, the offline AOT compiler (src/wamr/wamr-compiler), turns an on-chain
+dnl .wasm algo module into the .aot the runtime above can load. It is built as a
+dnl COMPANION BINARY from the same pinned WAMR commit, because aot_loader.c
+dnl requires an exact AOT_CURRENT_VERSION match -- a wamrc from any other WAMR
+dnl release emits .aot files this runtime refuses to load. It links LLVM;
+dnl bitmarkd does not. LLVM is heavy (notably on small ARM devices), so this is
+dnl OPTIONAL: without it a node cannot materialize an algo itself and needs
+dnl operator-supplied .aot modules (see doc/dynamic-algo-mining.md sec 8.4).
+dnl LLVM is REQUIRED, like cmake above: a node that cannot compile an on-chain
+dnl algo cannot validate blocks on a slot that has one, so building without wamrc
+dnl would silently produce a node that halts the first time an algo activates.
+dnl --disable-wamrc exists only for the advanced case of an operator who supplies
+dnl pre-built .aot modules out of band, and who accepts that responsibility.
+AC_ARG_ENABLE([wamrc],
+  [AS_HELP_STRING([--disable-wamrc],
+    [do not build the vendored wamrc AOT compiler. ADVANCED: the node can then
+     not compile an on-chain dynamic algo itself and REQUIRES operator-supplied
+     .aot modules, or it will stop when an algo activates])],
+  [enable_wamrc=$enableval],
+  [enable_wamrc=yes])
+
+WAMRC_LLVM_DIR=
+if test "x$enable_wamrc" != "xno"; then
+  AC_PATH_PROGS([LLVM_CONFIG],
+    [llvm-config llvm-config-21 llvm-config-20 llvm-config-19 llvm-config-18 llvm-config-17 llvm-config-16 llvm-config-15])
+  if test "x$LLVM_CONFIG" != "x"; then
+    AC_MSG_CHECKING([for the LLVM cmake package directory])
+    WAMRC_LLVM_DIR=`$LLVM_CONFIG --cmakedir 2>/dev/null`
+    if test -n "$WAMRC_LLVM_DIR" && test -f "$WAMRC_LLVM_DIR/LLVMConfig.cmake"; then
+      AC_MSG_RESULT([$WAMRC_LLVM_DIR])
+    else
+      WAMRC_LLVM_DIR=
+      AC_MSG_RESULT([not usable])
+    fi
+  fi
+  if test "x$WAMRC_LLVM_DIR" = "x"; then
+    AC_MSG_ERROR([
+  LLVM development files are required to build wamrc, the AOT compiler that turns
+  an on-chain dynamic algo into a module this node can execute (src/wamr/wamr-
+  compiler; see doc/dynamic-algo-mining.md sec 8.4). Without it the node cannot
+  validate a block on any mPoW slot that has an algo activated.
+
+  Install your distribution's LLVM development package (llvm-dev / llvm-devel /
+  sys-devel/llvm), or pass LLVM_CONFIG=/path/to/llvm-config.
+
+  Only if you intend to supply pre-built .aot modules yourself, and accept that
+  the node stops when an algo activates without them, configure with
+  --disable-wamrc.])
+  fi
+fi
+AC_SUBST([WAMRC_LLVM_DIR])
+AM_CONDITIONAL([BUILD_WAMRC], [test "x$enable_wamrc" != "xno"])
+if test "x$enable_wamrc" != "xno"; then
+  AC_DEFINE([HAVE_WAMRC], [1],
+    [Define if the companion wamrc AOT compiler is built and installed])
+fi
+
+dnl Where `make install` puts the companion wamrc, so the daemon can find it next
+dnl to itself without depending on PATH (a build-tree run, a trimmed systemd PATH
+dnl or a GUI launch would not have it). Double eval because bindir expands to
+dnl ${exec_prefix}/bin -> ${prefix}/bin.
+full_bindir=`eval echo "$bindir"`
+full_bindir=`eval echo "$full_bindir"`
+AC_DEFINE_UNQUOTED([BITMARK_BINDIR], ["$full_bindir"],
+  [Install bindir, used to locate the companion wamrc AOT compiler])
+
 AC_OUTPUT
 
 dnl Replace the BUILDDIR path with the correct Windows path if compiling on Native Windows
@@ -1986,6 +2052,7 @@ echo "  with bench      = $use_bench"
 echo "  with upnp       = $use_upnp"
 echo "  with natpmp     = $use_natpmp"
 echo "  USDT tracing    = $use_usdt"
+echo "  with wamrc      = $enable_wamrc"
 echo "  sanitizers      = $use_sanitizers"
 echo "  debug enabled   = $enable_debug"
 echo "  gprof enabled   = $enable_gprof"
