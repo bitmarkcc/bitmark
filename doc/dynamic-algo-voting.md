@@ -161,6 +161,45 @@ Definitions (slot S):
   limits; else the activation is void and the slot keeps its previous algo. [OPEN:
   treat a non-assemblable/over-limit winner as "did not qualify".]
 
+## Miner-readiness markers — what voters should weigh (added 2026-10-02)
+
+Approving an algo for a slot imposes a NEW OBLIGATION ON THAT SLOT'S MINERS. Once a
+branch is active, every block of that slot must carry the required coinbase outputs --
+the `alpha*r` payment when a solution is present, and the `<algo> OP_SOLUTIONPOT`
+output holding withheld fees when one is not (see the execution doc sec 4, 4.5). Only
+the POOL can build those, because only the pool builds the coinbase. A pool running old
+coinbase software against an upgraded node produces INVALID blocks from the moment its
+slot activates.
+
+Block `nVersion` does not tell you whether that software is ready: GBT hands the pool a
+`version` field that it copies into the header without interpreting it, so a version-5
+block proves the node is upgraded and says nothing about the pool.
+
+So pools and solo miners may voluntarily emit a READINESS MARKER -- one 0-value,
+unspendable `OP_RETURN OP_SOLUTIONPOT` coinbase output -- which demonstrates they have
+the "append the coinbase output GBT gave me" code path, i.e. exactly the capability the
+activation will demand. It cannot be faked by passing a template field through.
+
+These markers are INFORMATIONAL and gate nothing in consensus. They are evidence for
+VOTERS:
+
+- A slot whose recent blocks show broad marker coverage can be activated with little
+  risk of orphaning honest hashrate.
+- A slot with thin coverage should probably wait, however good the algo is.
+- Coverage is not a threshold to clear. A supermajority of markers does not prove the
+  remainder is safe, and their absence does not prove activation unwise -- a large pool
+  might simply not have bothered. Deliberately NOT a consensus gate, so that no single
+  miner can hold a slot hostage by declining to signal, and so voters keep the final
+  judgement.
+
+In practice this means the first activations should target slots where coverage is good
+and hashpower concentration is low, leaving the largest-hashpower slot (SHA256D) for
+later or never -- a slot with no active algo is completely unaffected by any of this.
+
+Activation remains a miner-activated soft fork: a minority that never upgraded will
+produce invalid blocks afterwards, with lost revenue as the forcing function. The
+marker's value is making that minority visible BEFORE the vote rather than after.
+
 ## Reorg / determinism
 
 The active algo is a pure function of the confirmed chain, so a reorg recomputes

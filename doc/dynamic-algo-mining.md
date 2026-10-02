@@ -337,7 +337,7 @@ Whether α is a constant or solution-dependent is left to each algo's architects
 
 The one hard requirement is that **α and β must be defined for an EMPTY solution**,
 because the node calls `verify()` with no solution purely to read them for the
-no-solution branch (`β·(1−α)·S`, §4). An algo that varies α must therefore still
+no-solution branch (`β·(1−α)·r`, §4). An algo that varies α must therefore still
 return a sensible baseline in that case. Soft-fork safety is unaffected either way:
 Q32 encoding guarantees `α < 1`, so `α·r ≤ r` always.
 
@@ -381,18 +381,32 @@ which only works if they get a cut of fees.
     the coinbase) MUST pay `≥ α·r` to it — a floor, enforced by consensus. Under-payment
     is disallowed, because if the primitive miner could pay less they always would, and
     the dynamic miner would have no reason to ever produce a solution. See §4.3.
-- **No / invalid solution:**
+- **No / invalid solution:** (write `T = β(1−α)` throughout)
   - dynamic miner: `0`
-  - primitive miner: `β · (1 − α) · S  +  F`  (the **fee remainder is never burned** —
-    the primitive miner keeps all fees `F`; only the *subsidy* is scaled by
-    `β(1−α)`).
-  - emitted subsidy = `β · (1 − α) · S`; the un-emitted subsidy `S − β(1−α)S` is
-    **milestone-deferred** (Bitmark emission halves/quarters at cumulative-emission
-    milestones, not heights), so it is emitted by later blocks, not destroyed.
+  - primitive miner: `T · r` — `β(1−α)` scales the WHOLE reward, fees included, not
+    the subsidy alone.
+  - emitted subsidy = `T · S`; the un-emitted `S − T·S` is **milestone-deferred**
+    (Bitmark emission halves/quarters at cumulative-emission milestones, not heights),
+    so later blocks emit it rather than it being destroyed.
+  - withheld fees `(1 − T) · F` are paid by this block's coinbase into its slot's
+    **solution pot** (§4.5) — a spendable per-slot output that a later
+    solution-bearing block of the same slot releases back into `F`. So the **fee
+    remainder is still never burned**: it is deferred, exactly like the subsidy, just
+    by a different mechanism.
+  - the coinbase therefore claims `T·S + F` in total (`T·r` to itself, `(1−T)·F` to
+    the pot), which is `≤ S + F` because `T ≤ 1` — §4.1's soft-fork argument is
+    untouched.
 
-Fixed `α = β = 1/2` recovers the original scheme (solution → S/2 dynamic + S/2
-primitive; no solution → S/4 primitive), all with fees always fully to the primitive
-miner.
+**Why the fees are scaled too, and not just the subsidy.** An earlier version scaled
+only the subsidy, leaving the primitive miner all of `F`. That inverts the inclusion
+incentive as the subsidy decays: including a solution pays `(1−α)(S+F)` against
+`β(1−α)S + F` for skipping it, so inclusion requires `S/F > α/((1−α)(1−β))` — at
+`α = β = ½`, only while `S > 2F`. In the fee-dominated future a rational pool would
+*never* include a solution, defeating the very reason fees are inside `r`. Scaling all
+of `r` restores it (§4.2) and makes `α` cancel out of the decision again.
+
+Fixed `α = β = 1/2` gives `T = 1/4`: solution → `r/2` dynamic + `r/2` primitive; no
+solution → `r/4` to the primitive miner, `3F/4` to the pot, `3S/4` deferred.
 
 ### 4.1 Why this is soft-fork-safe
 The coinbase only ever claims `≤ subsidy + fees`: the α/β split partitions `r`, and
@@ -405,11 +419,17 @@ The primitive miner CHOOSES whether to include the solution. With subsidy `S`,
 available fees `F`, and opportunity cost `c` = the extra fees a ~1 MB solution
 displaces (fees collectable *without* including it):
 ```
-include  ⇔  (1−α)(S+F) > β(1−α)(S+F+c)  ⇔  c < (1−β)/β · (S+F)
+include  ⇔  (1−α)(S+F+P) > β(1−α)(S+F+c)  ⇔  c < (1−β)/β · (S+F)  +  P/β
 ```
+where `P` is the slot's solution pot (§4.5), released into `F` by the including block.
 `α` cancels — it sets the dynamic/primitive SPLIT but not the include decision. `β`
-is the lever: `β→0` ⇒ include almost anything; `β = 1/2` ⇒ include iff `c < S+F`;
-`β→1` ⇒ never include. The community-voted algo tunes `α, β` (two Q32 `u32` outputs) to
+is the lever: `β→0` ⇒ include almost anything; `β = 1/2` ⇒ include iff `c < S+F+2P`;
+`β→1` ⇒ never include.
+
+The `P/β` term is what makes the incentive **self-correcting**: every block a slot goes
+without a solution adds `(1−T)·F` to its pot, so the threshold rises until inclusion is
+worth it again, however small the subsidy has become. Parameter tuning sets the
+baseline; the pot handles the tail. The community-voted algo tunes `α, β` (two Q32 `u32` outputs) to
 balance dynamic-miner pay against inclusion pressure. Note that large solutions have
 large `c`, so LLM-scale payloads face pressure to keep per-block chunks small (the
 multi-block spanning of §2.5 helps).
@@ -429,7 +449,7 @@ primitive miner builds the coinbase and receives the solution out-of-band first:
 
 So once the primitive miner holds the solution, their only valid moves are: pay the
 protocol-set `α·r` to the bound payout (keeping `(1−α)·r + fees`), or don't use the
-solution (falling back to `β·(1−α)·S + F`). They can neither steal the dynamic share
+solution (falling back to `β·(1−α)·r`, §4). They can neither steal the dynamic share
 nor pay less than `α·r`. This is what makes the dynamic miner's incentive credible.
 
 ### 4.4 Satoshi arithmetic — deterministic, integer-only
@@ -451,11 +471,18 @@ With `r = subsidy + total_fees`, `S = subsidy`, `F = total_fees`:
   - `prim = r − dyn` — give the primitive the **remainder**, not an independently-floored
     `(1−α)·r`, so `dyn + prim = r` exactly (no rounding gap, never over-claims).
   - emitted subsidy = `S`.
-- **No solution:**
-  - `emitted_subsidy = fp_mul( fp_mul(S, 2^32 − α_q), β_q )` = `⌊β·(1−α)·S⌋`-ish.
-  - coinbase claims `≤ emitted_subsidy + F`. Since `2^32 − α_q ≤ 2^32` and `β_q < 2^32`,
-    each `fp_mul` caps the result `≤ S`, so the coinbase can never over-claim vs old
-    nodes — soft-fork-safe (the tiny sub-satoshi rounding of `(1−α)` cannot break it).
+- **No solution** (`T = β(1−α)`, applied to `r` as a whole — §4):
+  - `keep = fp_mul( fp_mul(r, 2^32 − α_q), β_q )` = `⌊T·r⌋`, the primitive miner's share.
+  - `emitted_subsidy = fp_mul( fp_mul(S, 2^32 − α_q), β_q )` = `⌊T·S⌋`; the rest of `S`
+    is milestone-deferred.
+  - `to_pot = F − (keep − emitted_subsidy)` — the withheld fee part, derived as a
+    **remainder** rather than an independently-floored `(1−T)·F`, so that
+    `keep + to_pot = emitted_subsidy + F` exactly and no satoshi is lost to double
+    flooring. This is the value the required `OP_SOLUTIONPOT` output must carry (§4.5).
+  - coinbase total claim `= keep + to_pot = emitted_subsidy + F ≤ S + F`. Since
+    `2^32 − α_q ≤ 2^32` and `β_q < 2^32`, each `fp_mul` caps its result, so the coinbase
+    can never over-claim versus old nodes — soft-fork-safe (the sub-satoshi rounding of
+    `(1−α)` cannot break it).
 
 Everything floors downward, uses the same `fp_mul` on every node, and is constructed so
 the total is always `≤ r`. RESOLVED (was the last open reward-math item).
@@ -469,11 +496,134 @@ primitive coinbase check:
   shortfall (`r > 0`) the dynamic miner still earns `α·r` — the reward simply comes from
   fees — and the ceiling is `r = S + F` (exactly the old-node ceiling). If `r ≤ 0` nothing
   is owed and the block fails the existing `> S+F` coinbase check anyway.
-- **No solution:** `β·(1−α)·S` would move a negative `S` *up* toward zero, exceeding the
+- **No solution:** `T·S` would move a negative `S` *up* toward zero, exceeding the
   primitive ceiling `S+F` and breaking soft-fork safety. So for `S < 0` the primitive `S`
-  is emitted unchanged (ceiling `= S+F`, identical to old nodes).
+  is emitted unchanged (ceiling `= S+F`, identical to old nodes) and **no pot output is
+  required** — there is no positive subsidy to withhold against, and scaling `r` when
+  `S < 0` would mean withholding fees to cover a negative subsidy, which is not a
+  penalty the no-solution case is meant to impose.
 `fp_mul` is thus only ever given non-negative inputs, and `max_coinbase_value ≤ S+F` holds
 in every region. Enforced in `dynamicalgo/reward.cpp` (`ComputeRewardSplit`).
+
+### 4.5 The solution pot — where withheld fees go
+`(1 − T)·F` withheld from a no-solution block (§4) has to go *somewhere*. Unlike the
+subsidy it cannot simply be left unminted: fees already exist, having been removed from
+the UTXO set by the transactions that paid them, so an unclaimed fee is **destroyed**.
+Deferring it therefore needs a place to sit.
+
+It cannot be a consensus *counter* that later raises the coinbase ceiling to
+`S + F + P`: old nodes cap the coinbase at `S + F` and would reject such a block — a
+hard fork. §4.1 already states the rule this follows: releasing previously-withheld
+value must be a **UTXO spend**, never a coinbase over-claim. So the pot is a real
+spendable output.
+
+```
+output = ( V , "<algo> OP_SOLUTIONPOT" )    // SPENDABLE, TxoutType::SOLUTIONPOT
+```
+- `V` — accumulated withheld fees for this slot.
+- `algo ∈ [0, NUM_ALGOS)` — the slot whose solutions this pot funds (`OP_0` for algo 0,
+  else `OP_1..OP_16` / a 1-byte push). A slot's missed solutions must not subsidise a
+  different slot, so the pot is per-slot, as the reserve-fee contract is (§6.1).
+- `OP_SOLUTIONPOT = OP_NOP8` (`0xb7`) — a defined no-op, so the output is
+  anyone-can-spend *at the script level*; every real rule lives in the `ConnectBlock`
+  covenant. This is deliberately the same shape as `OP_RESERVEFEE` (§6.1).
+
+It borrows the three invariants that make the reserve-fee contract safe:
+1. **Release is to FEE only.** No spend path ever mints a spendable output from the pot
+   (other than a rollover of the pot itself), so potted value stays fee-destined and
+   never bloats the UTXO set.
+2. **Per-tx enforcement** `txfee ≥ Σ(released value of every pot input)`, so the
+   released value genuinely reaches the block's miner.
+3. **Script-level anyone-can-spend, covenant-gated**, so old nodes see an ordinary
+   spendable output and the rules are enforced only by upgraded nodes.
+
+It is a SEPARATE output type rather than a fourth `OP_RESERVEFEE` selector, because two
+of that contract's paths would be actively wrong here: `refund` has no legitimate
+recipient for protocol-funded value, and `sweep` pays *any* algo's miner after two
+years, which would let a rival slot drain slot `k`'s pot.
+
+#### Creation
+A pot output is valid only as:
+- the **required coinbase output** of a no-solution block on a slot with an active algo,
+  carrying exactly `(1 − T)·F` with that block's own `algo`; or
+- the **rollover** of a consolidate spend (below).
+
+Nothing else may create one, which keeps the value in a pot exactly equal to the fees
+actually withheld.
+
+#### The readiness marker — a voluntary pool-capability signal
+The pot output is REQUIRED once a slot has an active algo, and only the **pool** can
+build it, because only the pool builds the coinbase. That is a genuine migration
+hazard: a pool running old coinbase code against an upgraded node would produce invalid
+blocks the moment its slot activated.
+
+Block `nVersion` cannot signal this. GBT hands the pool a `version` field which it
+copies into the header without having to understand it, so a v5 block proves only that
+the NODE is upgraded — the pool's coinbase builder could be years old. The signal must
+be something only upgraded pool software can produce, which means it has to live in the
+coinbase.
+
+So the capability is made its own proof. A pool may voluntarily add one coinbase output:
+
+```
+( 0 , "OP_RETURN OP_SOLUTIONPOT" )       // readiness marker, unspendable
+```
+
+delivered through the same GBT field mechanism as the real required outputs. A pool
+that emits it has demonstrably got the "append the coinbase output GBT gave me" code
+path — the same path that will later carry the pot output and the `α·r` payment. It
+cannot be faked by passing a template field through, because the pool has to construct
+the output. `OP_RETURN`-prefixed so it is provably unspendable and creates no UTXO; a
+0-value *spendable* pot would linger forever, since the claim path releases to fee and
+nobody spends an input to collect nothing.
+
+The two shapes are deliberately distinguishable — the marker is a 0-value unspendable
+`OP_RETURN OP_SOLUTIONPOT`, the real pot is a valued spendable `<algo> OP_SOLUTIONPOT`
+— so a pool cannot satisfy the required-pot rule with a marker.
+
+**The marker is INFORMATIONAL, not a consensus gate.** It deliberately does not gate
+activation. Readiness is not a predicate: a supermajority of markers would not prove
+the remainder is safe, nor its absence prove activation unwise, and a hard threshold
+could let one large pool hold a slot hostage by simply declining to emit it. Instead the
+markers are *evidence voters consult* when deciding whether to approve an algo for a
+slot (doc/dynamic-algo-voting.md). Governance already judges whether an algo is worth
+running; whether its slot's miners are ready is the same kind of judgement. Consequently
+this adds no new activation consensus — the conditions remain the vote winner, the fee
+floor, assemblability and the minimum fee history.
+
+Staging, then: the fork activates on the existing per-algo v5 gate (node readiness);
+pools voluntarily emit markers; voters weigh marker coverage per slot when approving an
+algo; and once approved, the pot output and the `α·r` payment become mandatory for that
+slot. A slot with no active algo is wholly unaffected — no pot, no payout,
+`coinbasevalue = S + F`, exactly as today — so the blast radius is only the slots
+governance has chosen to activate, and the largest-hashpower slot can stay algo-free
+indefinitely at zero cost to its miners.
+
+#### Spend paths (first push of the input's scriptSig selects)
+- **`0` = claim-on-solution** — keyless, any miner. Requires: the spending block's algo
+  `== algo`, and that block contains a **valid** solution for its slot (`verify() == 0`
+  over real `OP_SOLUTION` outputs, §7). Releases `V` in full — the pot is a jackpot,
+  not a trickle — leaving it as fee, so it enters `F` for that block and `r = S + F`
+  grows with no new coinbase rule anywhere. A claim tx spends pot inputs only and has a
+  single 0-value `OP_RETURN` output.
+- **`1` = consolidate** — keyless, anyone, no block-context gate. Spends ≥ 2 pot outputs
+  of the SAME `algo` and creates exactly one pot output of that `algo` whose value is
+  the sum of the inputs, with **zero fee**. Value-preserving, so invariant 1's per-tx
+  fee rule does not apply to this path.
+
+Consolidate exists because a coinbase cannot spend inputs, so creation necessarily adds
+one output per no-solution block. Without it a long dry spell would accumulate one UTXO
+per block. Anyone may consolidate, and miners are motivated to, since it makes their own
+eventual claim cheaper. The pot thus settles toward one UTXO per slot.
+
+#### Invariants
+- A block cannot both create and claim a pot for its slot: creation requires no valid
+  solution, claiming requires one.
+- A slot with no active algo neither creates nor claims; its coinbase keeps the
+  pre-dynamic `S + F` (§4 applies only when a branch is active).
+- Every coinbase still claims `≤ S + F`, so §4.1 holds unchanged.
+- Claim ordering: `ConnectBlock` must settle the block's solution validity (§7 step 4)
+  before validating a pot claim, since the claim's gate is that verdict.
 
 ---
 
@@ -687,19 +837,34 @@ pool the amount.
 There is no magic: an unmodified pool ignores the `dynamic` field, so it will NOT add
 the `α·r` output. Consequences:
 
-- **Unmodified pool, no solution available.** GBT returns a normal template with a
-  lower `coinbasevalue` (`β·(1−α)·S + F`, §4) and no `dynamic` field. The pool mines
-  exactly as today and produces a **valid** block (just a smaller subsidy). The
-  network is safe; nothing breaks. This is the common case for any block without a
-  solution, so most mining looks exactly like today.
-- **Unmodified pool + a solution exists.** The pool never learns to include the
-  solution tx or add the output, so it simply keeps mining no-solution blocks. It
-  forfeits the dynamic bonus but stays valid.
-- **To actually earn the dynamic reward**, the pool must support the `dynamic` field.
+- **Any pool, slot with NO active algo.** Nothing changes at all: no pot, no required
+  payout, `coinbasevalue = S + F`. Mining is bit-for-bit as it is today. This covers
+  every slot governance has not activated — including, by intention, the
+  largest-hashpower one for as long as desired (§4.5).
+- **Unmodified pool, slot WITH an active algo.** This is the case that is *not*
+  backward compatible, and earlier drafts of this section wrongly claimed it was. The
+  no-solution branch now REQUIRES a `<algo> OP_SOLUTIONPOT` coinbase output carrying
+  the withheld fees (§4, §4.5), and only the pool can add it. An unmodified pool omits
+  it and its blocks are **invalid**. Lowering `coinbasevalue` is not enough to steer it,
+  because the obligation is an extra output, not merely a smaller claim.
+- **Unmodified pool + a solution exists.** Likewise invalid rather than merely
+  unrewarded: the `α·r` output is required, not optional.
+- **To mine a slot with an active algo at all**, the pool must read the GBT fields and
+  append the outputs they carry.
 
-So "backward compatible" here means **unupgraded pools keep producing valid blocks via
-the no-solution path** — NOT "unupgraded pools automatically collect dynamic rewards."
-Earning the reward requires an update. This is exactly the segwit history: pools had
+So "backward compatible" here means **a slot without an active algo is untouched** —
+NOT "unupgraded pools keep working everywhere." Once a slot is activated, its miners
+must have updated. That is why activation is gated socially on the §4.5 readiness
+markers: voters can see, per slot and on chain, which miners have demonstrated the
+capability before approving an algo for it. It remains a miner-activated soft fork in
+the usual sense — a minority that never upgraded will produce invalid blocks after
+activation, with revenue loss as the forcing function — but the marker makes that
+minority visible *before* the decision rather than after.
+
+The mechanism itself is still exactly segwit's: the node computes required coinbase
+outputs and the pool pastes them in from a template field. Pools had to update once for
+`default_witness_commitment` too; it is "universally supported" now only because
+everyone updated years ago, not because it was automatic. This is exactly the segwit history: pools had
 to update once to read `default_witness_commitment`; it is "universally supported" now
 only because everyone updated years ago, not because it was automatic.
 
@@ -745,11 +910,28 @@ the parent chain per `dynamic-algo-voting.md`, so a block can't self-activate):
    retained but cannot be read is a local fault ⇒ fatal error, not invalid.
    Require `0 ≤ α < 1`, `0 ≤ β < 1`. For the no-solution branch, run `verify()` with an
    empty solution solely to read `α, β`.
-5. **Reward split** (with `r = subsidy + total_fees`, integer α,β per §4.4):
+5. **Reward split** (with `r = subsidy + total_fees`, `T = β(1−α)`, integer α,β per
+   §4.4). `total_fees` already includes any solution pot released by this block, since a
+   pot claim leaves its value as fee (§4.5):
    - `verify()==0`: the coinbase must contain the one required output paying `≥ α·r`
      to `payout_scriptPubKey` (§2.3); total coinbase value `≤ r`; emitted subsidy = `S`.
-   - else: coinbase subsidy `≤ β·(1−α)·S` (fees still fully claimable); emitted subsidy
-     = `β·(1−α)·S`; defer the rest via the milestone accounting.
+   - else: the coinbase keeps `≤ T·r` for itself and must pay exactly `(1 − T)·F` into a
+     `<algo> OP_SOLUTIONPOT` output for its own slot (§4.5); total coinbase value
+     `≤ T·S + F`, hence `≤ S + F`; emitted subsidy = `T·S`, with the rest deferred via
+     the milestone accounting.
+5bis. **Solution-pot covenant** (§4.5), gated on the slot having an active algo. For each
+   spend of an `OP_SOLUTIONPOT` output, dispatch on the scriptSig selector:
+   - *claim-on-solution* (selector 0, keyless): block algo == the output's `algo`, AND
+     this block has a valid solution per step 4 — so this is evaluated AFTER step 4,
+     whose verdict is the gate. The tx spends pot inputs only, has a single 0-value
+     `OP_RETURN` output, and `txfee ≥ Σ V` makes the whole pot fee.
+   - *consolidate* (selector 1, keyless): ≥ 2 pot inputs all of the same `algo`, exactly
+     one output, itself a pot of that `algo` with value `== Σ inputs`, and zero fee.
+     Value-preserving, so the fee rule above does not apply to it.
+   For each NEW `OP_SOLUTIONPOT` output: `algo ∈ [0, NUM_ALGOS)`, and it is either the
+   required coinbase output of step 5's no-solution branch (value exactly `(1−T)·F`,
+   matching the block's own algo) or a consolidate rollover. Nothing else may create
+   one. Pure validation, so `DisconnectBlock` needs nothing.
 6. **Reserve covenant** (all release paths send value to FEE). For each spend of an
    `OP_RESERVEFEE` output, dispatch on the scriptSig selector and enforce §6.3
    (`age = t − coin_height`):
@@ -1230,6 +1412,31 @@ not the guarantee.
   resident-RAM variant costs ~1.76 GB per stateful slot, ~14 GB if all 8 slots run
   one, so the disk-backed form (a memoization like `llmc/btmcache.h`, loaded per
   call) is the one to pursue. The accessor ABI forecloses neither.
+- **Solution pot (§4.5): SPECIFIED, NOT YET IMPLEMENTED.** This is now the blocker for
+  the miner-side work: it changes what the coinbase may claim, so the template builder
+  (phase 6.7b) cannot be written against the old rule. Needs:
+  - `OP_SOLUTIONPOT` (`OP_NOP8`, `0xb7`) and a `TxoutType::SOLUTIONPOT` matcher that
+    distinguishes the valued spendable pot from the 0-value unspendable readiness
+    marker;
+  - the required coinbase pot output in the no-solution branch, and the `α·r` output in
+    the solution branch, both delivered to pools as GBT fields (§6bis);
+  - the claim-on-solution and consolidate covenant paths (`ConnectBlock` step 5bis),
+    noting the ordering constraint: a claim is gated on the block's solution verdict,
+    so it must be validated after step 4;
+  - `ComputeRewardSplit` reworked so `β(1−α)` scales `r` rather than `S`, returning the
+    pot amount as a REMAINDER (§4.4) so no satoshi is lost to double flooring;
+  - the readiness marker itself, plus an RPC surfacing per-slot marker coverage so
+    voters can weigh it (`getalgovote` is the natural home — see the voting doc). This
+    is the piece that replaces a consensus readiness gate, so it is a deliverable, not
+    a nicety: without it the marker exists but nobody can see it.
+- **Also now known to be broken until that lands:** `node/miner.cpp` sets
+  `coinbaseTx.vout[0].nValue = nFees + GetBlockSubsidy(...)` unconditionally, i.e. the
+  full `S + F`. On a slot with an active algo that exceeds the ceiling in the
+  no-solution case and omits the required `α·r` payout in the solution case, so the
+  miner would build invalid blocks. Latent today only because no test activates an algo
+  (activation needs OP_VOTE plus the 720-block delay), leaving `branch` always nullopt.
+  The fix shares one code path with `CheckDynamicAlgoReward` so the template cannot
+  drift from consensus.
 - Materialized-algo store: format and where the ~8 activated modules live; re-vote
   swap-in.
 - Per-height/per-algo RSF index: storage format and rebuild-on-reindex.
