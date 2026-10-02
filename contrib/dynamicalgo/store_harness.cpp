@@ -60,13 +60,13 @@ int main(int argc, char** argv)
     std::printf("aot=%zu bytes  magic=%.4s  cached after=%d\n", aot.size(),
                 aot.size() >= 4 ? (const char*)aot.data() : "????", (int)store.Has(branch));
 
-    std::vector<unsigned char> prev(32);
-    for (int i = 0; i < 32; i++) prev[i] = (unsigned char)i;
+    std::vector<unsigned char> anchor(32);
+    for (int i = 0; i < 32; i++) anchor[i] = (unsigned char)i;
     const std::vector<unsigned char> payout{0x6a, 0x00, 0x00};
     const std::vector<unsigned char> solution(8, 0x00);
     const uint32_t nbits{argc > 4 ? (uint32_t)std::strtoul(argv[4], nullptr, 16) : 0x2100ffffu};
 
-    const AlgoVerifyResult r{RunAlgoVerify(aot, prev, payout, nbits, solution, nullptr)};
+    const AlgoVerifyResult r{RunAlgoVerify(aot, anchor, payout, nbits, solution, nullptr)};
     std::printf("verify: ok=%d solution_valid=%d alpha=0x%08x beta=0x%08x\n",
                 (int)r.ok, (int)r.solution_valid, r.alpha_q32, r.beta_q32);
     if (!r.error.empty()) std::printf("verify error: %s\n", r.error.c_str());

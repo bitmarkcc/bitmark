@@ -17,11 +17,20 @@
 //
 // A dynamic algo is a freestanding WebAssembly module that exports:
 //
-//   int verify(const u8 *prev_hash,                 // 32 bytes
+//   int verify(const u8 *anchor_hash,                 // 32 bytes
 //              const u8 *payout,  u32 payout_len,
 //              u32 nbits,
 //              const u8 *nonce,   u32 nonce_len,
 //              u8 *out_ab)                           // 8 bytes written back
+//
+// `anchor_hash` is the hash of the previous block OF THIS BLOCK'S OWN mPoW SLOT --
+// NOT the immediate parent. The seed a solution is bound to is
+// Hash256(payout || anchor_hash), so it only changes when the slot produces a
+// block: roughly every 16 minutes with 8 algos, rather than every 120 seconds.
+// That is what gives a dynamic miner a workable window to compute and relay a
+// solution, and it is replay-safe because the branch verified for a block comes
+// from that block's own algo, so a slot-k solution can only ever pay in the one
+// next slot-k block (doc sec 2.1, 3).
 //
 // returning 0 when the supplied solution meets the nBits target (else non-zero),
 // and writing the reward fractions alpha then beta into out_ab as two
@@ -60,9 +69,11 @@
 // lock), never block invalidity: the result reports chain_unavailable and the
 // consensus caller must raise a fatal error rather than reject the block.
 //
-// In production the module is a WAMR .aot precompiled offline by wamrc with the
-// pinned per-arch target flags (doc sec 8.3); wasm_runtime_load also accepts a
-// plain .wasm (JIT/interp builds), which is useful for tests.
+// The module passed here is a WAMR .aot, compiled from the on-chain .wasm by the
+// companion wamrc with the pinned per-arch target flags (doc sec 8.3, 8.4) and held
+// by dynamicalgo::ModuleStore. The vendored runtime is built AOT-ONLY (no interp, no
+// JIT), so wasm_runtime_load REJECTS a plain .wasm here -- "magic header not
+// detected". Callers must materialize first; see modulestore.h.
 //
 // CPU is bounded by PER-CLASS gas (doc sec 8.6): the module is instrumented before
 // AOT compilation to call an imported host function `metering.usegas(i32 class,
@@ -137,7 +148,7 @@ struct AlgoVerifyResult {
 //! source makes slot_block_count() read 0 and every fetch return SLOT_BLOCK_NO_BLOCK
 //! (used by tests and by offline measurement of algos that ignore the chain).
 AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
-                               Span<const unsigned char> prev_hash,
+                               Span<const unsigned char> anchor_hash,
                                Span<const unsigned char> payout,
                                uint32_t nbits,
                                Span<const unsigned char> solution,

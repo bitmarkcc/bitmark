@@ -35,13 +35,13 @@ enum {
 };
 
 __attribute__((export_name("verify")))
-int verify(const u8 *prev_hash,
+int verify(const u8 *anchor_hash,
            const u8 *payout, u32 payout_len,
            u32 mode,                     // the ABI's `nbits` slot, reused as a selector
            const u8 *nonce, u32 nonce_len,
            u8 *out_ab)
 {
-    (void)prev_hash; (void)payout; (void)payout_len; (void)nonce; (void)nonce_len;
+    (void)anchor_hash; (void)payout; (void)payout_len; (void)nonce; (void)nonce_len;
     put_u32le(out_ab, 0);
     put_u32le(out_ab + 4, 0);
 

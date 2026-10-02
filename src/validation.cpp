@@ -3084,12 +3084,40 @@ static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
     // no solution is present (empty solution), since the split's no-solution branch needs
     // them (doc sec 3). The slot's previous blocks are not passed in: the module pulls
     // the ones it needs through the chain.* imports, metered by the I/O budgets.
-    const uint256 prev = pindex->pprev ? pindex->pprev->GetBlockHash() : uint256();
+    // The ANCHOR is the previous block OF THIS BLOCK'S OWN SLOT, not the immediate
+    // parent (doc sec 2.1, 3). The seed is Hash256(payout || anchor), so this is what
+    // a solution is bound to, and it only changes when the slot produces a block --
+    // about every 16 minutes with 8 algos, instead of every 120 seconds. That is what
+    // gives a dynamic miner a realistic window to compute and relay a solution.
+    //
+    // It is safe against replay precisely BECAUSE it is the block's own slot: the
+    // branch verified here comes from pindex->GetAlgo(), so a solution bound to slot
+    // k's previous block can only pay in a slot-k block (any other slot runs a
+    // different module and fails), and between two slot-k blocks there is exactly one
+    // "next slot-k block". One anchor, one payable block.
+    //
+    // A same-slot predecessor ALWAYS exists here, so there is no fallback to get
+    // wrong. The chain of reasons:
+    //   * nVersion < 4 is invalid once DERSIG is active (see the bad-version check in
+    //     ContextualCheckBlockHeader), and DERSIG is buried far below any possible
+    //     dynamic-fork activation, so every valid block has base version >= 4.
+    //   * therefore testnet's ROLLING OnFork() gate, IsSuperMajority(4, 75, 100),
+    //     always sees 100-of-100 and cannot lapse; mainnet and regtest gate on height
+    //     and are monotonic by construction. OnFork() never goes back to false.
+    //   * DynamicForkActive is IsSuperMajorityPerAlgo(5, 94, 125), so no branch can be
+    //     active until EVERY one of the 8 algos has >= 94 on-fork blocks (regtest:
+    //     9 of 12). This block thus has ~94+ same-algo ancestors.
+    //   * GetPrevAlgoBlockIndex walks pprev to the fork boundary, which by the above
+    //     lies below those ancestors.
+    // Assert rather than substitute another hash: a different anchor would be a silent
+    // consensus divergence from the documented seed rule, which is strictly worse than
+    // stopping.
+    const uint256 anchor{Assert(CBlockIndex::GetPrevAlgoBlockIndex(pindex))->GetBlockHash()};
     const ChainSlotBlockSource slot_blocks{chainstate.m_blockman, pindex->pprev,
                                            pindex->GetAlgo()};
     const AlgoVerifyResult vr = RunAlgoVerify(
         module,
-        Span<const unsigned char>{prev.begin(), prev.size()},
+        Span<const unsigned char>{anchor.begin(), anchor.size()},
         sol.payout,
         block.nBits,
         sol.bytes,

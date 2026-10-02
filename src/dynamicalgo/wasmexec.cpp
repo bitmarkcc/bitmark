@@ -269,7 +269,7 @@ struct InstGuard {
 } // namespace
 
 AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
-                               Span<const unsigned char> prev_hash,
+                               Span<const unsigned char> anchor_hash,
                                Span<const unsigned char> payout,
                                uint32_t nbits,
                                Span<const unsigned char> solution,
@@ -279,8 +279,8 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
     AlgoVerifyResult res;
 
     if (module_bytes.empty()) { res.error = "empty module"; return res; }
-    // The guest reads exactly 32 prev_hash bytes; reject anything else.
-    if (prev_hash.size() != 32) { res.error = "prev_hash must be 32 bytes"; return res; }
+    // The guest reads exactly 32 anchor_hash bytes; reject anything else.
+    if (anchor_hash.size() != 32) { res.error = "anchor_hash must be 32 bytes"; return res; }
     if (!EnsureWamrReady()) { res.error = "WAMR init/register failed"; return res; }
 
     // WAMR references the module buffer until wasm_runtime_unload; keep our own
@@ -298,7 +298,7 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
     // allocations happen inside the module and are not marshaled here.
     // The slot's previous blocks are NOT marshaled here -- the module pulls them
     // through the chain.* imports into its own memory (doc sec 2.5).
-    const uint64_t inputs_total = (uint64_t)prev_hash.size() + payout.size()
+    const uint64_t inputs_total = (uint64_t)anchor_hash.size() + payout.size()
                                 + solution.size() + 8;
     const uint32_t heap_size = (uint32_t)std::min<uint64_t>(inputs_total + (1u << 16), 0xFFFFFFFFu);
 
@@ -322,9 +322,9 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
         off = (uint32_t)o;
         return true;
     };
-    uint32_t off_prev = 0, off_payout = 0, off_nonce = 0, off_outab = 0;
+    uint32_t off_anchor = 0, off_payout = 0, off_nonce = 0, off_outab = 0;
     void* outab_native = nullptr;
-    bool marshalled = put(prev_hash, off_prev) && put(payout, off_payout)
+    bool marshalled = put(anchor_hash, off_anchor) && put(payout, off_payout)
                    && put(solution, off_nonce);
     if (marshalled) {
         uint64_t o = wasm_runtime_module_malloc(g.inst, 8, &outab_native);
@@ -348,7 +348,7 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
     // verify(prev, payout,payout_len, nbits, nonce,nonce_len, out_ab) -> i32. All
     // args are i32 (one cell each); the i32 return lands in argv[0].
     uint32_t argv[7] = {
-        off_prev, off_payout, (uint32_t)payout.size(), nbits,
+        off_anchor, off_payout, (uint32_t)payout.size(), nbits,
         off_nonce, (uint32_t)solution.size(), off_outab};
     bool called = wasm_runtime_call_wasm(g.env, fn, 7, argv);
     // Report the per-class usage (both on success and on any trap). gas_used is the

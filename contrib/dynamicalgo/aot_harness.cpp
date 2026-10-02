@@ -56,14 +56,14 @@ int main(int argc, char** argv)
     if (argc > 4) chain.block_size = (size_t)std::strtoul(argv[4], nullptr, 10);
     if (argc > 5 && std::strcmp(argv[5], "failread") == 0) chain.fail_read = true;
 
-    std::vector<unsigned char> prev(32);
-    for (int i = 0; i < 32; i++) prev[i] = (unsigned char)i;
+    std::vector<unsigned char> anchor(32);
+    for (int i = 0; i < 32; i++) anchor[i] = (unsigned char)i;
     const std::vector<unsigned char> payout{0x6a, 0x00, 0x00};
     const std::vector<unsigned char> solution(8, 0x00);
 
     std::printf("module: %s (%zu bytes)  magic=%.4s\n", argv[1], mod.size(),
                 mod.size() >= 4 ? (const char*)mod.data() : "????");
-    const AlgoVerifyResult r = RunAlgoVerify(mod, prev, payout, nbits, solution, &chain);
+    const AlgoVerifyResult r = RunAlgoVerify(mod, anchor, payout, nbits, solution, &chain);
 
     std::printf("ok=%d solution_valid=%d alpha=0x%08x beta=0x%08x\n",
                 (int)r.ok, (int)r.solution_valid, r.alpha_q32, r.beta_q32);

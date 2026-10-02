@@ -1,9 +1,9 @@
 // Whirlpool dynamic-algo verifier (Bitmark). The pushed wasm module IS the PoW
 // verifier:
 //
-//   verify(prev_hash, payout, payout_len, nbits, nonce, nonce_len, out_ab)
+//   verify(anchor_hash, payout, payout_len, nbits, nonce, nonce_len, out_ab)
 //
-// returns 0 if Whirlpool(prev_hash||payout||nonce) meets the nBits target, else 1.
+// returns 0 if Whirlpool(anchor_hash||payout||nonce) meets the nBits target, else 1.
 // It also writes the reward fractions alpha,beta as two little-endian
 // u32 in Q32 fixed point (value = u32 / 2^32, so the whole u32 range is [0,1)):
 // a valid solution => alpha=beta=0.5 (the classic r/2 // r/4 split); no valid solution
@@ -129,13 +129,13 @@ static void put_ab(u8 *out_ab, int solution_valid) {
 }
 
 // ---- dynamic-algo verifier ---------------------------------------------------
-// Returns 0 iff Whirlpool(prev_hash||payout||nonce) top-256 bits <= target(nBits),
+// Returns 0 iff Whirlpool(anchor_hash||payout||nonce) top-256 bits <= target(nBits),
 // and writes alpha,beta to out_ab (see put_ab). Param order: block context first
-// (prev_hash, payout, nBits), then the miner's solution (nonce), then the alpha/beta
+// (anchor_hash, payout, nBits), then the miner's solution (nonce), then the alpha/beta
 // output pointer last.
 #define PREIMAGE_MAX 4096
 __attribute__((export_name("verify")))
-int verify(const u8 *prev_hash,                  // 32 bytes: the parent block hash
+int verify(const u8 *anchor_hash,                  // 32 bytes: the parent block hash
            const u8 *payout, u32 payout_len,     // the dynamic miner's payout spk
            u32 nbits,                            // u32 compact target
            const u8 *nonce, u32 nonce_len,       // the miner's solution
@@ -147,7 +147,7 @@ int verify(const u8 *prev_hash,                  // 32 bytes: the parent block h
     if (total > PREIMAGE_MAX) return 1; // over-long preimage: reject
     u8 buf[PREIMAGE_MAX];
     u64 o = 0;
-    for (int k = 0; k < 32; k++) buf[o++] = prev_hash[k];
+    for (int k = 0; k < 32; k++) buf[o++] = anchor_hash[k];
     for (u32 k = 0; k < payout_len; k++) buf[o++] = payout[k];
     for (u32 k = 0; k < nonce_len; k++) buf[o++] = nonce[k];
 
@@ -186,13 +186,13 @@ int selftest(void) {
     u8 tg[32];
     target_from_nbits(0x1d00ffff, tg);
     if (tg[0] || tg[1] || tg[2] || tg[3] || tg[4] != 0xff || tg[5] != 0xff || tg[6]) return 2;
-    u8 prev[32]; for (int i = 0; i < 32; i++) prev[i] = (u8)i;
+    u8 anchor[32]; for (int i = 0; i < 32; i++) anchor[i] = (u8)i;
     const u8 payout[3] = {0x6a, 0x00, 0x00};
     const u8 nonce[8] = {0,0,0,0,0,0,0,0};
     u8 ab[8];
-    if (verify(prev, payout, 3, 0x03000001, nonce, 8, ab) != 1) return 3; // tiny target fails
+    if (verify(anchor, payout, 3, 0x03000001, nonce, 8, ab) != 1) return 3; // tiny target fails
     if (ab[0] || ab[1] || ab[2] || ab[3]) return 5;                                   // alpha == 0 on fail
-    if (verify(prev, payout, 3, 0x2100ffff, nonce, 8, ab) != 0) return 4; // huge target passes
+    if (verify(anchor, payout, 3, 0x2100ffff, nonce, 8, ab) != 0) return 4; // huge target passes
     if (ab[3] != 0x80 || ab[0] || ab[1] || ab[2]) return 6;                           // alpha == 0.5 (0x80000000) on pass
     if (ab[7] != 0x80 || ab[4] || ab[5] || ab[6]) return 7;                           // beta == 0.5 (0x80000000)
     return 0;
@@ -219,24 +219,24 @@ int main(void) {
     printf("genesis target match: %s\n", hexeq(t, genesis) ? "OK" : "FAIL");
 
     // 2. verify() glue agrees with a direct compare, for a sample input.
-    u8 prev[32]; for (int i=0;i<32;i++) prev[i]=(u8)i;
+    u8 anchor[32]; for (int i=0;i<32;i++) anchor[i]=(u8)i;
     u8 payout[] = {0x76,0xa9,0x14,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,0x88,0xac};
     u8 nonce[8] = {0,0,0,0,0,0,0,0};
     u32 nbits = 0x1f00ffff; // easy target
     u8 ab[8];
     // reference: compute digest and compare top32 to target
     u8 buf[65], dg[64], tg[32];
-    int o=0; for(int i=0;i<32;i++) buf[o++]=prev[i]; for(unsigned i=0;i<sizeof payout;i++) buf[o++]=payout[i]; for(int i=0;i<8;i++) buf[o++]=nonce[i];
+    int o=0; for(int i=0;i<32;i++) buf[o++]=anchor[i]; for(unsigned i=0;i<sizeof payout;i++) buf[o++]=payout[i]; for(int i=0;i<8;i++) buf[o++]=nonce[i];
     whirlpool(buf,o,dg); target_from_nbits(nbits,tg);
     int ref=0; for(int i=0;i<32;i++){ if(dg[i]<tg[i]){ref=0;break;} if(dg[i]>tg[i]){ref=1;break;} }
-    int got = verify(prev, payout, sizeof payout, nbits, nonce, 8, ab);
+    int got = verify(anchor, payout, sizeof payout, nbits, nonce, 8, ab);
     printf("verify glue: got %d, ref %d -> %s ; alpha=%s beta=%s\n", got, ref,
            got==ref ? "OK" : "FAIL",
            (ab[3]==0x80 && !ab[0] && !ab[1] && !ab[2]) ? "0.5" : "0",
            (ab[7]==0x80 && !ab[4] && !ab[5] && !ab[6]) ? "0.5" : "?");
     // 3. impossible target (tiny) must fail; max target must pass.
-    printf("tiny target  -> %d (expect 1)\n", verify(prev,payout,sizeof payout,0x03000001,nonce,8,ab));
-    printf("huge target  -> %d (expect 0)\n", verify(prev,payout,sizeof payout,0x2100ffff,nonce,8,ab));
+    printf("tiny target  -> %d (expect 1)\n", verify(anchor,payout,sizeof payout,0x03000001,nonce,8,ab));
+    printf("huge target  -> %d (expect 0)\n", verify(anchor,payout,sizeof payout,0x2100ffff,nonce,8,ab));
     return 0;
 }
 #endif

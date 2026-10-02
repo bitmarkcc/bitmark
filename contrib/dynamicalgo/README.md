@@ -80,15 +80,24 @@ every case.
 
 Start from `keccak_algo.c`. The contract in brief:
 
-- Export `verify(prev_hash, payout, payout_len, nbits, nonce, nonce_len, out_ab)`
+- Export `verify(anchor_hash, payout, payout_len, nbits, nonce, nonce_len, out_ab)`
   returning 0 when the solution meets the target.
+- `anchor_hash` is the previous block of **your own slot**, not the immediate parent,
+  so your seed changes about every 16 minutes rather than every 120 seconds (§2.1bis).
+  `seed = Hash256(payout || anchor_hash)`.
 - Write α then β into `out_ab` as two little-endian `u32` in Q32 fixed point
   (`0.5 == 0x80000000`). The whole `u32` range maps to `[0,1)`, so `0 ≤ α,β < 1` is
   automatic and no float ever crosses the ABI.
 - Be integer-only and deterministic. `f32` is permitted inside the module (wasm's
   IEEE-754 is exact) but never at the boundary.
-- α and β must be functions of the block CONTEXT, not of `solution`: the node calls
-  `verify()` with an empty solution just to read them in the no-solution case.
+- α and β may be constant or may depend on the solution — that is your choice. The
+  only hard rule is that they must be **defined for an empty solution**, since the
+  node calls `verify()` with no solution purely to read them for the no-solution
+  branch. Note the incentive if you vary α: a pool keeps `r − α·r`, so among valid
+  candidates it prefers the lowest α (§3).
+- Your payout scriptPubKey is grindable against the seed, and a slot-length anchor
+  gives ~8× more grinding time than the old per-block one — so validation-set (or
+  equivalent) selection must be grinding-resistant (§8.7).
 - If you need earlier blocks of your own slot, use the `chain.*` imports — the
   commented idiom at the end of `keccak_algo.c` is the template. Mind the per-call
   budgets (§8.7): 1024 fetches and 256 MiB, which deliberately do **not** allow

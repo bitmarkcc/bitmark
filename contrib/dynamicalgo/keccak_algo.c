@@ -1,9 +1,9 @@
 // Keccak-256 dynamic-algo verifier (Bitmark). Same ABI as whirlpool_algo.c: the
 // pushed wasm module IS the PoW verifier.
 //
-//   verify(prev_hash, payout, payout_len, nbits, nonce, nonce_len, out_ab)
+//   verify(anchor_hash, payout, payout_len, nbits, nonce, nonce_len, out_ab)
 //
-// returns 0 if Keccak256(prev_hash||payout||nonce) meets the nBits target, else 1,
+// returns 0 if Keccak256(anchor_hash||payout||nonce) meets the nBits target, else 1,
 // and writes the reward fractions alpha,beta as two little-endian u32 in Q32 fixed
 // point (value = u32 / 2^32; whole u32 range is [0,1)): valid solution =>
 // alpha=beta=0.5 (0x80000000); no valid solution => alpha=0 (no dynamic miner to
@@ -123,7 +123,7 @@ static void put_ab(u8 *out_ab, int solution_valid) {
 // ---- dynamic-algo verifier -------------------------------------------------
 #define PREIMAGE_MAX 4096
 __attribute__((export_name("verify")))
-int verify(const u8 *prev_hash,
+int verify(const u8 *anchor_hash,
            const u8 *payout, u32 payout_len,
            u32 nbits,
            const u8 *nonce, u32 nonce_len,
@@ -134,7 +134,7 @@ int verify(const u8 *prev_hash,
     if (total > PREIMAGE_MAX) return 1;
     u8 buf[PREIMAGE_MAX];
     u64 o = 0;
-    for (int k = 0; k < 32; k++) buf[o++] = prev_hash[k];
+    for (int k = 0; k < 32; k++) buf[o++] = anchor_hash[k];
     for (u32 k = 0; k < payout_len; k++) buf[o++] = payout[k];
     for (u32 k = 0; k < nonce_len; k++) buf[o++] = nonce[k];
 
@@ -193,13 +193,13 @@ int selftest(void) {
     const u8 msg[3] = {'a', 'b', 'c'};
     keccak256(msg, 3, out);
     for (int i = 0; i < 32; i++) if (out[i] != ABC[i]) return 1;
-    u8 prev[32]; for (int i = 0; i < 32; i++) prev[i] = (u8)i;
+    u8 anchor[32]; for (int i = 0; i < 32; i++) anchor[i] = (u8)i;
     const u8 payout[3] = {0x6a, 0x00, 0x00};
     const u8 nonce[8] = {0};
     u8 ab[8];
-    if (verify(prev, payout, 3, 0x03000001, nonce, 8, ab) != 1) return 2;
+    if (verify(anchor, payout, 3, 0x03000001, nonce, 8, ab) != 1) return 2;
     if (ab[0] || ab[1] || ab[2] || ab[3]) return 4;                                   // alpha == 0 on fail
-    if (verify(prev, payout, 3, 0x2100ffff, nonce, 8, ab) != 0) return 3;
+    if (verify(anchor, payout, 3, 0x2100ffff, nonce, 8, ab) != 0) return 3;
     if (ab[3] != 0x80 || ab[0] || ab[1] || ab[2]) return 5;                           // alpha == 0.5 (0x80000000) on pass
     if (ab[7] != 0x80 || ab[4] || ab[5] || ab[6]) return 6;                           // beta == 0.5 (0x80000000)
     return 0;

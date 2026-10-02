@@ -85,11 +85,13 @@ chunk** of the solution stream; the solution bytes fed to `verify()` are the
 concatenation of `seq = 1..N-1`. (One uniform rule for both the solution-tx and
 coinbase forms — no separate marker output — and a scriptPubKey easily fits one
 `≤ 520 B` chunk.) It serves two roles:
-1. **Seed binding.** `seed = Hash256(payout_scriptPubKey || prev_block_hash)`. The
-   solution is bound to the payout, so no one can redirect the dynamic share by
-   rewriting the payout — that changes the seed and the solution no longer verifies.
-   (This holds regardless of *where* the payout is committed; a pool that rewrites it
-   forfeits the solution and thus the `α·r` payment.)
+1. **Seed binding.** `seed = Hash256(payout_scriptPubKey || anchor_hash)`, where
+   `anchor_hash` is the hash of the previous block **of this block's own mPoW slot**
+   (§2.1bis), not the immediate parent. The solution is bound to the payout, so no
+   one can redirect the dynamic share by rewriting the payout — that changes the seed
+   and the solution no longer verifies. (This holds regardless of *where* the payout
+   is committed; a pool that rewrites it forfeits the solution and thus the `α·r`
+   payment.)
 2. **Payment target.** The coinbase must pay the dynamic share to this scriptPubKey
    (§2.3, §4).
 
@@ -112,7 +114,7 @@ OP_RETURN OP_SOLUTION <seq> <chunk>
 the solution tx with a small input, leaves a relay fee, and broadcasts it p2p like any
 transaction; it propagates to every pool, and whichever pool mines it includes it and
 pays the bound payout. This is safe *because of seed binding* — the payout scriptPubKey
-is committed inside the solution and `seed = Hash256(payout ‖ prev_hash)`, so whoever
+is committed inside the solution and `seed = Hash256(payout ‖ anchor_hash)`, so whoever
 mines the tx MUST pay `α·r` to the dynamic miner's committed address (rewriting it
 changes the seed and the solution no longer verifies). So the author is paid regardless
 of who mines it, which makes relay permissionless — no private sale needed, and no
@@ -124,6 +126,40 @@ cap (a policy limit, distinct from any consensus rule). Out-of-band hand-off (a 
 miner selling a solution directly to a pool) remains possible as a fallback but is no
 longer the assumed path. Either way, **consensus is identical**: `ConnectBlock` scans
 the whole block for `OP_SOLUTION` outputs (§7) and does not care how the tx arrived.
+
+### 2.1bis The anchor: why the seed binds to the previous SLOT block
+`anchor_hash` is the hash of the previous block of **this block's own mPoW slot**, not
+the immediate parent. `GetPrevAlgoBlockIndex` is exactly that walk.
+
+**Why.** The seed is what a solution is bound to, so it determines how long a miner
+has to produce one. Binding to the immediate parent gives a 120 s window — the global
+block interval. With 8 algos, a slot produces a block roughly every **16 minutes**, so
+binding to the previous slot block gives a solution that long to be computed and
+relayed. For a real PoUW algo this is the difference between feasible and not: the
+llm.c demonstrator targets ~16 min of miner GPU per block, which simply cannot fit in
+a 120 s window.
+
+**Why it is replay-safe.** The obvious worry is that a seed fixed for ~16 minutes
+makes one solution valid in every block of that window, letting one unit of work
+collect `α·r` eight times (a fresh funding input makes it a different tx, so
+double-spend protection does not help). It cannot, because the branch verified for a
+block is the one active for **that block's own slot**: a slot-*k* solution presented in
+any other slot's block is verified against a different module and fails. And between
+two slot-*k* blocks there is exactly one "next slot-*k* block". One anchor, one
+payable block.
+
+**Existence.** A same-slot predecessor always exists wherever this is evaluated:
+`nVersion < 4` is invalid once DERSIG is active, so testnet's rolling `OnFork()` gate
+can never lapse and mainnet/regtest gate on height; and `DynamicForkActive` needs
+94-of-125 per algo across *all* 8 algos, so every slot has ≥ 94 on-fork blocks before
+any branch can be active. The implementation asserts this rather than substituting
+another hash, since a different anchor would be a silent divergence from this rule.
+
+**Cost.** The payout half of the seed is miner-chosen, so a longer-lived seed means
+more time to grind payout addresses looking for a favourable one (§8.7). This does not
+introduce the problem — an algo's validation-set selection must be grinding-resistant
+regardless — but it widens the window roughly 8×, which raises the bar on that
+requirement.
 
 ### 2.2 Alternative: solution in the coinbase
 The separate solution tx (§2.1) is the form that makes standard GBT pool integration
@@ -191,7 +227,7 @@ neither.
 ## 3. Dynamic-algo I/O contract
 
 ```
-int verify(prev_hash,              // 32 bytes: the parent block hash
+int verify(anchor_hash,            // 32 bytes: the previous block of THIS SLOT (§2.1bis)
            payout, payout_len,     // the dynamic miner's payout scriptPubKey
            nbits,                  // u32 compact target
            solution, solution_len, // the block's assembled OP_SOLUTION bytes
@@ -201,7 +237,7 @@ int verify(prev_hash,              // 32 bytes: the parent block hash
 
 The slot's previous blocks are reached through IMPORTS rather than an argument
 (§3.1). Every argument above is therefore fixed before the block is built:
-`prev_hash` and `nbits` come from the parent chain, `payout` and `solution` are the
+`anchor_hash` and `nbits` come from the parent chain, `payout` and `solution` are the
 dynamic miner's own. A solution stays valid no matter what the pool later does with
 the block's transaction set — which is what makes mempool relay (§2.1) work at all.
 
@@ -211,7 +247,7 @@ current block's non-coinbase txs. That is circular: the solution lives in a tx
 would be part of the tx set. Even excluding the solution tx itself, a pool adding or
 dropping any other tx would silently invalidate a solution the dynamic miner had
 already produced — and the dynamic miner does not control the final block. Nothing
-was load-bearing about tx binding: `seed = Hash256(payout || prev_block_hash)`
+was load-bearing about tx binding: `seed = Hash256(payout || anchor_hash)`
 already prevents redirecting a solution to another payout or replaying it onto a
 different parent.
 
@@ -262,11 +298,28 @@ float→fixed scaling internally, where wasm's IEEE-754 `f32` is deterministic (
 bit-identical cross-machine for the llm.c verifier) — but no float ever crosses the ABI
 or enters the node's money path.
 
-`α, β` are deterministic functions of the block CONTEXT (`prev_hash`, `nbits`, and
-whatever the algo reads through the `chain.*` imports), NOT of `solution`, so they are
-defined even when the solution is absent/invalid (the node calls `verify()` with an
-empty solution just to read `α, β` in the no-solution case).
-`seed = Hash256(payout || prev_block_hash)`.
+`seed = Hash256(payout || anchor_hash)`.
+
+**`α, β` MAY depend on the solution.** An earlier draft required them to be functions
+of the block context alone. That constraint was stronger than necessary and is lifted:
+`solution` is an input, α/β are outputs, and an algo is free to make the split depend
+on the work supplied — e.g. paying more for a LoRA delta that improves the loss more.
+Whether α is a constant or solution-dependent is left to each algo's architects.
+
+The one hard requirement is that **α and β must be defined for an EMPTY solution**,
+because the node calls `verify()` with no solution purely to read them for the
+no-solution branch (`β·(1−α)·S`, §4). An algo that varies α must therefore still
+return a sensible baseline in that case. Soft-fork safety is unaffected either way:
+Q32 encoding guarantees `α < 1`, so `α·r ≤ r` always.
+
+A solution-dependent α does carry an incentive cost worth stating. A pool keeps
+`r − α·r`, so it prefers the *lowest* α among valid candidates. If an algo pays more
+for better work, pools will systematically include the weakest solution that still
+clears the difficulty threshold. The threshold remains the real floor on quality; the
+gradient above it points the wrong way. An algo wanting to reward quality above the
+floor should be designed with that in mind (or keep α context-only, which makes pools
+indifferent). This is also why the node's template builder cannot simply pick the
+highest-feerate solution once α varies — selection becomes a revenue decision (§6bis).
 
 The reference algos in `contrib/dynamicalgo/` (`keccak_algo.c`, `whirlpool_algo.c`)
 implement this signature, writing `α = β = 0.5` (`0x80000000` in Q32) on a valid
@@ -341,7 +394,7 @@ primitive miner builds the coinbase and receives the solution out-of-band first:
   (`==` in practice, since a rational primitive miner never over-pays). Paying less is
   invalid. Without this floor the primitive miner would pay ~0 and the dynamic miner
   would never bother producing a solution.
-- **Seed binding stops redirection.** `seed = Hash256(payout ‖ prev_hash)`, so a
+- **Seed binding stops redirection.** `seed = Hash256(payout ‖ anchor_hash)`, so a
   primitive miner who points the payment at their own address changes the seed, and the
   solution no longer verifies → not a valid solution-block.
 
@@ -657,7 +710,7 @@ the parent chain per `dynamic-algo-voting.md`, so a block can't self-activate):
    `payout_scriptPubKey` from the same source. (If no `OP_SOLUTION` outputs exist,
    there is no solution this block → go to the no-solution branch of step 6.)
 4. **Execute.** Load the slot's materialized algo module; run
-   `verify(prev_hash, payout, nbits, solution, out_ab)` under the gas/memory/I-O
+   `verify(anchor_hash, payout, nbits, solution, out_ab)` under the gas/memory/I-O
    limits (§8), with the slot's previous blocks served through the `chain.*` imports
    (§3.1). A limit breach or module fault ⇒ invalid; a slot block that must be
    retained but cannot be read is a local fault ⇒ fatal error, not invalid.
@@ -1127,8 +1180,13 @@ not the guarantee.
   trap in `wasmexec.cpp`. Instrumenter output verified to type-check/compile on the
   trunk, MoE, and non-SIMD verifiers; trunk counts all sit under the limits.
 - Verifier ABI (§3, §3.1): **resolved and implemented.** `verify()` takes
-  `prev_hash, payout, nbits, solution, out_ab`; the block's own txs are NOT an input
-  (circular — §3); the slot's previous blocks are reached through the
+  `anchor_hash, payout, nbits, solution, out_ab`. The seed anchors to the previous
+  block of the block's own SLOT, not the immediate parent (§2.1bis), so a solution
+  lives ~16 min instead of 120 s — replay-safe because the branch verified is the
+  block's own slot's, giving exactly one payable block per anchor. α and β MAY depend
+  on the solution (left to each algo's architects); only the empty-solution case must
+  be defined, and a varying α means pools prefer the lowest one (§3). The block's own
+  txs are NOT an input (circular — §3); the slot's previous blocks are reached through the
   `chain.slot_block_count` / `chain.slot_block` imports over a 32850-block window,
   framed `TX_NO_WITNESS`, metered by the §8.7 I/O budgets, with an unreadable
   in-window block escalating to a fatal error rather than invalidating the block.
