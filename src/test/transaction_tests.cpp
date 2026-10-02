@@ -920,6 +920,58 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     BOOST_CHECK_EQUAL(GetTransactionWeight(CTransaction(t)), 400004);
     CheckIsNotStandard(t, "tx-size");
 
+    // Bitmark: a dynamic-algo solution tx relays under the raised
+    // MAX_SOLUTION_TX_WEIGHT, but only while its input count stays low -- that
+    // pairing is what keeps the O(ninputs*txsize) sighash product below an ordinary
+    // tx's own worst case (see the derivation in policy.h).
+    {
+        // A realistic solution tx: one funding input, many OP_SOLUTION chunks. Chunks
+        // are dust-exempt and deliberately not counted toward the single-OP_RETURN
+        // limit, so they are the only standard way to carry this much data.
+        const auto chunk_out = [](uint32_t seq) {
+            CTxOut o;
+            o.nValue = 0;
+            o.scriptPubKey = CScript() << OP_RETURN << OP_SOLUTION << CScriptNum(seq)
+                                       << std::vector<unsigned char>(MAX_SCRIPT_ELEMENT_SIZE, 0x11);
+            return o;
+        };
+        CMutableTransaction s;
+        s.vin.resize(1);
+        s.vin[0].prevout.hash = Txid::FromUint256(InsecureRand256());
+        s.vin[0].prevout.n = 0;
+        s.vin[0].scriptSig = CScript() << std::vector<unsigned char>(65, 0);
+        s.vout.clear();
+        for (uint32_t seq = 0; GetTransactionWeight(CTransaction(s)) <= (unsigned int)MAX_STANDARD_TX_WEIGHT; ++seq) {
+            s.vout.push_back(chunk_out(seq));
+        }
+        // These two assertions together ARE the proof the exemption is in effect:
+        // over the ordinary cap, yet standard.
+        BOOST_CHECK(GetTransactionWeight(CTransaction(s)) > (unsigned int)MAX_STANDARD_TX_WEIGHT);
+        BOOST_CHECK(GetTransactionWeight(CTransaction(s)) < (unsigned int)MAX_SOLUTION_TX_WEIGHT);
+        CheckIsStandard(s);
+
+        // The exemption is forfeited by too many inputs, however large the solution.
+        const auto fill_inputs = [&](size_t n) {
+            s.vin.resize(n);
+            for (auto& in : s.vin) {
+                in.prevout.hash = Txid::FromUint256(InsecureRand256());
+                in.prevout.n = 0;
+                in.scriptSig = CScript() << std::vector<unsigned char>(65, 0);
+            }
+        };
+        fill_inputs(MAX_SOLUTION_TX_INPUTS + 1);
+        CheckIsNotStandard(s, "solution-tx-inputs");
+        fill_inputs(MAX_SOLUTION_TX_INPUTS);
+        CheckIsStandard(s);
+
+        // And the raised cap is still a cap.
+        fill_inputs(1);
+        for (uint32_t seq = s.vout.size(); GetTransactionWeight(CTransaction(s)) <= (unsigned int)MAX_SOLUTION_TX_WEIGHT; ++seq) {
+            s.vout.push_back(chunk_out(seq));
+        }
+        CheckIsNotStandard(s, "solution-tx-size");
+    }
+
     // Check bare multisig (standard if policy flag g_bare_multi is set)
     g_bare_multi = true;
     t.vout[0].scriptPubKey = GetScriptForMultisig(1, {key.GetPubKey()}); // simple 1-of-1

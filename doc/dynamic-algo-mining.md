@@ -107,8 +107,12 @@ OP_RETURN OP_SOLUTION <seq> <chunk>
 - Self-correcting: the assembled bytes feed `verify()`; a stray/wrong `OP_SOLUTION`
   output changes the bytes and `verify()` fails, so the miner is forced to include
   exactly the intended set.
-- Chunk ≤ 520 bytes (`MAX_SCRIPT_ELEMENT_SIZE`). Consensus cap `MAX_SOLUTION_BYTES`
-  on the per-block total bounds block size and verification cost.
+- Chunk ≤ 520 bytes (`MAX_SCRIPT_ELEMENT_SIZE`). There is NO consensus cap on the
+  per-block total: block weight already bounds the size and the gas limits (§8.6,
+  §8.7) already bound the verification cost, so a separate one would be redundant
+  (§9). Relay is capped separately as POLICY (`MAX_SOLUTION_TX_WEIGHT` and
+  `MAX_SOLUTION_TX_INPUTS`, §2.1ter); a miner may include a solution tx that exceeds
+  those and simply did not propagate.
 
 **Delivery.** The primary model is ordinary **mempool relay**: the dynamic miner funds
 the solution tx with a small input, leaves a relay fee, and broadcasts it p2p like any
@@ -161,6 +165,31 @@ introduce the problem — an algo's validation-set selection must be grinding-re
 regardless — but it widens the window roughly 8×, which raises the bar on that
 requirement.
 
+### 2.1ter Relay policy for a solution transaction
+Making mempool relay (§2.1) actually work needs standardness to accommodate a
+transaction unlike any ordinary one: very large, with almost no inputs. Three pieces,
+all **policy, never consensus**:
+
+- **Multiple `OP_RETURN`s.** A solution spans many `OP_SOLUTION` outputs, so they are
+  deliberately not counted toward the single-`OP_RETURN` limit, and are dust-exempt
+  like `NULL_DATA` (`policy.cpp`).
+- **A raised weight cap.** `MAX_STANDARD_TX_WEIGHT` is 400000 weight — only 100 kB
+  without segwit — which would keep any real solution off the p2p network entirely. A
+  solution-carrying tx instead relays up to `MAX_SOLUTION_TX_WEIGHT` (3900000 weight,
+  ~975 kB), leaving room for the coinbase alongside it.
+- **An input cap.** The raise is safe only because of *why* the original limit exists:
+  sighash cost is `O(ninputs · txsize)`, so the danger is large AND input-heavy. A
+  solution tx is the opposite, so the cap is paired with `MAX_SOLUTION_TX_INPUTS` (8).
+  The product then stays an order of magnitude below what an ordinary standard tx can
+  already demand — ~7.8 MB hashed against ~67 MB for a 675-input 100 kB tx — so this
+  *lowers* the worst case rather than raising it. Eight rather than the one a solution
+  tx strictly needs, because funding ~975 kB costs a real fee (~975k sat at 1 sat/B),
+  possibly assembled from several UTXOs.
+
+Being policy, a miner may include a solution tx that breaches these; it simply will
+not have propagated. Consensus bounds a solution only by block weight and the gas
+limits.
+
 ### 2.2 Alternative: solution in the coinbase
 The separate solution tx (§2.1) is the form that makes standard GBT pool integration
 smooth — it is NOT a consensus requirement. Because the verifier scans the WHOLE block
@@ -170,7 +199,7 @@ for `OP_SOLUTION` outputs, the same chunks may instead be placed directly in the
 coinbase.vout += OP_RETURN OP_SOLUTION <seq> <chunk>   (one per chunk)
 ```
 Both forms are consensus-equivalent: `seq = 0..N-1`, contiguous/unique, concatenated,
-total ≤ `MAX_SOLUTION_BYTES`, and the assembled bytes feed `verify()` identically. The
+and the assembled bytes feed `verify()` identically. The
 payout may likewise be committed in the coinbase (scriptSig or a marker output) in this
 form. A block MUST NOT mix the two — all `OP_SOLUTION` outputs for a block live either
 in the coinbase or in exactly one solution tx (the whole-block scan tolerates either,
@@ -706,7 +735,7 @@ the parent chain per `dynamic-algo-voting.md`, so a block can't self-activate):
    validity.
 3. **Solution & payout.** Scan the WHOLE block for `OP_SOLUTION` outputs (in the
    solution tx per §2.1, or the coinbase per §2.2), order by `seq` (0..N-1,
-   contiguous/unique, total ≤ `MAX_SOLUTION_BYTES`), concatenate. Read the committed
+   contiguous/unique), concatenate. Read the committed
    `payout_scriptPubKey` from the same source. (If no `OP_SOLUTION` outputs exist,
    there is no solution this block → go to the no-solution branch of step 6.)
 4. **Execute.** Load the slot's materialized algo module; run

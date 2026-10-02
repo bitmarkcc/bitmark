@@ -131,8 +131,29 @@ bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_dat
     // almost as much to process as they cost the sender in fees, because
     // computing signature hashes is O(ninputs*txsize). Limiting transactions
     // to MAX_STANDARD_TX_WEIGHT mitigates CPU exhaustion attacks.
+    //
+    // Bitmark: a dynamic-algo solution transaction relays under the raised
+    // MAX_SOLUTION_TX_WEIGHT instead, paired with an input limit that keeps the
+    // O(ninputs*txsize) product well below what an ordinary standard tx can already
+    // demand -- see the derivation on the constants in policy.h. The test is the
+    // two-byte OP_RETURN OP_SOLUTION prefix rather than Solver(), because this runs
+    // before the per-output classification below and must stay trivial; an output
+    // that merely mimics the prefix still fails that classification.
+    const bool carries_solution{std::any_of(tx.vout.begin(), tx.vout.end(), [](const CTxOut& o) {
+        return o.scriptPubKey.size() >= 2 && o.scriptPubKey[0] == OP_RETURN
+               && o.scriptPubKey[1] == OP_SOLUTION;
+    })};
     unsigned int sz = GetTransactionWeight(tx);
-    if (sz > MAX_STANDARD_TX_WEIGHT) {
+    if (carries_solution) {
+        if (sz > static_cast<unsigned int>(MAX_SOLUTION_TX_WEIGHT)) {
+            reason = "solution-tx-size";
+            return false;
+        }
+        if (tx.vin.size() > MAX_SOLUTION_TX_INPUTS) {
+            reason = "solution-tx-inputs";
+            return false;
+        }
+    } else if (sz > static_cast<unsigned int>(MAX_STANDARD_TX_WEIGHT)) {
         reason = "tx-size";
         return false;
     }

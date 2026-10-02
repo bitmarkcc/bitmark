@@ -25,6 +25,35 @@ static constexpr unsigned int DEFAULT_BLOCK_MAX_WEIGHT{MAX_BLOCK_WEIGHT - 4000};
 static constexpr unsigned int DEFAULT_BLOCK_MIN_TX_FEE{1000};
 /** The maximum weight for transactions we're willing to relay/mine */
 static constexpr int32_t MAX_STANDARD_TX_WEIGHT{400000};
+/**
+ * Bitmark: a dynamic-algo solution transaction relays under a RAISED weight cap.
+ *
+ * A block's solution can be most of a block (doc/dynamic-algo-mining.md sec 2.4), so
+ * MAX_STANDARD_TX_WEIGHT -- 400000 weight, i.e. only 100 kB without segwit -- would
+ * keep real solutions off the p2p network entirely, defeating the mempool-relay
+ * delivery model (sec 2.1) for anything but a trivial hash algo.
+ *
+ * Raising it is safe here because of WHY that limit exists: sighash cost is
+ * O(ninputs * txsize), so the danger is a tx that is large AND input-heavy. A
+ * solution tx is naturally the opposite -- one funding UTXO (sec 2.1) -- so the cap
+ * is paired with an input limit, and the product stays BELOW what an ordinary
+ * standard tx can already demand today:
+ *
+ *   ordinary worst case: 100 kB / ~148 B per input  ~= 675 inputs
+ *                        675 * 100 kB               ~= 67 MB hashed
+ *   solution worst case: 8 inputs * ~975 kB         ~= 7.8 MB hashed
+ *
+ * So a maximal solution tx stays an order of magnitude CHEAPER to validate than a
+ * maximal ordinary one. The input allowance is 8 rather than the 1 a solution tx
+ * strictly needs because funding ~975 kB requires a real fee (~975k sat at 1 sat/B),
+ * which a miner may have to assemble from several UTXOs.
+ *
+ * These are relay POLICY, not consensus: the only consensus bounds on a solution are
+ * block weight and the gas limits (sec 9), so a miner may still include a larger or
+ * more input-heavy solution tx that simply did not relay.
+ */
+static constexpr int32_t MAX_SOLUTION_TX_WEIGHT{3900000};
+static constexpr unsigned int MAX_SOLUTION_TX_INPUTS{8};
 /** The minimum non-witness size for transactions we're willing to relay/mine: one larger than 64  */
 static constexpr unsigned int MIN_STANDARD_TX_NONWITNESS_SIZE{65};
 /** Maximum number of signature check operations in an IsStandard() P2SH script */
