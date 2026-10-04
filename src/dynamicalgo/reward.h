@@ -25,17 +25,25 @@ namespace dynamicalgo {
 CAmount fp_mul(CAmount x, uint64_t q_q32);
 
 //! The consensus reward constraints for one block, derived from the split (sec 4.4).
-//! With r = subsidy + fees:
+//! With r = subsidy + fees and T = beta*(1-alpha):
 //!   * valid solution: the coinbase must pay >= required_payout to the payout
 //!     scriptPubKey (the floor of sec 4.3), its total value <= max_coinbase_value = r,
-//!     and it emits the full subsidy.
-//!   * no solution: required_payout = 0, the coinbase may claim <= max_coinbase_value
-//!     = emitted_subsidy + fees, and only emitted_subsidy = floor(beta*(1-alpha)*S) of
-//!     the subsidy is emitted (the remainder is deferred, never counted as emitted).
+//!     and it emits the full subsidy. required_pot = 0.
+//!   * no solution: required_payout = 0; the primitive miner keeps floor(T*r) and the
+//!     coinbase must ALSO carry a <algo> OP_SOLUTIONPOT output of exactly required_pot
+//!     (sec 4.5), so its total value is max_coinbase_value = emitted_subsidy + fees.
+//!     Only emitted_subsidy = floor(T*S) of the subsidy is emitted; the rest is
+//!     milestone-deferred, and the withheld fees go to the pot rather than being burned.
+//!
+//! T scales the WHOLE reward r, not the subsidy alone. Scaling only the subsidy would
+//! invert the inclusion incentive as the subsidy decays -- a pool would compare
+//! (1-alpha)*r against beta*(1-alpha)*S + F and, once fees exceeded ~S/2, always prefer
+//! to skip the solution (sec 4, 4.2).
 struct RewardSplit {
     CAmount required_payout{0};    //!< dyn = floor(alpha*r) to the payout spk (0 if no solution)
+    CAmount required_pot{0};       //!< exact value the coinbase's pot output must carry (0 if a solution)
     CAmount emitted_subsidy{0};    //!< subsidy actually emitted this block (for money-supply accounting)
-    CAmount max_coinbase_value{0}; //!< coinbase GetValueOut() must be <= this
+    CAmount max_coinbase_value{0}; //!< coinbase GetValueOut() must be <= this (INCLUDING the pot output)
 };
 
 //! Compute the split. `subsidy` is S (post-mPoW-SSF-scaling), `fees` is F (the fees the

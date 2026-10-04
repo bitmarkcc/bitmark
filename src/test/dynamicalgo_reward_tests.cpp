@@ -60,22 +60,53 @@ BOOST_AUTO_TEST_CASE(split_valid_solution)
 
 BOOST_AUTO_TEST_CASE(split_no_solution)
 {
-    // emitted = floor(beta * (1-alpha) * S). alpha=0.5, beta=0.5, S=40 -> 0.25*40 = 10.
+    // T = beta*(1-alpha) scales the WHOLE reward r, not the subsidy alone (sec 4).
+    // alpha=beta=0.5 -> T=0.25. S=40, F=10 -> r=50:
+    //   emitted = T*S    = 10      (the other 30 is milestone-deferred)
+    //   keep    = T*r    = 12      (the primitive miner's own share)
+    //   pot     = total - keep = 20 - 12 = 8   (~= (1-T)*F = 7.5, exact as a remainder)
     RewardSplit s = ComputeRewardSplit(/*subsidy=*/40, /*fees=*/10, HALF, HALF, /*valid=*/false);
     BOOST_CHECK_EQUAL(s.required_payout, 0);
     BOOST_CHECK_EQUAL(s.emitted_subsidy, 10);
-    BOOST_CHECK_EQUAL(s.max_coinbase_value, 20); // emitted + fees
+    BOOST_CHECK_EQUAL(s.max_coinbase_value, 20);  // emitted + fees
+    BOOST_CHECK_EQUAL(s.required_pot, 8);
+    // The miner's own share plus the pot is EXACTLY what the coinbase may claim: the pot
+    // is a remainder, so no satoshi is lost between two separate floor operations.
+    BOOST_CHECK_EQUAL(s.max_coinbase_value - s.required_pot, 12);
 
-    // Reference whirlpool no-solution split: alpha=0, beta=0.5 -> emit S/2.
+    // Reference whirlpool no-solution split: alpha=0, beta=0.5 -> T=0.5.
     s = ComputeRewardSplit(40, 10, /*alpha=*/0, HALF, false);
     BOOST_CHECK_EQUAL(s.emitted_subsidy, 20);
     BOOST_CHECK_EQUAL(s.max_coinbase_value, 30);
+    BOOST_CHECK_EQUAL(s.max_coinbase_value - s.required_pot, 25); // keep = T*r = 0.5*50
 
     // Soft-fork safety: emitted subsidy can never exceed S, even at beta ~ 1, alpha = 0.
     s = ComputeRewardSplit(40, 10, /*alpha=*/0, /*beta=*/uint32_t(Q - 1), false);
     BOOST_CHECK(s.emitted_subsidy <= 40);
     BOOST_CHECK_EQUAL(s.emitted_subsidy, 39);
     BOOST_CHECK(s.max_coinbase_value <= 40 + 10);
+    BOOST_CHECK(s.required_pot >= 0);
+
+    // No fees means nothing to withhold, whatever T is.
+    s = ComputeRewardSplit(/*subsidy=*/40, /*fees=*/0, HALF, HALF, false);
+    BOOST_CHECK_EQUAL(s.required_pot, 0);
+}
+
+BOOST_AUTO_TEST_CASE(split_no_solution_fee_era)
+{
+    // The reason T scales r rather than S: as the subsidy decays, scaling only the
+    // subsidy would leave the primitive miner all of F, so skipping a solution would pay
+    // better than including one. Check the incentive now points the right way even at
+    // S = 0, where the old rule degenerated completely.
+    const CAmount S{0}, F{1000};
+    const RewardSplit with{ComputeRewardSplit(S, F, HALF, HALF, /*valid=*/true)};
+    const RewardSplit without{ComputeRewardSplit(S, F, HALF, HALF, /*valid=*/false)};
+    const CAmount keep_with{with.max_coinbase_value - with.required_payout};
+    const CAmount keep_without{without.max_coinbase_value - without.required_pot};
+    BOOST_CHECK_EQUAL(keep_with, 500);     // (1-alpha)*r
+    BOOST_CHECK_EQUAL(keep_without, 250);  // T*r
+    BOOST_CHECK(keep_with > keep_without); // including a solution pays better
+    BOOST_CHECK_EQUAL(without.required_pot, 750); // the rest is deferred, not burned
 }
 
 BOOST_AUTO_TEST_CASE(split_negative_subsidy)
@@ -93,11 +124,16 @@ BOOST_AUTO_TEST_CASE(split_negative_subsidy)
     BOOST_CHECK_EQUAL(s.required_payout, 0);
     BOOST_CHECK_EQUAL(s.max_coinbase_value, -30);
 
-    // No solution AND S < 0: the subsidy is NOT scaled up toward zero; emit primitive S,
-    // so the ceiling is exactly S + F (identical to old nodes) -- soft-fork-safe.
+    // No solution AND S < 0: only the SUBSIDY escapes scaling -- T*S would move a
+    // negative S UP toward zero and push the ceiling above S+F. Fees are still withheld,
+    // because that breaks neither constraint, and this is a high-hashrate region where
+    // the inclusion incentive should stay intact. S=-10, F=50 -> r=40, T=0.25:
+    //   emitted = S = -10 (unchanged), keep = T*r = 10, pot = 40 - 10 = 30.
     s = ComputeRewardSplit(/*subsidy=*/-10, /*fees=*/50, HALF, HALF, /*valid=*/false);
     BOOST_CHECK_EQUAL(s.emitted_subsidy, -10);
-    BOOST_CHECK_EQUAL(s.max_coinbase_value, 40); // == S + F, not beta*(1-alpha)*S + F > S+F
+    BOOST_CHECK_EQUAL(s.max_coinbase_value, 40); // == S + F, the old-node ceiling exactly
+    BOOST_CHECK_EQUAL(s.required_pot, 30);
+    BOOST_CHECK_EQUAL(s.max_coinbase_value - s.required_pot, 10);
 
     // Ceiling never exceeds the old-node ceiling S + F, across a sweep of alpha/beta.
     for (uint64_t a = 0; a <= Q; a += (Q / 8)) {

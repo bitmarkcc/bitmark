@@ -496,12 +496,26 @@ primitive coinbase check:
   shortfall (`r > 0`) the dynamic miner still earns `α·r` — the reward simply comes from
   fees — and the ceiling is `r = S + F` (exactly the old-node ceiling). If `r ≤ 0` nothing
   is owed and the block fails the existing `> S+F` coinbase check anyway.
-- **No solution:** `T·S` would move a negative `S` *up* toward zero, exceeding the
-  primitive ceiling `S+F` and breaking soft-fork safety. So for `S < 0` the primitive `S`
-  is emitted unchanged (ceiling `= S+F`, identical to old nodes) and **no pot output is
-  required** — there is no positive subsidy to withhold against, and scaling `r` when
-  `S < 0` would mean withholding fees to cover a negative subsidy, which is not a
-  penalty the no-solution case is meant to impose.
+- **No solution:** only the SUBSIDY must escape scaling here. `T·S` would move a
+  negative `S` *up* toward zero (`T·(−100) = −25`), pushing the ceiling above `S+F` and
+  breaking soft-fork safety, so a negative `S` is emitted unchanged. Withholding
+  **fees**, however, violates neither requirement, so it still happens: with
+  `emitted = S` and `keep = T·r`, the pot takes `r − T·r` and the total is exactly
+  `S + F` — the old-node ceiling. The negative-`S` region is a high-hashrate region,
+  precisely where the inclusion incentive should stay intact rather than switch off.
+  Only two constraints are actually load-bearing, and they bind different terms:
+  `emitted_subsidy ≤ S` and `total coinbase ≤ S + F`.
+
+So one formula covers both signs, with no special case for the pot:
+```
+emitted = (S ≥ 0) ? T(S) : S
+total   = emitted + F
+keep    = T(r)
+pot     = total − keep        # ≈ (1−T)·F for S ≥ 0, ≈ (1−T)·r for S < 0
+```
+`pot ≥ 0` holds regardless of flooring because `fp_mul` is **Lipschitz-≤1** in `x`
+(adding `d` raises the floor by at most `d`), and composing two such maps preserves it,
+so `T(S+F) − T(S) ≤ F`.
 `fp_mul` is thus only ever given non-negative inputs, and `max_coinbase_value ≤ S+F` holds
 in every region. Enforced in `dynamicalgo/reward.cpp` (`ComputeRewardSplit`).
 
