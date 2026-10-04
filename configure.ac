@@ -1998,11 +1998,23 @@ if test "x$enable_wamrc" != "xno"; then
 fi
 
 dnl Where `make install` puts the companion wamrc, so the daemon can find it next
-dnl to itself without depending on PATH (a build-tree run, a trimmed systemd PATH
-dnl or a GUI launch would not have it). Double eval because bindir expands to
-dnl ${exec_prefix}/bin -> ${prefix}/bin.
+dnl to itself without depending on PATH (a trimmed systemd PATH or a GUI launch
+dnl would not have it). Double eval because bindir expands to ${exec_prefix}/bin
+dnl -> ${prefix}/bin.
+dnl
+dnl $prefix and $exec_prefix are still the literal "NONE" here unless the user
+dnl passed --prefix/--exec-prefix -- autoconf only substitutes its defaults at
+dnl AC_OUTPUT. Eval'ing $bindir as-is therefore bakes in "NONE/bin" and the
+dnl daemon never finds the compiler it just installed. Resolve them the way
+dnl autoconf will, on saved copies so the real variables are left alone.
+wamrc_save_prefix=$prefix
+wamrc_save_exec_prefix=$exec_prefix
+test "x$prefix" = "xNONE" && prefix=$ac_default_prefix
+test "x$exec_prefix" = "xNONE" && exec_prefix='${prefix}'
 full_bindir=`eval echo "$bindir"`
 full_bindir=`eval echo "$full_bindir"`
+prefix=$wamrc_save_prefix
+exec_prefix=$wamrc_save_exec_prefix
 AC_DEFINE_UNQUOTED([BITMARK_BINDIR], ["$full_bindir"],
   [Install bindir, used to locate the companion wamrc AOT compiler])
 

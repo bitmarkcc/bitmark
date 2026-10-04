@@ -2,6 +2,13 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+// HAVE_WAMRC (is the companion AOT compiler built?) and BITMARK_BINDIR (where `make
+// install` put it) come from here. Without this include both are invisible and FindWamrc
+// silently behaves as a --disable-wamrc build, whatever configure decided.
+#if defined(HAVE_CONFIG_H)
+#include <config/bitcoin-config.h>
+#endif
+
 #include <dynamicalgo/modulestore.h>
 
 #include <logging.h>
