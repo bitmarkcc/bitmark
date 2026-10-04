@@ -323,6 +323,7 @@ BASE_SCRIPTS = [
     'feature_dersig.py',
     'feature_cltv.py',
     'feature_pushcode.py',
+    'feature_solutionpot.py',
     'rpc_pushcode.py',
     'feature_reservefee.py',
     'rpc_uptime.py',
