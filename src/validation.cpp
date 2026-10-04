@@ -2908,6 +2908,128 @@ static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& vie
     return true;
 }
 
+// Bitmark: validate every OP_SOLUTIONPOT spend and creation in one NON-COINBASE
+// transaction against the covenant (doc sec 4.5; ConnectBlock step 5bis).
+//
+// Everything here is structural -- checkable without knowing whether this block carried
+// a valid dynamic solution. The one verdict-dependent condition, that a CLAIM requires
+// such a solution, is reported out through `claim_seen` and enforced by the caller after
+// the reward split, because that is where the verdict is decided. Keeping the split that
+// way means the expensive part (scanning inputs and classifying their coins) happens
+// once, in the main per-tx loop, rather than in a second pass over the block.
+//
+// A coinbase is never passed here: it cannot spend, and its pot CREATION is checked
+// against the reward split instead (the required amount comes from there).
+// `txfee` is the transaction's fee (inputs - outputs).
+static bool CheckSolutionPotTx(const CTransaction& tx, const CCoinsViewCache& view,
+                               const CBlockIndex* pindex, CAmount txfee,
+                               bool& claim_seen, TxValidationState& state)
+{
+    CAmount pot_in{0};      // sum of the spent pots' values
+    unsigned pot_inputs{0};
+    int pot_algo{-1};       // their common algo
+    int selector{-1};       // their common spend path
+
+    for (unsigned int j = 0; j < tx.vin.size(); j++) {
+        const Coin& coin = view.AccessCoin(tx.vin[j].prevout);
+        std::vector<std::vector<unsigned char>> sol;
+        if (Solver(coin.out.scriptPubKey, sol) != TxoutType::SOLUTIONPOT) continue;
+        // An empty vSolutions is the readiness signal, which is OP_RETURN-prefixed and
+        // so never enters the UTXO set -- it cannot appear as an input at all. Rejecting
+        // rather than ignoring keeps that assumption explicit.
+        if (sol.empty()) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-spend-signal");
+        }
+        const int algo_i{sol[0].empty() ? 0 : sol[0][0]};
+
+        std::vector<std::vector<unsigned char>> pushes;
+        if (!ReserveScriptSigPushes(tx.vin[j].scriptSig, pushes) || pushes.empty()) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-bad-scriptsig");
+        }
+        const int sel{pushes[0].empty() ? 0 : pushes[0][0]};
+
+        if (pot_inputs == 0) {
+            pot_algo = algo_i;
+            selector = sel;
+        } else {
+            // One path, one slot per transaction: mixing them would make the value
+            // accounting below ambiguous.
+            if (algo_i != pot_algo) {
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-mixed-algo");
+            }
+            if (sel != selector) {
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-mixed-selector");
+            }
+        }
+        pot_in += coin.out.nValue;
+        ++pot_inputs;
+    }
+
+    if (pot_inputs == 0) {
+        // No pot spend, so this transaction may not CREATE a pot either: the only
+        // authorized creators are a consolidate rollover (below) and the no-solution
+        // coinbase (checked against the reward split). Without this, anyone could mint
+        // pot outputs and inflate a slot's jackpot with unwithheld money.
+        for (const CTxOut& o : tx.vout) {
+            std::vector<std::vector<unsigned char>> sol;
+            if (Solver(o.scriptPubKey, sol) == TxoutType::SOLUTIONPOT && !sol.empty()) {
+                return state.Invalid(TxValidationResult::TX_CONSENSUS,
+                                     "solutionpot-unauthorized-creation");
+            }
+        }
+        return true;
+    }
+
+    // A pot spend consumes ONLY pot inputs. Both paths are keyless and settled purely by
+    // value accounting, so admitting ordinary inputs would let unrelated money satisfy
+    // the fee rule (claim) or the value-preservation rule (consolidate).
+    if (pot_inputs != tx.vin.size()) {
+        return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-mixed-inputs");
+    }
+
+    if (selector == 0) {
+        // CLAIM-ON-SOLUTION: the whole pot becomes fee for a block of this slot that
+        // carries a valid solution. The solution condition is the caller's to check.
+        claim_seen = true;
+        if (pot_algo != static_cast<int>(pindex->GetAlgo())) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-claim-algo");
+        }
+        if (tx.vout.size() != 1 || tx.vout[0].nValue != 0 ||
+            !tx.vout[0].scriptPubKey.IsUnspendable()) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-claim-shape");
+        }
+        // With pot-only inputs and a single 0-value output this holds by construction;
+        // checked anyway so the "released value genuinely becomes fee" invariant is
+        // enforced here rather than inferred from the shape.
+        if (txfee != pot_in) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-claim-fee");
+        }
+    } else if (selector == 1) {
+        // CONSOLIDATE: value-preserving, no block-context gate, anyone may do it. Exists
+        // because a coinbase cannot spend inputs, so creation necessarily adds one output
+        // per no-solution block and something has to collapse them.
+        if (pot_inputs < 2) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-consolidate-count");
+        }
+        std::vector<std::vector<unsigned char>> sol;
+        if (tx.vout.size() != 1 ||
+            Solver(tx.vout[0].scriptPubKey, sol) != TxoutType::SOLUTIONPOT || sol.empty()) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-consolidate-shape");
+        }
+        if ((sol[0].empty() ? 0 : sol[0][0]) != pot_algo) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-consolidate-algo");
+        }
+        // Exactly the sum: no value created, and (with pot-only inputs and one output)
+        // zero fee, so consolidation cannot be used to leak pot value to a miner.
+        if (tx.vout[0].nValue != pot_in) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-consolidate-value");
+        }
+    } else {
+        return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-bad-selector");
+    }
+    return true;
+}
+
 // Bitmark: the activation rule's consensus parameters for this chain. The activation
 // delay, fee-floor horizon and reorg margin are protocol constants (their defaults); only
 // the voting period is per-chain.
@@ -3028,14 +3150,55 @@ public:
 // the coinbase-value ceiling. Returns false (state set) on a consensus-invalid block:
 // unavailable module, malformed solution set, module fault / gas or memory breach, or an
 // unmet payout floor.
+// Bitmark: the coinbase is the ONLY authorized creator of a solution pot (doc sec 4.5),
+// so its pot outputs must carry exactly the amount the reward split withheld -- `required`
+// -- and name this block's own slot. `required` is 0 both for a block that withheld
+// nothing and for a slot with no active algo, in which case no pot output may appear at
+// all. Exact rather than a floor in either direction: too little lets a miner keep
+// withheld fees, too much lets it shift value out of its own share into a pot it can
+// claim back later.
+static bool CheckCoinbasePot(const CBlock& block, int block_algo, CAmount required,
+                             BlockValidationState& state)
+{
+    CAmount created{0};
+    for (const CTxOut& o : block.vtx[0]->vout) {
+        std::vector<std::vector<unsigned char>> psol;
+        if (Solver(o.scriptPubKey, psol) != TxoutType::SOLUTIONPOT) continue;
+        if (psol.empty()) continue; // the readiness signal: 0-value, carries no obligation
+        if ((psol[0].empty() ? 0 : psol[0][0]) != block_algo) {
+            // Minting a pot for another slot would let a miner divert its own withheld
+            // fees into a different slot's jackpot.
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
+                                 "solutionpot-coinbase-algo");
+        }
+        created += o.nValue;
+    }
+    if (created != required) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
+                             strprintf("solutionpot-coinbase-amount (created=%d required=%d)",
+                                       created, required));
+    }
+    return true;
+}
+
 static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
                                    const CBlockIndex* pindex, CAmount subsidy, CAmount fees,
-                                   const std::optional<uint256>& branch,
+                                   const std::optional<uint256>& branch, bool pot_claim_seen,
                                    CAmount& max_coinbase_value, BlockValidationState& state)
     EXCLUSIVE_LOCKS_REQUIRED(cs_main)
 {
     max_coinbase_value = subsidy + fees; // primitive default (unchanged behavior)
-    if (!branch) return true; // slot is primitive-only
+    if (!branch) {
+        // A slot with no active algo: the pre-dynamic rules apply in full, so there is
+        // no pot to claim and none to create. A claim is invalid -- there can be no valid
+        // solution to gate it on -- and the coinbase may not mint a pot either, which is
+        // why this check runs here too and not only on the active path below.
+        if (pot_claim_seen) {
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
+                                 "solutionpot-claim-noalgo");
+        }
+        return CheckCoinbasePot(block, static_cast<int>(pindex->GetAlgo()), /*required=*/0, state);
+    }
 
     // Assemble the slot's algo module (a .wasm) from the OP_PUSHCODE code DB. A branch
     // the CHAIN says cannot be assembled is block invalidity -- that verdict is a pure
@@ -3142,6 +3305,25 @@ static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
     const dynamicalgo::RewardSplit split =
         dynamicalgo::ComputeRewardSplit(subsidy, fees, vr.alpha_q32, vr.beta_q32, valid);
     max_coinbase_value = split.max_coinbase_value;
+
+    // --- solution-pot conditions that depend on the verdict just computed (sec 4.5) ---
+    //
+    // 1. A pot CLAIM is only permitted in a block that actually carries a valid solution.
+    //    The covenant checked everything structural about the claim in the per-transaction
+    //    loop; this is the one condition it could not know there.
+    if (pot_claim_seen && !valid) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
+                             "solutionpot-claim-nosolution");
+    }
+    // 2. The no-solution branch withholds fees, and they must be visible in the coinbase
+    //    as a pot output for THIS slot carrying exactly the withheld amount. Only the
+    //    coinbase may create one (the covenant rejects any other creator), so this is the
+    //    sole authorized creation path. A claim and a creation are mutually exclusive by
+    //    construction: creation happens only when `valid` is false, a claim only when it
+    //    is true.
+    if (!CheckCoinbasePot(block, static_cast<int>(pindex->GetAlgo()), split.required_pot, state)) {
+        return false;
+    }
 
     if (valid && split.required_payout > 0) {
         // Payment floor (doc sec 4.3): the coinbase must pay >= required_payout to the
@@ -3418,6 +3600,11 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // Compute the dynamic-algo fork gate once per block (the per-algo supermajority
     // walk is not cheap, so don't repeat it per transaction).
     const bool dynamic_active = DynamicForkActive(pindex->pprev, m_chainman.GetConsensus());
+    // Bitmark: set by the solution-pot covenant when some transaction claims this slot's
+    // pot. Whether that was PERMITTED depends on the block carrying a valid solution,
+    // which is only decided by the reward split further down, so the flag carries the
+    // question out of the per-transaction loop (doc sec 4.5, step 5bis).
+    bool pot_claim_seen{false};
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
@@ -3463,6 +3650,17 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                     state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                                   rf_state.GetRejectReason(), rf_state.GetDebugMessage());
                     return error("ConnectBlock(): reserve-fee covenant failed on %s: %s",
+                                 tx.GetHash().ToString(), state.ToString());
+                }
+                // Bitmark: the solution-pot covenant (step 5bis, doc sec 4.5). Structural
+                // only -- whether a claim is permitted depends on this block's solution
+                // verdict, which is not known until the reward split below, so that one
+                // condition rides out on pot_claim_seen.
+                TxValidationState sp_state;
+                if (!CheckSolutionPotTx(tx, view, pindex, txfee, pot_claim_seen, sp_state)) {
+                    state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
+                                  sp_state.GetRejectReason(), sp_state.GetDebugMessage());
+                    return error("ConnectBlock(): solution-pot covenant failed on %s: %s",
                                  tx.GetHash().ToString(), state.ToString());
                 }
             }
@@ -3565,11 +3763,17 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // SSF-scaled subsidy (scale defaults true), i.e. S in the reward math (doc sec 4).
     const CAmount subsidy = GetBlockSubsidy(pindex, params.GetConsensus());
     CAmount blockReward = subsidy + nFees; // coinbase-value ceiling (primitive default)
-    if (flags & SCRIPT_VERIFY_PUSHCODE) {
+    // Gated on `dynamic_active` rather than re-deriving the same condition from
+    // `flags & SCRIPT_VERIFY_PUSHCODE`: both come from DynamicForkActive(pindex->pprev),
+    // but the solution-pot covenant in the loop above uses `dynamic_active` to decide
+    // whether to set pot_claim_seen, and this call is what checks that a claim was
+    // PERMITTED. Two spellings of one condition could drift into a skipped consensus
+    // check, so there is one variable.
+    if (dynamic_active) {
         // Bitmark dynamic-algo reward split (doc sec 4, 7). When the block's slot has an
         // active dynamic algo, this runs verify(), sets blockReward to the dynamic
         // ceiling, and enforces the payout floor; otherwise blockReward is unchanged.
-        if (!CheckDynamicAlgoReward(*this, block, pindex, subsidy, nFees, active_branch, blockReward, state)) {
+        if (!CheckDynamicAlgoReward(*this, block, pindex, subsidy, nFees, active_branch, pot_claim_seen, blockReward, state)) {
             return false; // state populated by the helper
         }
     }
