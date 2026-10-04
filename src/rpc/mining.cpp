@@ -758,6 +758,19 @@ static RPCHelpMan getblocktemplate()
                 {RPCResult::Type::NUM, "height", "The height of the next block"},
                 {RPCResult::Type::STR_HEX, "signet_challenge", /*optional=*/true, "Only on signet"},
                 {RPCResult::Type::STR_HEX, "default_witness_commitment", /*optional=*/true, "a valid witness commitment for the unmodified block template"},
+                {RPCResult::Type::ARR, "coinbaserequired", /*optional=*/true, "Bitmark: coinbase outputs that MUST be appended for this template to be valid (the withheld-fee solution pot, and the dynamic miner's payment when a solution is included). Absent when the mined slot has no active dynamic algo. coinbasevalue excludes these, so appending them does not over-claim; omitting them makes the block invalid.",
+                {
+                    {RPCResult::Type::OBJ, "", "",
+                    {
+                        {RPCResult::Type::STR_HEX, "scriptPubKey", "the output script, to be appended to the coinbase verbatim"},
+                        {RPCResult::Type::NUM, "value", "the output value in satoshis"},
+                    }},
+                }},
+                {RPCResult::Type::OBJ, "coinbasesignal", /*optional=*/true, "Bitmark: a VOLUNTARY 0-value unspendable coinbase output advertising that this miner's software appends coinbaserequired outputs. Not needed for validity; voters consult it when deciding whether to approve a dynamic algo for a slot.",
+                {
+                    {RPCResult::Type::STR_HEX, "scriptPubKey", "the signal output script"},
+                    {RPCResult::Type::NUM, "value", "always 0"},
+                }},
             }},
         },
         RPCExamples{
@@ -1088,6 +1101,33 @@ static RPCHelpMan getblocktemplate()
 
     if (!pblocktemplate->vchCoinbaseCommitment.empty()) {
         result.pushKV("default_witness_commitment", HexStr(pblocktemplate->vchCoinbaseCommitment));
+    }
+
+    // Bitmark: coinbase outputs the pool MUST append, and the signal it MAY append
+    // (doc sec 4.5, 6bis). Same delivery mechanism as default_witness_commitment above:
+    // the node computes a required coinbase output and the pool pastes it in. Note that
+    // `coinbasevalue` reports only the pool's OWN share, so appending these is not an
+    // over-claim -- it is what makes the block valid.
+    //
+    // A slot with no active dynamic algo has no obligations, and the array is then
+    // absent, so mining such a slot is bit-for-bit as it was before this feature. Once a
+    // slot IS activated, a pool that ignores the array produces INVALID blocks: the
+    // obligation is an extra output, which a lower coinbasevalue cannot express.
+    {
+        UniValue required(UniValue::VARR);
+        for (const CTxOut& o : pblocktemplate->vRequiredCoinbaseOutputs) {
+            UniValue obj(UniValue::VOBJ);
+            obj.pushKV("scriptPubKey", HexStr(o.scriptPubKey));
+            obj.pushKV("value", (int64_t)o.nValue);
+            required.push_back(obj);
+        }
+        if (!required.empty()) result.pushKV("coinbaserequired", required);
+        if (!pblocktemplate->readiness_signal.scriptPubKey.empty()) {
+            UniValue sig(UniValue::VOBJ);
+            sig.pushKV("scriptPubKey", HexStr(pblocktemplate->readiness_signal.scriptPubKey));
+            sig.pushKV("value", (int64_t)pblocktemplate->readiness_signal.nValue);
+            result.pushKV("coinbasesignal", sig);
+        }
     }
 
     return result;

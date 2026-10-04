@@ -20,6 +20,7 @@
 #include <policy/policy.h>
 #include <pow.h>
 #include <primitives/transaction.h>
+#include <util/check.h>
 #include <util/moneystr.h>
 #include <util/time.h>
 #include <validation.h>
@@ -202,30 +203,12 @@ void BlockAssembler::resetBlock()
 	}
     }
     
-    // Create coinbase transaction.
-    CMutableTransaction coinbaseTx;
-    coinbaseTx.nVersion = nVersionTx;
-    coinbaseTx.vin.resize(1);
-    coinbaseTx.vin[0].prevout.SetNull();
-    coinbaseTx.vout.resize(1);
-    coinbaseTx.vout[0].scriptPubKey = scriptPubKeyIn;
-    if (mpowValue) {
-	CBlockIndex indexDummy(*pblock);
-	indexDummy.pprev = pindexPrev;
-	indexDummy.nHeight = pindexPrev->nHeight+1;
-	coinbaseTx.vout[0].nValue = nFees + GetBlockSubsidy(&indexDummy, chainparams.GetConsensus());
-    }
-    else
-	coinbaseTx.vout[0].nValue = nFees + GetBlockSubsidy(nHeight, chainparams.GetConsensus());
-    coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
-    pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
-    pblocktemplate->vchCoinbaseCommitment = m_chainstate.m_chainman.GenerateCoinbaseCommitment(*pblock, pindexPrev);
-
-    pblocktemplate->vTxFees[0] = -nFees;
-
-    LogPrintf("CreateNewBlock(): block weight: %u txs: %u fees: %ld sigops %d\n", GetBlockWeight(*pblock), nBlockTx, nFees, nBlockSigOpsCost);
-
-    // Fill in header
+    // Fill in the header BEFORE the coinbase. Both the SSF-scaled subsidy (via the
+    // CBlockIndex built from *pblock) and the dynamic-algo reward (which needs nBits to
+    // run verify() against the same target consensus will use) read header fields, so
+    // computing them against a half-filled header would price the template wrongly.
+    // Nothing here depends on vtx[0]; GenerateCoinbaseCommitment, which does, stays
+    // below.
     pblock->hashPrevBlock  = pindexPrev->GetBlockHash();
     UpdateTime(pblock, chainparams.GetConsensus(), pindexPrev);
     pblock->nBits          = GetNextWorkRequired(pindexPrev, pblock, chainparams.GetConsensus(), algo);
@@ -235,7 +218,88 @@ void BlockAssembler::resetBlock()
 	pblock->nNonce256.SetNull();
 	pblock->nSolution.clear();
     }
-    
+
+    // Create coinbase transaction.
+    CMutableTransaction coinbaseTx;
+    coinbaseTx.nVersion = nVersionTx;
+    coinbaseTx.vin.resize(1);
+    coinbaseTx.vin[0].prevout.SetNull();
+    coinbaseTx.vout.resize(1);
+    coinbaseTx.vout[0].scriptPubKey = scriptPubKeyIn;
+    CAmount coinbase_subsidy;
+    if (mpowValue) {
+	CBlockIndex indexDummy(*pblock);
+	indexDummy.pprev = pindexPrev;
+	indexDummy.nHeight = pindexPrev->nHeight+1;
+	coinbase_subsidy = GetBlockSubsidy(&indexDummy, chainparams.GetConsensus());
+    }
+    else
+	coinbase_subsidy = GetBlockSubsidy(nHeight, chainparams.GetConsensus());
+    coinbaseTx.vout[0].nValue = nFees + coinbase_subsidy;
+    coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
+
+    // Bitmark: once this slot has an active dynamic algo, S + F is NOT what the coinbase
+    // may claim (doc sec 4). With no solution the ceiling is T*S + F and the withheld
+    // fees must appear in an OP_SOLUTIONPOT output (sec 4.5); with one, part of the
+    // reward is owed to the solution's committed payout. Building S + F regardless would
+    // produce blocks this very node rejects -- bad-cb-amount, or
+    // solutionpot-coinbase-amount.
+    //
+    // The obligations come from Chainstate::ResolveAlgoReward, the SAME function
+    // ConnectBlock uses, so the template cannot be built against different rules than
+    // the ones that will judge it. The solution is left empty here: selecting a candidate
+    // from the mempool is phase 6.7c, so for now the node always builds the no-solution
+    // branch, which is valid (just smaller) and is what an unsolved slot looks like.
+    // The voluntary readiness signal (doc sec 4.5), offered to pools but NOT added to the
+    // assembled coinbase: it is opt-in, and a node mining its own template has nothing to
+    // advertise to itself. Offered UNCONDITIONALLY, including while this slot has no
+    // active algo -- that is precisely when it matters, since its purpose is to let
+    // voters see which miners are ready BEFORE approving an algo for the slot. Gating it
+    // on activation would make it useless for the decision it exists to inform.
+    pblocktemplate->readiness_signal.nValue = 0;
+    pblocktemplate->readiness_signal.scriptPubKey = CScript() << OP_RETURN << OP_SOLUTIONPOT;
+
+    const std::optional<uint256> active_branch{
+        m_chainstate.GetActiveAlgoBranch(static_cast<int>(algo))};
+    if (active_branch) {
+        // ConnectBlock always prices the reward off the SSF-scaled subsidy, so the plan
+        // must be fed the same one or the template is priced against a different S.
+        // Every real mining caller passes mpowValue=true; the false default is used only
+        // by unit tests, which never have an active branch. Asserted rather than assumed
+        // silently, since the consequence is an invalid block.
+        Assume(mpowValue);
+        const dynamicalgo::BlockSolution no_solution{};
+        AlgoRewardPlan plan;
+        if (!m_chainstate.ResolveAlgoReward(pindexPrev, algo, pblock->nBits, no_solution,
+                                            coinbase_subsidy, nFees, active_branch, plan)) {
+            // A template we cannot price is one we must not hand out: mining it would
+            // either forfeit value or produce an invalid block.
+            throw std::runtime_error(strprintf(
+                "CreateNewBlock: cannot resolve the dynamic-algo reward (%s%s)",
+                plan.fatal ? "local fault: " : plan.reject_reason + ": ", plan.err));
+        }
+        coinbaseTx.vout[0].nValue = plan.split.max_coinbase_value - plan.split.required_pot;
+        if (plan.split.required_pot > 0) {
+            // The withheld fees, in a pot for this block's own slot. Deferred rather than
+            // burned, and claimable by a later solution-bearing block of this slot.
+            CTxOut pot;
+            pot.nValue = plan.split.required_pot;
+            pot.scriptPubKey = CScript() << CScriptNum(static_cast<int>(algo)) << OP_SOLUTIONPOT;
+            coinbaseTx.vout.push_back(pot);
+            // Also recorded for GBT: a pool builds its own coinbase, so the obligation
+            // has to be handed over explicitly (doc sec 6bis).
+            pblocktemplate->vRequiredCoinbaseOutputs.push_back(pot);
+        }
+
+    }
+
+    pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
+    pblocktemplate->vchCoinbaseCommitment = m_chainstate.m_chainman.GenerateCoinbaseCommitment(*pblock, pindexPrev);
+
+    pblocktemplate->vTxFees[0] = -nFees;
+
+    LogPrintf("CreateNewBlock(): block weight: %u txs: %u fees: %ld sigops %d\n", GetBlockWeight(*pblock), nBlockTx, nFees, nBlockSigOpsCost);
+
     pblocktemplate->vTxSigOpsCost[0] = WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx[0]);
 
     BlockValidationState state;

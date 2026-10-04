@@ -3150,6 +3150,120 @@ public:
 // the coinbase-value ceiling. Returns false (state set) on a consensus-invalid block:
 // unavailable module, malformed solution set, module fault / gas or memory breach, or an
 // unmet payout floor.
+std::optional<uint256> Chainstate::GetActiveAlgoBranch(int slot)
+{
+    AssertLockHeld(cs_main);
+    if (!m_blockman.m_activation_db) return std::nullopt;
+    dynamicalgo::CSlotActivation act;
+    if (!m_blockman.m_activation_db->ReadSlot(slot, act) || !act.IsActive()) return std::nullopt;
+    return act.branch;
+}
+
+bool Chainstate::ResolveAlgoReward(const CBlockIndex* prev, Algo algo, uint32_t nbits,
+                                   const dynamicalgo::BlockSolution& sol,
+                                   CAmount subsidy, CAmount fees,
+                                   const std::optional<uint256>& branch,
+                                   AlgoRewardPlan& out)
+{
+    AssertLockHeld(cs_main);
+    out = AlgoRewardPlan{};
+
+    if (!branch) {
+        // Primitive-only slot: the pre-dynamic ceiling, nothing owed and nothing withheld.
+        out.split.max_coinbase_value = subsidy + fees;
+        return true;
+    }
+
+    // Assemble the slot's algo module (a .wasm) from the OP_PUSHCODE code DB. A branch
+    // the CHAIN says cannot be assembled is block invalidity -- that verdict is a pure
+    // function of the confirmed chain, so every node agrees. UNAVAILABLE is different:
+    // this node could not read code the chain does have (pruned past the keep window, a
+    // damaged block file, no code DB), which says nothing about the block. Rejecting on
+    // that would fork this node off the chain, so it escalates instead.
+    std::vector<unsigned char> wasm;
+    std::string reason;
+    const PushCodeStatus st{AssemblePushCode(*branch, wasm, reason)};
+    if (st == PushCodeStatus::UNAVAILABLE) {
+        out.fatal = true;
+        out.err = "Cannot read the dynamic-algo code for branch " + branch->GetHex() +
+                  " (" + reason + "); it must be retained but is not available here";
+        return false;
+    }
+    if (st != PushCodeStatus::COMPLETE) {
+        out.reject_reason = "dynamic-algo-unavailable";
+        out.err = reason;
+        return false;
+    }
+
+    // The runtime is AOT-only, so execute the compiled form, materializing it the first
+    // time this branch is seen. Unlike assembly, failing here is a LOCAL problem: the
+    // .aot is a per-architecture artifact, so an x86 node succeeding where an ARM node
+    // fails must not decide block validity. See dynamicalgo/modulestore.h.
+    if (!m_blockman.m_module_store) {
+        out.fatal = true;
+        out.err = "Dynamic-algo module store not open";
+        return false;
+    }
+    std::vector<unsigned char> module;
+    if (!m_blockman.m_module_store->GetOrCompile(*branch, wasm, module, out.err)) {
+        out.fatal = true;
+        return false;
+    }
+
+    // The ANCHOR is the previous block OF THIS SLOT, not the immediate parent (doc sec
+    // 2.1bis, 3). seed = Hash256(payout || anchor), so it only changes when the slot
+    // produces a block -- ~16 minutes with 8 algos rather than 120 seconds, which is what
+    // gives a dynamic miner a workable window. Replay-safe because the branch verified is
+    // the block's OWN slot's: a slot-k solution can only pay in a slot-k block, and
+    // between two slot-k blocks there is exactly one "next" one.
+    //
+    // Derived from `prev` + `algo` HERE so consensus and the miner cannot disagree:
+    // GetPrevAlgoBlockIndex starts at its argument's pprev, so consensus passing the new
+    // block and a miner passing the tip would otherwise anchor to different blocks. The
+    // equivalent of consensus's old GetPrevAlgoBlockIndex(pindex) is "the first same-algo
+    // block at or below prev", which is what this computes.
+    //
+    // A same-slot predecessor always exists, so there is no fallback to get wrong:
+    // nVersion < 4 is invalid once DERSIG is active, so testnet's rolling OnFork() gate
+    // cannot lapse and mainnet/regtest gate on height; and DynamicForkActive needs
+    // 94-of-125 per algo across ALL 8 algos, so every slot has >= 94 on-fork blocks
+    // before any branch can be active. Assert rather than substitute another hash -- a
+    // different anchor would be a silent divergence from the documented seed rule.
+    const CBlockIndex* const anchor_idx{
+        (prev && prev->OnFork() && prev->GetAlgo() == algo)
+            ? prev
+            : CBlockIndex::GetPrevAlgoBlockIndex(prev, algo)};
+    const uint256 anchor{Assert(anchor_idx)->GetBlockHash()};
+
+    // alpha/beta are read even with no solution present, since the no-solution branch
+    // needs them (doc sec 3). The slot's previous blocks are not passed in: the module
+    // pulls what it needs through the chain.* imports, metered by the I/O budgets.
+    const ChainSlotBlockSource slot_blocks{m_blockman, prev, algo};
+    const AlgoVerifyResult vr{RunAlgoVerify(module,
+                                            Span<const unsigned char>{anchor.begin(), anchor.size()},
+                                            sol.payout, nbits, sol.bytes, &slot_blocks)};
+    if (vr.chain_unavailable) {
+        // A block consensus says is inside the window could not be read HERE: local
+        // damage, not a property of the block. Same reasoning as an activation-store
+        // desync.
+        out.fatal = true;
+        out.err = "Cannot read a dynamic-algo slot block that must be retained: " + vr.error;
+        return false;
+    }
+    if (!vr.ok) {
+        out.reject_reason = vr.out_of_gas ? "dynamic-algo-out-of-gas" : "dynamic-algo-fault";
+        out.err = vr.error;
+        return false;
+    }
+
+    // alpha/beta are Q32 u32, so 0 <= alpha,beta < 1 is automatic (doc sec 3): no check.
+    // A valid dynamic solution requires both verify()==0 and actual solution outputs.
+    out.solution_valid = vr.solution_valid && sol.found;
+    out.split = dynamicalgo::ComputeRewardSplit(subsidy, fees, vr.alpha_q32, vr.beta_q32,
+                                                out.solution_valid);
+    return true;
+}
+
 // Bitmark: the coinbase is the ONLY authorized creator of a solution pot (doc sec 4.5),
 // so its pot outputs must carry exactly the amount the reward split withheld -- `required`
 // -- and name this block's own slot. `required` is 0 both for a block that withheld
@@ -3200,110 +3314,27 @@ static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
         return CheckCoinbasePot(block, static_cast<int>(pindex->GetAlgo()), /*required=*/0, state);
     }
 
-    // Assemble the slot's algo module (a .wasm) from the OP_PUSHCODE code DB. A branch
-    // the CHAIN says cannot be assembled is block invalidity -- that verdict is a pure
-    // function of the confirmed chain, so every node agrees. UNAVAILABLE is different:
-    // this node could not read code the chain does have (pruned past the keep window, a
-    // damaged block file, no code DB), which says nothing about the block. Rejecting on
-    // that would fork this node off the chain, so it escalates instead.
-    std::vector<unsigned char> wasm;
-    std::string reason;
-    const PushCodeStatus st = chainstate.AssemblePushCode(*branch, wasm, reason);
-    if (st == PushCodeStatus::UNAVAILABLE) {
-        return FatalError(chainstate.m_chainman.GetNotifications(), state,
-                          "Cannot read the dynamic-algo code for branch " + branch->GetHex() +
-                          " (" + reason + "); it must be retained but is not available here");
-    }
-    if (st != PushCodeStatus::COMPLETE) {
-        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "dynamic-algo-unavailable", reason);
-    }
-
-    // The runtime is AOT-only, so execute the compiled form, materializing it the
-    // first time this branch is seen. Unlike assembly, failing here is a LOCAL
-    // problem: the .aot is a per-architecture artifact, so an x86 node succeeding
-    // where an ARM node fails must not decide block validity -- that would split
-    // consensus. Hence FatalError, with an operator-facing message naming the exact
-    // command to reproduce. Governance is the defence against an algo that cannot
-    // be compiled; see dynamicalgo/modulestore.h.
-    if (!chainstate.m_blockman.m_module_store) {
-        return FatalError(chainstate.m_chainman.GetNotifications(), state,
-                          "Dynamic-algo module store not open");
-    }
-    std::vector<unsigned char> module;
-    std::string module_err;
-    if (!chainstate.m_blockman.m_module_store->GetOrCompile(*branch, wasm, module, module_err)) {
-        return FatalError(chainstate.m_chainman.GetNotifications(), state, module_err);
-    }
-
-    // Collect the block's OP_SOLUTION outputs: seq=0 is the payout scriptPubKey, seq=1..N-1
-    // concatenated is the solution fed to verify() (doc sec 2.1).
+    // Collect the block's OP_SOLUTION outputs: seq=0 is the payout scriptPubKey,
+    // seq=1..N-1 concatenated is the solution fed to verify() (doc sec 2.1).
     dynamicalgo::BlockSolution sol;
     std::string serr;
     if (!dynamicalgo::ExtractBlockSolution(block, sol, serr)) {
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-solution", serr);
     }
 
-    // Run verify() under the consensus gas/memory limits. alpha/beta are read even when
-    // no solution is present (empty solution), since the split's no-solution branch needs
-    // them (doc sec 3). The slot's previous blocks are not passed in: the module pulls
-    // the ones it needs through the chain.* imports, metered by the I/O budgets.
-    // The ANCHOR is the previous block OF THIS BLOCK'S OWN SLOT, not the immediate
-    // parent (doc sec 2.1, 3). The seed is Hash256(payout || anchor), so this is what
-    // a solution is bound to, and it only changes when the slot produces a block --
-    // about every 16 minutes with 8 algos, instead of every 120 seconds. That is what
-    // gives a dynamic miner a realistic window to compute and relay a solution.
-    //
-    // It is safe against replay precisely BECAUSE it is the block's own slot: the
-    // branch verified here comes from pindex->GetAlgo(), so a solution bound to slot
-    // k's previous block can only pay in a slot-k block (any other slot runs a
-    // different module and fails), and between two slot-k blocks there is exactly one
-    // "next slot-k block". One anchor, one payable block.
-    //
-    // A same-slot predecessor ALWAYS exists here, so there is no fallback to get
-    // wrong. The chain of reasons:
-    //   * nVersion < 4 is invalid once DERSIG is active (see the bad-version check in
-    //     ContextualCheckBlockHeader), and DERSIG is buried far below any possible
-    //     dynamic-fork activation, so every valid block has base version >= 4.
-    //   * therefore testnet's ROLLING OnFork() gate, IsSuperMajority(4, 75, 100),
-    //     always sees 100-of-100 and cannot lapse; mainnet and regtest gate on height
-    //     and are monotonic by construction. OnFork() never goes back to false.
-    //   * DynamicForkActive is IsSuperMajorityPerAlgo(5, 94, 125), so no branch can be
-    //     active until EVERY one of the 8 algos has >= 94 on-fork blocks (regtest:
-    //     9 of 12). This block thus has ~94+ same-algo ancestors.
-    //   * GetPrevAlgoBlockIndex walks pprev to the fork boundary, which by the above
-    //     lies below those ancestors.
-    // Assert rather than substitute another hash: a different anchor would be a silent
-    // consensus divergence from the documented seed rule, which is strictly worse than
-    // stopping.
-    const uint256 anchor{Assert(CBlockIndex::GetPrevAlgoBlockIndex(pindex))->GetBlockHash()};
-    const ChainSlotBlockSource slot_blocks{chainstate.m_blockman, pindex->pprev,
-                                           pindex->GetAlgo()};
-    const AlgoVerifyResult vr = RunAlgoVerify(
-        module,
-        Span<const unsigned char>{anchor.begin(), anchor.size()},
-        sol.payout,
-        block.nBits,
-        sol.bytes,
-        &slot_blocks);
-    if (vr.chain_unavailable) {
-        // A block consensus says is inside the window could not be read HERE. That is
-        // local damage (corruption, or a prune lock that did not hold), not a property
-        // of the block being validated -- rejecting it would fork this node off the
-        // chain. Same reasoning as an activation-store desync.
-        return FatalError(chainstate.m_chainman.GetNotifications(), state,
-                          "Cannot read a dynamic-algo slot block that must be retained: " + vr.error);
+    // The obligations themselves come from the SHARED resolver, which the miner also
+    // calls, so a template can never be built against different rules than the ones
+    // enforced here (doc sec 4). `pindex->pprev` is this block's parent.
+    AlgoRewardPlan plan;
+    if (!chainstate.ResolveAlgoReward(pindex->pprev, pindex->GetAlgo(), block.nBits, sol,
+                                      subsidy, fees, branch, plan)) {
+        if (plan.fatal) {
+            return FatalError(chainstate.m_chainman.GetNotifications(), state, plan.err);
+        }
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, plan.reject_reason, plan.err);
     }
-    if (!vr.ok) {
-        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
-                             vr.out_of_gas ? "dynamic-algo-out-of-gas" : "dynamic-algo-fault",
-                             vr.error);
-    }
-
-    // alpha/beta are Q32 u32, so 0 <= alpha,beta < 1 is automatic (doc sec 3): no check.
-    // A valid dynamic solution requires both verify()==0 and actual solution outputs.
-    const bool valid = vr.solution_valid && sol.found;
-    const dynamicalgo::RewardSplit split =
-        dynamicalgo::ComputeRewardSplit(subsidy, fees, vr.alpha_q32, vr.beta_q32, valid);
+    const bool valid{plan.solution_valid};
+    const dynamicalgo::RewardSplit& split{plan.split};
     max_coinbase_value = split.max_coinbase_value;
 
     // --- solution-pot conditions that depend on the verdict just computed (sec 4.5) ---

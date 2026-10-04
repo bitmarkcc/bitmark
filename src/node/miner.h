@@ -40,6 +40,24 @@ struct CBlockTemplate
     std::vector<CAmount> vTxFees;
     std::vector<int64_t> vTxSigOpsCost;
     std::vector<unsigned char> vchCoinbaseCommitment;
+
+    /** Bitmark: coinbase outputs a pool MUST append for this template to be valid --
+     *  the withheld-fee OP_SOLUTIONPOT output, and (once solutions are selected) the
+     *  alpha*r payment to the solution's committed payout. Recorded explicitly rather
+     *  than re-derived from the assembled coinbase, because the payout output is an
+     *  arbitrary scriptPubKey and so cannot be identified by type.
+     *
+     *  The assembled template already contains them, so a node mining its own template
+     *  needs nothing extra; this list exists to hand the obligation to a pool over GBT,
+     *  the same way default_witness_commitment does (doc sec 6bis). `coinbasevalue`
+     *  reports only the pool's OWN share, so appending these cannot over-claim. */
+    std::vector<CTxOut> vRequiredCoinbaseOutputs;
+
+    /** Bitmark: the VOLUNTARY readiness signal a miner may append to advertise that its
+     *  software can add the outputs above (doc sec 4.5). 0-value and unspendable, so it
+     *  costs nothing and never enters the UTXO set. Not required, and not included in
+     *  the assembled template -- a pool opts in. */
+    CTxOut readiness_signal;
 };
 
 // Container for tracking updates to ancestor feerate as we include (parent)

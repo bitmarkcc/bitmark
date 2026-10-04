@@ -13,6 +13,8 @@
 #include <kernel/chain.h>
 #include <consensus/amount.h>
 #include <deploymentstatus.h>
+#include <dynamicalgo/reward.h>
+#include <dynamicalgo/solution.h>
 #include <kernel/chainparams.h>
 #include <kernel/chainstatemanager_opts.h>
 #include <kernel/cs_main.h> // IWYU pragma: export
@@ -525,6 +527,21 @@ enum class CoinsCacheSizeState
  * whereas block information and metadata independent of the current tip is
  * kept in `BlockManager`.
  */
+/** Bitmark: the dynamic-algo reward obligations for one block context, plus how a
+ *  failure to compute them should be treated. See Chainstate::ResolveAlgoReward. */
+struct AlgoRewardPlan {
+    dynamicalgo::RewardSplit split;  //!< what the coinbase may claim / must pay / must pot
+    bool solution_valid{false};      //!< verify() accepted a solution actually present
+
+    //! Set when ResolveAlgoReward returns false. `fatal` means a LOCAL fault -- the node
+    //! must stop rather than treat the block as invalid, since another node with intact
+    //! storage would accept it. Otherwise `reject_reason` is the consensus reject code
+    //! and the block really is invalid.
+    bool fatal{false};
+    std::string reject_reason;
+    std::string err;
+};
+
 class Chainstate
 {
 protected:
@@ -792,6 +809,35 @@ public:
      *  INVALID on an out-of-range op / MAX_PUSHCODE_* violation. */
     PushCodeStatus AssemblePushCode(const uint256& hash, std::vector<unsigned char>& out,
                                     std::string& reason) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+    /** Bitmark: the dynamic-algo reward obligations for one block CONTEXT -- shared by
+     *  consensus, which checks a block against them, and the miner, which builds a block
+     *  to satisfy them, so the two cannot drift. Drift here does not merely misreport:
+     *  it makes the miner produce blocks its own node rejects.
+     *
+     *  `prev` is the PARENT of the block in question -- consensus passes pindex->pprev,
+     *  the miner passes the tip. Deriving the seed anchor and the slot-block window from
+     *  `prev` + `algo` in ONE place is much of the point: GetPrevAlgoBlockIndex starts at
+     *  its argument's pprev, so a miner computing it from the tip and consensus computing
+     *  it from the new block would otherwise seed verify() differently.
+     *
+     *  Returns false when the plan cannot be computed, with `fatal` separating a LOCAL
+     *  fault -- unreadable code, no module store, a compile failure, an unreadable slot
+     *  block, all of which must escalate and never reject a block -- from a property of
+     *  the inputs (`fatal == false`: the branch does not assemble, or the module faulted),
+     *  where consensus rejects the block and the miner must not rely on a solution.
+     *  See doc/dynamic-algo-mining.md sec 4, 4.5. */
+    /** Bitmark: the dynamic algo currently active for `slot`, or nullopt if that slot is
+     *  primitive-only. Reads the activation store, so it reflects activations already on
+     *  the chain -- NOT any activation landing in a block still being validated, which
+     *  ConnectBlock handles separately. Intended for the miner and for RPCs. */
+    std::optional<uint256> GetActiveAlgoBranch(int slot) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+    bool ResolveAlgoReward(const CBlockIndex* prev, Algo algo, uint32_t nbits,
+                           const dynamicalgo::BlockSolution& sol,
+                           CAmount subsidy, CAmount fees,
+                           const std::optional<uint256>& branch,
+                           AlgoRewardPlan& out) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
     //! Dictates whether we need to flush the cache to disk or not.
     //!
