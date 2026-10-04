@@ -348,12 +348,121 @@ static RPCHelpMan createstakevotescript()
     };
 }
 
+static RPCHelpMan getalgoreadiness()
+{
+    return RPCHelpMan{
+        "getalgoreadiness",
+        "\nPer-slot miner readiness for the dynamic-algo coinbase obligations.\n"
+        "\n"
+        "Approving an algo for a slot imposes a NEW OBLIGATION on that slot's miners:\n"
+        "every block of the slot must then carry the coinbase outputs the node hands out\n"
+        "in getblocktemplate's `coinbaserequired` -- the dynamic miner's payment, or the\n"
+        "OP_SOLUTIONPOT output holding withheld fees. Only the POOL can add those, since\n"
+        "only the pool builds the coinbase, so a pool running old software produces\n"
+        "INVALID blocks from the moment its slot activates.\n"
+        "\n"
+        "Block nVersion does not answer this: getblocktemplate hands the pool a `version`\n"
+        "field which it copies into the header without interpreting it, so a version-5\n"
+        "block proves the NODE is upgraded and says nothing about the pool. Miners\n"
+        "therefore signal by voluntarily adding a 0-value unspendable readiness marker to\n"
+        "their coinbase (getblocktemplate's `coinbasesignal`), which demonstrates exactly\n"
+        "the capability activation will demand.\n"
+        "\n"
+        "This is EVIDENCE FOR VOTERS, not a consensus gate. Coverage is not a threshold to\n"
+        "clear: a majority of markers does not prove the remainder safe, and their absence\n"
+        "does not prove activation unwise -- a large pool may simply not have bothered.\n"
+        "Deliberately advisory so that no single miner can hold a slot hostage by\n"
+        "declining to signal. Prefer activating slots with broad coverage and low\n"
+        "hashpower concentration; a slot with no active algo is unaffected by any of this.\n",
+        {
+            {"blocks", RPCArg::Type::NUM, RPCArg::Default{800},
+             "How many recent blocks to scan, across all slots. With 8 algos this averages\n"
+             "blocks/8 per slot. Each block is read from disk, so large values are slow."},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "",
+            {
+                {RPCResult::Type::NUM, "from", "First block height scanned"},
+                {RPCResult::Type::NUM, "to", "Last block height scanned (the tip)"},
+                {RPCResult::Type::ARR, "slots", "One entry per mPoW slot", {
+                    {RPCResult::Type::OBJ, "", "", {
+                        {RPCResult::Type::NUM, "slot", "The mPoW slot"},
+                        {RPCResult::Type::STR, "algo", "The slot's proof-of-work algorithm"},
+                        {RPCResult::Type::NUM, "blocks", "The slot's blocks found in the range"},
+                        {RPCResult::Type::NUM, "signalled", "How many of them carried the readiness marker"},
+                        {RPCResult::Type::NUM, "pct", "signalled / blocks, or 0 when the slot produced none"},
+                        {RPCResult::Type::BOOL, "algo_active", "Whether this slot already has a dynamic algo activated (in which case the obligation is live now)"},
+                    }},
+                }},
+            },
+        },
+        RPCExamples{HelpExampleCli("getalgoreadiness", "") + HelpExampleRpc("getalgoreadiness", "2400")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            ChainstateManager& chainman = EnsureAnyChainman(request.context);
+            int span{800};
+            if (!request.params[0].isNull()) {
+                span = request.params[0].getInt<int>();
+                if (span < 1) throw JSONRPCError(RPC_INVALID_PARAMETER, "blocks must be >= 1");
+            }
+
+            LOCK(cs_main);
+            const CChain& chain = chainman.ActiveChain();
+            const CBlockIndex* tip = chain.Tip();
+            if (!tip) throw JSONRPCError(RPC_IN_WARMUP, "no chain yet");
+            const int hi{tip->nHeight};
+            const int lo{std::max(0, hi - span + 1)};
+
+            std::array<int, NUM_ALGOS> blocks{};
+            std::array<int, NUM_ALGOS> signalled{};
+            for (int h = lo; h <= hi; ++h) {
+                const CBlockIndex* pindex = chain[h];
+                if (!pindex) continue;
+                const int a{static_cast<int>(pindex->GetAlgo())};
+                if (a < 0 || a >= NUM_ALGOS) continue;
+                CBlock block;
+                if (!chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) continue;
+                if (block.vtx.empty()) continue;
+                ++blocks[a];
+                // The marker is the UNSPENDABLE form of a solution-pot output: an empty
+                // vSolutions distinguishes it from a real pot carrying withheld fees,
+                // which must not be counted as a signal.
+                for (const CTxOut& o : block.vtx[0]->vout) {
+                    std::vector<std::vector<unsigned char>> sols;
+                    if (Solver(o.scriptPubKey, sols) == TxoutType::SOLUTIONPOT && sols.empty()) {
+                        ++signalled[a];
+                        break;
+                    }
+                }
+            }
+
+            UniValue arr(UniValue::VARR);
+            for (int a = 0; a < NUM_ALGOS; ++a) {
+                UniValue o(UniValue::VOBJ);
+                o.pushKV("slot", a);
+                o.pushKV("algo", ToString(static_cast<Algo>(a)));
+                o.pushKV("blocks", blocks[a]);
+                o.pushKV("signalled", signalled[a]);
+                o.pushKV("pct", blocks[a] > 0 ? (double)signalled[a] / (double)blocks[a] : 0.0);
+                o.pushKV("algo_active",
+                         chainman.ActiveChainstate().GetActiveAlgoBranch(a).has_value());
+                arr.push_back(o);
+            }
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("from", lo);
+            result.pushKV("to", hi);
+            result.pushKV("slots", arr);
+            return result;
+        },
+    };
+}
+
 void RegisterVoteRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
         {"voting", &createfeevotescript},
         {"voting", &createstakevotescript},
         {"voting", &getalgovote},
+        {"voting", &getalgoreadiness},
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);

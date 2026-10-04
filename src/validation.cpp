@@ -2478,7 +2478,7 @@ public:
 // It is active for a block whose PARENT chain already has the supermajority (so a
 // block cannot self-activate). IsSuperMajority masks out the algo/auxpow/variant/
 // chainid bits via GetBlockVersion (& 255).
-static bool DynamicForkActive(const CBlockIndex* pprev, const Consensus::Params& params)
+bool DynamicForkActive(const CBlockIndex* pprev, const Consensus::Params& params)
 {
     // The version-5 dynamic-algo fork requires the supermajority WITHIN EACH actively
     // mined algo (nPushCodeActivationWindow is the per-algo window), so no single algo

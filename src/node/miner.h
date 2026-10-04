@@ -33,6 +33,10 @@ namespace Consensus { struct Params; };
 
 namespace node {
 static const bool DEFAULT_PRINTPRIORITY = false;
+/** Bitmark: default for -signalalgoreadiness (doc/dynamic-algo-mining.md sec 4.5). On,
+ *  because a node mining its own template runs the code that appends the coinbase
+ *  outputs an activated algo requires, so its readiness is a property of its version. */
+static constexpr bool DEFAULT_SIGNAL_ALGO_READINESS{true};
 
 struct CBlockTemplate
 {
@@ -179,6 +183,14 @@ public:
         CFeeRate blockMinFeeRate{DEFAULT_BLOCK_MIN_TX_FEE};
         // Whether to call TestBlockValidity() at the end of CreateNewBlock().
         bool test_block_validity{true};
+        /** Bitmark -signalalgoreadiness: add the voluntary readiness marker to coinbases
+         *  this node builds, while the mined slot has no active algo (doc sec 4.5).
+         *  ON by default: a node mining its own template runs the code that appends the
+         *  outputs an activated algo requires, so its readiness is a property of its
+         *  version and it can assert that itself. Set false by an operator who takes the
+         *  template but rewrites the coinbase with their own tooling. A pool driving GBT
+         *  appends `coinbasesignal` itself and is unaffected either way. */
+        bool signal_algo_readiness{DEFAULT_SIGNAL_ALGO_READINESS};
     };
 
     explicit BlockAssembler(Chainstate& chainstate, const CTxMemPool* mempool);

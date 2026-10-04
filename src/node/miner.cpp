@@ -80,6 +80,8 @@ void ApplyArgsManOptions(const ArgsManager& args, BlockAssembler::Options& optio
     if (const auto blockmintxfee{args.GetArg("-blockmintxfee")}) {
         if (const auto parsed{ParseMoney(*blockmintxfee)}) options.blockMinFeeRate = CFeeRate{*parsed};
     }
+    options.signal_algo_readiness = args.GetBoolArg("-signalalgoreadiness",
+                                                    options.signal_algo_readiness);
 }
 static BlockAssembler::Options ConfiguredOptions()
 {
@@ -250,17 +252,37 @@ void BlockAssembler::resetBlock()
     // the ones that will judge it. The solution is left empty here: selecting a candidate
     // from the mempool is phase 6.7c, so for now the node always builds the no-solution
     // branch, which is valid (just smaller) and is what an unsolved slot looks like.
-    // The voluntary readiness signal (doc sec 4.5), offered to pools but NOT added to the
-    // assembled coinbase: it is opt-in, and a node mining its own template has nothing to
-    // advertise to itself. Offered UNCONDITIONALLY, including while this slot has no
-    // active algo -- that is precisely when it matters, since its purpose is to let
-    // voters see which miners are ready BEFORE approving an algo for the slot. Gating it
-    // on activation would make it useless for the decision it exists to inform.
-    pblocktemplate->readiness_signal.nValue = 0;
-    pblocktemplate->readiness_signal.scriptPubKey = CScript() << OP_RETURN << OP_SOLUTIONPOT;
-
     const std::optional<uint256> active_branch{
         m_chainstate.GetActiveAlgoBranch(static_cast<int>(algo))};
+
+    // The voluntary readiness signal (doc sec 4.5), advertising that this miner's
+    // software can append the coinbase outputs an activated algo will require.
+    //
+    // Only once the dynamic-algo FORK is active and while this slot has NO active algo.
+    // Before the fork no slot can be activated at all, so there is nothing to be ready
+    // for and the marker would be noise in every block ever mined -- including every
+    // block the test fixtures build, whose hashes it would change. After the slot is
+    // activated the obligation is live, so blocks are simply valid or invalid and the
+    // signal says nothing; there is no de-activation path, so it would be permanently
+    // pointless block space.
+    //
+    // Added to the coinbase BY DEFAULT, because a node mining its own template is
+    // running the very code that appends those outputs -- its readiness is a property of
+    // its version, which it can assert on its own authority. Leaving it opt-in would make
+    // coverage systematically under-report and push voters to defer activation
+    // needlessly. This does NOT let the node signal on a pool's behalf: a pool driving
+    // getblocktemplate builds its own coinbase and discards this one, so the marker only
+    // ever rides on blocks the node itself assembles. -signalalgoreadiness=0 opts out,
+    // for an operator who takes the node's template but rewrites the coinbase with their
+    // own tooling and so cannot honestly make the claim.
+    if (!active_branch && DynamicForkActive(pindexPrev, chainparams.GetConsensus())) {
+        pblocktemplate->readiness_signal.nValue = 0;
+        pblocktemplate->readiness_signal.scriptPubKey = CScript() << OP_RETURN << OP_SOLUTIONPOT;
+        if (m_options.signal_algo_readiness) {
+            // Costs nothing: 0-value and OP_RETURN-prefixed, so it never enters the UTXO set.
+            coinbaseTx.vout.push_back(pblocktemplate->readiness_signal);
+        }
+    }
     if (active_branch) {
         // ConnectBlock always prices the reward off the SSF-scaled subsidy, so the plan
         // must be fed the same one or the template is priced against a different S.

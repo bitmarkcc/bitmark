@@ -527,6 +527,13 @@ enum class CoinsCacheSizeState
  * whereas block information and metadata independent of the current tip is
  * kept in `BlockManager`.
  */
+/** Bitmark: is the dynamic-algo soft fork active for a block whose parent is `pprev`?
+ *  Miner-signalled per-algo base-version supermajority (no hardcoded height); a block
+ *  cannot self-activate. Exposed because the miner needs it too: nothing dynamic-algo
+ *  related is meaningful before it, including the voluntary readiness signal. Not cheap
+ *  -- it walks up to 125 blocks of each of the 8 algos -- so call it once per block. */
+bool DynamicForkActive(const CBlockIndex* pprev, const Consensus::Params& params);
+
 /** Bitmark: the dynamic-algo reward obligations for one block context, plus how a
  *  failure to compute them should be treated. See Chainstate::ResolveAlgoReward. */
 struct AlgoRewardPlan {
