@@ -2343,7 +2343,7 @@ int ApplyTxInUndo(Coin&& undo, CCoinsViewCache& view, const COutPoint& out)
 
 /** Undo the effects of this block (with given index) on the UTXO set represented by coins.
  *  When FAILED is returned, view is left in an indeterminate state. */
-DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIndex* pindex, CCoinsViewCache& view)
+DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIndex* pindex, CCoinsViewCache& view, ChainMove move)
 {
     AssertLockHeld(::cs_main);
     bool fClean = true;
@@ -2410,33 +2410,39 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         }
     }
 
-    // Bitmark: undo this block's OP_PUSHCODE code entries. Content-hash
-    // immutability makes this a plain removal (no linked-list un-splicing).
-    // Pre-activation blocks added no entries, so UndoBlock simply skips hashes
-    // it does not find; the empty-hash case still retreats the code-DB best
-    // block to the parent, keeping it in step with the chain tip.
-    if (m_blockman.m_code_db) {
-        if (!m_blockman.m_code_db->UndoBlock(CollectPushCodeHashes(block), pindex->nHeight, pindex->pprev->GetBlockHash())) {
-            error("DisconnectBlock(): failed to undo OP_PUSHCODE entries");
-            return DISCONNECT_FAILED;
-        }
-    }
-
-    // Bitmark: retreat the dynamic-algo activation store by this block -- un-slide the
-    // window and fee sum and restore any per-slot activation this block made (from the
-    // undo record it wrote). Only meaningful once the store has reached this height; if
-    // it never recorded this block (pre-activation), ComputeDisconnect reports the height
-    // mismatch and there is nothing to undo.
-    if (m_blockman.m_activation_db) {
-        dynamicalgo::CActivationState st;
-        if (m_blockman.m_activation_db->ReadState(st) && st.height == pindex->nHeight) {
-            dynamicalgo::CDisconnectWrite w;
-            if (!dynamicalgo::ComputeDisconnect(*m_blockman.m_activation_db,
-                                                AlgoActivationParams(m_chainman.GetConsensus()),
-                                                pindex->nHeight, pindex->pprev->GetBlockHash(), w)
-                || !m_blockman.m_activation_db->ApplyDisconnect(w)) {
-                error("DisconnectBlock(): failed to undo the dynamic-algo activation state");
+    // Bitmark: retreat the consensus side-databases with the tip. Skipped entirely for a
+    // memory-only pass: they are not part of `view`, so discarding the coins cache would
+    // not undo these writes and the stores would be left behind the chain for good (see
+    // ChainMove).
+    if (move == ChainMove::ACTIVE_TIP) {
+        // Undo this block's OP_PUSHCODE code entries. Content-hash immutability makes
+        // this a plain removal (no linked-list un-splicing). Pre-activation blocks added
+        // no entries, so UndoBlock simply skips hashes it does not find; the empty-hash
+        // case still retreats the code-DB best block to the parent, keeping it in step
+        // with the chain tip.
+        if (m_blockman.m_code_db) {
+            if (!m_blockman.m_code_db->UndoBlock(CollectPushCodeHashes(block), pindex->nHeight, pindex->pprev->GetBlockHash())) {
+                error("DisconnectBlock(): failed to undo OP_PUSHCODE entries");
                 return DISCONNECT_FAILED;
+            }
+        }
+
+        // Retreat the dynamic-algo activation store by this block -- un-slide the window
+        // and fee sum and restore any per-slot activation this block made (from the undo
+        // record it wrote). Only meaningful once the store has reached this height; if it
+        // never recorded this block (pre-activation), ComputeDisconnect reports the height
+        // mismatch and there is nothing to undo.
+        if (m_blockman.m_activation_db) {
+            dynamicalgo::CActivationState st;
+            if (m_blockman.m_activation_db->ReadState(st) && st.height == pindex->nHeight) {
+                dynamicalgo::CDisconnectWrite w;
+                if (!dynamicalgo::ComputeDisconnect(*m_blockman.m_activation_db,
+                                                    AlgoActivationParams(m_chainman.GetConsensus()),
+                                                    pindex->nHeight, pindex->pprev->GetBlockHash(), w)
+                    || !m_blockman.m_activation_db->ApplyDisconnect(w)) {
+                    error("DisconnectBlock(): failed to undo the dynamic-algo activation state");
+                    return DISCONNECT_FAILED;
+                }
             }
         }
     }
@@ -3377,7 +3383,7 @@ static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
  *  Validity checks that depend on the UTXO set are also done; ConnectBlock()
  *  can fail if those validity checks fail (among other reasons). */
 bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, CBlockIndex* pindex,
-                               CCoinsViewCache& view, bool fJustCheck)
+                               CCoinsViewCache& view, bool fJustCheck, ChainMove move)
 {
     AssertLockHeld(cs_main);
     assert(pindex);
@@ -3744,18 +3750,26 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // activation -- the window it evaluates ends at height-721 -- so nothing here depends
     // on the store write made further below. The write itself happens only when
     // connecting for real.
+    //
+    // A MEMORY_ONLY pass skips all of this. The activation store sits at the active tip,
+    // not at this block's parent, so the height-adjacency guard below would fire and turn
+    // a harmless re-validation of an old block into a fatal error; and rolling the store
+    // to this height and back is exactly what must not happen (see ChainMove). The
+    // consequence is that `active_branch` stays empty, so the dynamic-algo reward rule is
+    // not re-verified on such a pass -- see the reward block below.
     dynamicalgo::CConnectWrite algo_write;
     bool have_algo_write{false};
     std::optional<uint256> active_branch;
     const bool algo_fork_active{(flags & SCRIPT_VERIFY_PUSHCODE) != 0};
-    if (algo_fork_active && !m_blockman.m_activation_db) {
+    const bool track_activation{move == ChainMove::ACTIVE_TIP};
+    if (algo_fork_active && track_activation && !m_blockman.m_activation_db) {
         return FatalError(m_chainman.GetNotifications(), state,
                           "Dynamic-algo activation database not open");
     }
     // Start tracking at the first block for which the fork is active, and keep tracking
     // every block after that even if the miner-signalled gate later lapses -- the store's
     // running sums are only valid if they advance with the chain without gaps.
-    if (m_blockman.m_activation_db
+    if (track_activation && m_blockman.m_activation_db
         && (algo_fork_active || [&] { dynamicalgo::CActivationState s; return m_blockman.m_activation_db->ReadState(s); }())) {
         dynamicalgo::CActivationDB& adb = *m_blockman.m_activation_db;
         const dynamicalgo::ActivationParams aparams{AlgoActivationParams(params.GetConsensus())};
@@ -3800,7 +3814,17 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // whether to set pot_claim_seen, and this call is what checks that a claim was
     // PERMITTED. Two spellings of one condition could drift into a skipped consensus
     // check, so there is one variable.
-    if (dynamic_active) {
+    //
+    // Not run on a MEMORY_ONLY pass. The split depends on which branch was the slot's
+    // algo AT THIS HEIGHT, and the activation store only holds the active tip's answer --
+    // so re-verifying an old block here could reject a perfectly good one (telling the
+    // operator their block DB is corrupt) whenever an activation landed inside the
+    // verified span. The pass therefore keeps the primitive ceiling S+F, which is never
+    // below the dynamic one, and leaves this rule to the real connect that already
+    // enforced it. The reserve-fee and solution-pot covenants above are pure functions of
+    // the transaction and the UTXO set, so those still run; only the one condition that
+    // needs the block's own solution verdict (pot_claim_seen) goes unchecked with this.
+    if (dynamic_active && move == ChainMove::ACTIVE_TIP) {
         // Bitmark dynamic-algo reward split (doc sec 4, 7). When the block's slot has an
         // active dynamic algo, this runs verify(), sets blockReward to the dynamic
         // ceiling, and enforces the payout floor; otherwise blockReward is unchanged.
@@ -3849,8 +3873,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // dynamic-PoW-algo execution phase assembles the code to run/verify from it,
     // so every node must build identical entries. Kept in step with the chain
     // here and in DisconnectBlock; startup reconciliation (still TODO) is
-    // required before that execution phase ships.
-    if (flags & SCRIPT_VERIFY_PUSHCODE) {
+    // required before that execution phase ships. Like the activation store, skipped on a
+    // MEMORY_ONLY pass -- re-applying old entries would also move the code DB's best
+    // block back to a historical block, which the next startup can only fix by -reindex.
+    if ((flags & SCRIPT_VERIFY_PUSHCODE) && move == ChainMove::ACTIVE_TIP) {
         if (!m_blockman.m_code_db) {
             return FatalError(m_chainman.GetNotifications(), state, "OP_PUSHCODE code DB not open");
         }
@@ -4265,7 +4291,7 @@ bool Chainstate::DisconnectTip(BlockValidationState& state, DisconnectedBlockTra
     {
         CCoinsViewCache view(&CoinsTip());
         assert(view.GetBestBlock() == pindexDelete->GetBlockHash());
-        if (DisconnectBlock(block, pindexDelete, view) != DISCONNECT_OK)
+        if (DisconnectBlock(block, pindexDelete, view, ChainMove::ACTIVE_TIP) != DISCONNECT_OK)
             return error("DisconnectTip(): DisconnectBlock %s failed", pindexDelete->GetBlockHash().ToString());
         bool flushed = view.Flush();
         assert(flushed);
@@ -5973,7 +5999,10 @@ VerifyDBResult CVerifyDB::VerifyDB(
         if (nCheckLevel >= 3) {
             if (curr_coins_usage <= chainstate.m_coinstip_cache_size_bytes) {
                 assert(coins.GetBestBlock() == pindex->GetBlockHash());
-                DisconnectResult res = chainstate.DisconnectBlock(block, pindex, coins);
+                // MEMORY_ONLY: `coins` is a throwaway cache, so this disconnect must not
+                // touch the consensus side-DBs -- the default -checklevel never reconnects
+                // these blocks, which would leave both stores stuck behind the chain.
+                DisconnectResult res = chainstate.DisconnectBlock(block, pindex, coins, ChainMove::MEMORY_ONLY);
                 if (res == DISCONNECT_FAILED) {
                     LogPrintf("Verification error: irrecoverable inconsistency in block data at %d, hash=%s\n", pindex->nHeight, pindex->GetBlockHash().ToString());
                     return VerifyDBResult::CORRUPTED_BLOCK_DB;
@@ -6003,6 +6032,11 @@ VerifyDBResult CVerifyDB::VerifyDB(
 
     // check level 4: try reconnecting blocks
     if (nCheckLevel >= 4 && !skipped_l3_checks) {
+        // Bitmark: this is a coins-DB replay, so it cannot re-verify the dynamic-algo
+        // reward rule -- that needs the activation store as of each block's own height,
+        // and the store only holds the active tip's. Said once rather than per block.
+        LogPrintf("Verification level 4 replays the coin database only; the dynamic-algo "
+                  "reward rule is not re-verified (it was enforced when each block connected).\n");
         while (pindex != chainstate.m_chain.Tip()) {
             const int percentageDone = std::max(1, std::min(99, 100 - (int)(((double)(chainstate.m_chain.Height() - pindex->nHeight)) / (double)nCheckDepth * 50)));
             if (reportDone < percentageDone / 10) {
@@ -6017,7 +6051,7 @@ VerifyDBResult CVerifyDB::VerifyDB(
                 LogPrintf("Verification error: ReadBlockFromDisk failed at %d, hash=%s\n", pindex->nHeight, pindex->GetBlockHash().ToString());
                 return VerifyDBResult::CORRUPTED_BLOCK_DB;
             }
-            if (!chainstate.ConnectBlock(block, state, pindex, coins)) {
+            if (!chainstate.ConnectBlock(block, state, pindex, coins, /*fJustCheck=*/false, ChainMove::MEMORY_ONLY)) {
                 LogPrintf("Verification error: found unconnectable block at %d, hash=%s (%s)\n", pindex->nHeight, pindex->GetBlockHash().ToString(), state.ToString());
                 return VerifyDBResult::CORRUPTED_BLOCK_DB;
             }
@@ -6098,7 +6132,12 @@ bool Chainstate::ReplayBlocks()
                 return error("RollbackBlock(): ReadBlockFromDisk() failed at %d, hash=%s", pindexOld->nHeight, pindexOld->GetBlockHash().ToString());
             }
             LogPrintf("Rolling back %s (%i)\n", pindexOld->GetBlockHash().ToString(), pindexOld->nHeight);
-            DisconnectResult res = DisconnectBlock(block, pindexOld, cache);
+            // MEMORY_ONLY: the coins DB is being brought back to a consistent position
+            // after an interrupted flush. The side-DBs were written synchronously per
+            // block, so they are already at or ahead of wherever this lands; the
+            // ReconcileCodeDB / ReconcileActivationDB pass that runs right after startup
+            // is what puts them back in step with the recovered tip.
+            DisconnectResult res = DisconnectBlock(block, pindexOld, cache, ChainMove::MEMORY_ONLY);
             if (res == DISCONNECT_FAILED) {
                 return error("RollbackBlock(): DisconnectBlock failed at %d, hash=%s", pindexOld->nHeight, pindexOld->GetBlockHash().ToString());
             }

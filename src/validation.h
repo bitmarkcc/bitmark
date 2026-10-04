@@ -459,6 +459,26 @@ enum DisconnectResult
     DISCONNECT_FAILED   // Something else went wrong.
 };
 
+/** Bitmark: whether a ConnectBlock/DisconnectBlock call is moving the ACTIVE chain tip,
+ *  or is a memory-only pass over a throwaway coins view (VerifyDB's level-3 disconnect
+ *  and level-4 reconnect, ReplayBlocks' crash recovery).
+ *
+ *  This matters because the two CONSENSUS SIDE-DATABASES -- the OP_PUSHCODE code DB
+ *  (src/pushcodedb.h) and the dynamic-algo activation store (src/dynamicalgo/activationdb.h)
+ *  -- live OUTSIDE the coins view and are keyed to the active tip. Discarding the coins
+ *  cache therefore does NOT undo a write to them, so a memory-only pass that touched
+ *  them would leave them permanently out of step with the chain, and the next block to
+ *  connect would hit a fatal "store is at height X, cannot connect height Y". Worse, it
+ *  cannot be made safe by pairing a rollback with a re-advance, because a memory-only
+ *  pass can stop part-way at any point (default -checklevel=3 never reconnects at all,
+ *  and an interrupt or a read error returns early). So a MEMORY_ONLY pass must leave
+ *  both stores strictly alone -- their writes AND the tip-adjacency checks that guard
+ *  them -- and the checks that read them are skipped with it. */
+enum class ChainMove {
+    ACTIVE_TIP,  //!< ConnectTip/DisconnectTip (or a candidate for the current tip)
+    MEMORY_ONLY, //!< VerifyDB / ReplayBlocks: the coins view only
+};
+
 class ConnectTrace;
 
 /** @see Chainstate::FlushStateToDisk */
@@ -751,10 +771,14 @@ public:
         LOCKS_EXCLUDED(::cs_main);
 
     // Block (dis)connection on a given view:
-    DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* pindex, CCoinsViewCache& view)
+    //! `move` is deliberately NOT defaulted: a caller must state whether it is moving the
+    //! active tip, because getting it wrong corrupts the consensus side-DBs (see ChainMove).
+    DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* pindex,
+                                     CCoinsViewCache& view, ChainMove move)
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     bool ConnectBlock(const CBlock& block, BlockValidationState& state, CBlockIndex* pindex,
-                      CCoinsViewCache& view, bool fJustCheck = false) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+                      CCoinsViewCache& view, bool fJustCheck = false,
+                      ChainMove move = ChainMove::ACTIVE_TIP) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
     // Apply the effects of a block disconnection on the UTXO set.
     bool DisconnectTip(BlockValidationState& state, DisconnectedBlockTransactions* disconnectpool) EXCLUSIVE_LOCKS_REQUIRED(cs_main, m_mempool->cs);
