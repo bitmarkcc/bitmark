@@ -108,8 +108,18 @@ bool IsStandard(const CScript& scriptPubKey, const std::optional<unsigned>& max_
     } else if (whichType == TxoutType::SOLUTION) {
         // Bitmark: a dynamic-algo solution chunk (unspendable). Standard so solution
         // transactions can propagate over p2p; each chunk is already capped at 520
-        // bytes by Solver(). A per-tx total relay cap (MAX_SOLUTION_BYTES) and a
-        // raised standard-tx-size for large (LLM-scale) solutions come with 6.7.
+        // bytes by Solver(). The per-tx relay cap is MAX_SOLUTION_TX_WEIGHT paired with
+        // MAX_SOLUTION_TX_INPUTS, applied in IsStandardTx below.
+    } else if (whichType == TxoutType::SOLUTIONPOT) {
+        // Bitmark: the per-slot solution pot (doc sec 4.5), in either form -- the
+        // valued spendable <algo> OP_SOLUTIONPOT, or the 0-value unspendable
+        // OP_RETURN OP_SOLUTIONPOT readiness signal.
+        //
+        // The valued form has to be standard because a CONSOLIDATE transaction creates
+        // one and must relay (the coinbase-created pots never relay, but consolidation
+        // is what keeps them from accumulating one UTXO per no-solution block). As with
+        // RESERVEFEE, the template is already validated by Solver() and the algo range
+        // is enforced by the block-connect covenant, so it is standard as-is.
     } else if (whichType == TxoutType::RESERVEFEE) {
         // Bitmark: a spendable hashrate-contingent reserve-fee covenant output. The
         // template is already validated by Solver(); the algo range and the s0
@@ -192,6 +202,13 @@ bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_dat
             // Bitmark: 0-value unspendable data output; exempt from the dust rule
             // like NULL_DATA, but deliberately NOT counted in nDataOut so a solution
             // spanning many chunks is not rejected by the single-OP_RETURN limit.
+        } else if (whichType == TxoutType::SOLUTIONPOT && txout.scriptPubKey.IsUnspendable()) {
+            // Bitmark: the readiness signal (OP_RETURN OP_SOLUTIONPOT) is 0-value and
+            // unspendable, so exempt it from the dust rule as NULL_DATA and SOLUTION
+            // are. Not counted in nDataOut either: it is an independent marker, and a
+            // block's coinbase may legitimately carry it alongside solution chunks.
+            // The VALUED pot form falls through to the dust check below, which is
+            // correct -- it carries real withheld fees, so dust rules apply normally.
         } else if ((whichType == TxoutType::MULTISIG) && (!permit_bare_multisig)) {
             reason = "bare-multisig";
             return false;

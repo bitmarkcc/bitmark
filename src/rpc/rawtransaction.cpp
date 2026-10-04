@@ -558,6 +558,7 @@ static RPCHelpMan decodescript()
         case TxoutType::STAKE_VOTE:
         case TxoutType::SOLUTION:
         case TxoutType::RESERVEFEE:
+        case TxoutType::SOLUTIONPOT:
         case TxoutType::SCRIPTHASH:
         case TxoutType::WITNESS_UNKNOWN:
         case TxoutType::WITNESS_V1_TAPROOT:
@@ -603,6 +604,7 @@ static RPCHelpMan decodescript()
             case TxoutType::STAKE_VOTE:
             case TxoutType::SOLUTION:
             case TxoutType::RESERVEFEE:
+            case TxoutType::SOLUTIONPOT:
             case TxoutType::SCRIPTHASH:
             case TxoutType::WITNESS_UNKNOWN:
             case TxoutType::WITNESS_V0_KEYHASH:

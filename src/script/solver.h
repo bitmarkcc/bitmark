@@ -36,6 +36,15 @@ enum class TxoutType {
     STAKE_VOTE, //!< Bitmark: <lock> OP_CSV OP_DROP OP_VOTE <branch:32> OP_DROP <slot> OP_DROP <payout>, a stake-weighted vote (spendable after lock)
     SOLUTION, //!< Bitmark: OP_RETURN OP_SOLUTION <seq> <chunk>, a dynamic-algo solution chunk (unspendable; coinbase or solution-tx)
     RESERVEFEE, //!< Bitmark: <algo> <s0> <refund_pkh> OP_RESERVEFEE, a spendable hashrate-contingent reserve-fee covenant output
+    //! Bitmark: the per-slot pot holding fees withheld from no-solution blocks, in two forms:
+    //!   <algo> OP_SOLUTIONPOT       the real pot -- SPENDABLE, carries value;
+    //!                               vSolutions = [algo]
+    //!   OP_RETURN OP_SOLUTIONPOT    a miner's VOLUNTARY readiness signal -- 0-value and
+    //!                               unspendable, so it never enters the UTXO set;
+    //!                               vSolutions = [] (empty)
+    //! So a non-empty vSolutions distinguishes a real pot from a signal (equivalently,
+    //! CScript::IsUnspendable() is true only for the signal).
+    SOLUTIONPOT,
 };
 
 /** Get the name of a TxoutType as a string */

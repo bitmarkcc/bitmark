@@ -238,6 +238,58 @@ BOOST_AUTO_TEST_CASE(script_standard_Solver_success)
     s << OP_3 << s0 << refund_pkh << OP_RESERVEFEE << OP_1;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
 
+    // TxoutType::SOLUTIONPOT -- the real pot: <algo> OP_SOLUTIONPOT, SPENDABLE, and a
+    // non-empty vSolutions carrying the algo is what distinguishes it from the signal.
+    s.clear();
+    s << OP_3 << OP_SOLUTIONPOT;                        // algo 3 (OP_3)
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
+    BOOST_CHECK_EQUAL(solutions.size(), 1U);
+    BOOST_CHECK(solutions[0] == std::vector<unsigned char>{3});
+    BOOST_CHECK(!s.IsUnspendable());
+
+    // algo 0 encodes as OP_0, i.e. an empty push -- the pot for slot 0 must still match.
+    s.clear();
+    s << OP_0 << OP_SOLUTIONPOT;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
+    BOOST_CHECK_EQUAL(solutions.size(), 1U);
+    BOOST_CHECK(solutions[0].empty());                  // OP_0 -> empty valtype == algo 0
+
+    // a 1-byte algo push is accepted too
+    s.clear();
+    s << std::vector<unsigned char>{0x07} << OP_SOLUTIONPOT;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
+    BOOST_CHECK(solutions[0] == std::vector<unsigned char>{7});
+
+    // TxoutType::SOLUTIONPOT -- the voluntary readiness signal: OP_RETURN OP_SOLUTIONPOT.
+    // Same type, but UNSPENDABLE with an EMPTY vSolutions, so it never enters the UTXO
+    // set and can never be mistaken for a real pot (doc sec 4.5).
+    s.clear();
+    s << OP_RETURN << OP_SOLUTIONPOT;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
+    BOOST_CHECK(solutions.empty());
+    BOOST_CHECK(s.IsUnspendable());
+
+    // a multi-byte algo push is too wide for the <=1-byte slot index
+    s.clear();
+    s << std::vector<unsigned char>{0x01, 0x02} << OP_SOLUTIONPOT;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // missing the OP_SOLUTIONPOT terminator is not a match, in either form
+    s.clear();
+    s << OP_3;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+    s.clear();
+    s << OP_RETURN << OP_SOLUTION;                      // the chunk opcode, not the pot one
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
+    // trailing data after OP_SOLUTIONPOT is not a match, in either form
+    s.clear();
+    s << OP_3 << OP_SOLUTIONPOT << OP_1;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+    s.clear();
+    s << OP_RETURN << OP_SOLUTIONPOT << OP_1;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
+
     // TxoutType::NONSTANDARD
     s.clear();
     s << OP_9 << OP_ADD << OP_11 << OP_EQUAL;

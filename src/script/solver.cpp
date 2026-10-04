@@ -32,6 +32,7 @@ std::string GetTxnOutputType(TxoutType t)
     case TxoutType::FEE_VOTE: return "fee_vote";
     case TxoutType::STAKE_VOTE: return "stake_vote";
     case TxoutType::SOLUTION: return "solution";
+    case TxoutType::SOLUTIONPOT: return "solutionpot";
     case TxoutType::RESERVEFEE: return "reservefee";
     } // no default case, so the compiler can warn about missing cases
     assert(false);
@@ -301,6 +302,42 @@ static bool MatchReserveFee(const CScript& script, std::vector<valtype>& sols)
     return true;
 }
 
+// Bitmark SOLUTIONPOT: the per-slot pot of fees withheld from no-solution blocks
+// (doc/dynamic-algo-mining.md sec 4.5), in two forms:
+//
+//   <algo> OP_SOLUTIONPOT      the real pot -- SPENDABLE, holds the withheld fees of
+//                              slot <algo>. vSolutions = [algo].
+//   OP_RETURN OP_SOLUTIONPOT   a miner's VOLUNTARY readiness signal -- 0-value, and
+//                              OP_RETURN-prefixed so IsUnspendable() keeps it out of
+//                              the UTXO set rather than leaving a permanent worthless
+//                              entry for every signalling block. vSolutions = [].
+//
+// A non-empty vSolutions therefore means "a real pot". The covenant also checks the
+// value, so a free signal can never satisfy a paid obligation. All spend rules
+// (claim-on-solution / consolidate selection, released amounts, the solution gate) are
+// enforced at block connect, not here.
+static bool MatchSolutionPot(const CScript& script, std::vector<valtype>& sols)
+{
+    sols.clear();
+    CScript::const_iterator it = script.begin();
+    opcodetype opcode;
+    valtype arg;
+    if (!script.GetOp(it, opcode, arg)) return false;
+    if (opcode == OP_RETURN) {                        // readiness signal
+        if (!NextOp(script, it, OP_SOLUTIONPOT)) return false;
+        return it == script.end();                    // sols deliberately left empty
+    }
+    // Real pot: rewind and read the first item as <algo>, which NextNum validates as a
+    // minimal <=1-byte number (so OP_0 / OP_1..OP_16 / a 1-byte push).
+    it = script.begin();
+    valtype algo;
+    if (!NextNum(script, it, 1, algo)) return false;  // <algo>
+    if (!NextOp(script, it, OP_SOLUTIONPOT)) return false;
+    if (it != script.end()) return false;
+    sols.push_back(std::move(algo));
+    return true;
+}
+
 TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned char>>& vSolutionsRet)
 {
     vSolutionsRet.clear();
@@ -386,6 +423,11 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
     if (MatchReserveFee(scriptPubKey, params)) {
         vSolutionsRet = std::move(params);
         return TxoutType::RESERVEFEE;
+    }
+
+    if (MatchSolutionPot(scriptPubKey, params)) {
+        vSolutionsRet = std::move(params);
+        return TxoutType::SOLUTIONPOT;
     }
 
     vSolutionsRet.clear();

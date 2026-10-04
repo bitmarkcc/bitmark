@@ -206,7 +206,8 @@ enum opcodetype
     OP_NOP6 = OP_SOLUTION,
     OP_RESERVEFEE = 0xb6, // Bitmark: hashrate-contingent reserve-fee covenant output
     OP_NOP7 = OP_RESERVEFEE,
-    OP_NOP8 = 0xb7,
+    OP_SOLUTIONPOT = 0xb7, // Bitmark: per-slot pot of fees withheld from no-solution blocks
+    OP_NOP8 = OP_SOLUTIONPOT,
     OP_NOP9 = 0xb8,
     OP_NOP10 = 0xb9,
 
