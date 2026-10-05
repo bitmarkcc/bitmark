@@ -96,6 +96,7 @@ BITCOIN_TESTS =\
   test/dynamicalgo_activation_tests.cpp \
   test/dynamicalgo_reward_tests.cpp \
   test/dynamicalgo_solution_tests.cpp \
+  test/dynamicalgo_verifycache_tests.cpp \
   test/disconnected_transactions.cpp \
   test/flatfile_tests.cpp \
   test/fs_tests.cpp \

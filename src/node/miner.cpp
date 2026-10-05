@@ -298,7 +298,8 @@ void BlockAssembler::resetBlock()
             // either forfeit value or produce an invalid block.
             throw std::runtime_error(strprintf(
                 "CreateNewBlock: cannot resolve the dynamic-algo reward (%s%s)",
-                plan.fatal ? "local fault: " : plan.reject_reason + ": ", plan.err));
+                plan.fail.fatal ? "local fault: " : plan.fail.reject_reason + ": ",
+                plan.fail.err));
         }
         coinbaseTx.vout[0].nValue = plan.split.max_coinbase_value - plan.split.required_pot;
         if (plan.split.required_pot > 0) {

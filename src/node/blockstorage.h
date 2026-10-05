@@ -10,6 +10,7 @@
 #include <dbwrapper.h>
 #include <dynamicalgo/activationdb.h>
 #include <dynamicalgo/modulestore.h>
+#include <dynamicalgo/verifycache.h>
 #include <flatfile.h>
 #include <pushcodedb.h>
 #include <kernel/blockmanager_opts.h>
@@ -305,6 +306,13 @@ public:
     //! per-architecture data -- never consensus, safe to delete, rebuilt on demand.
     //! See src/dynamicalgo/modulestore.h.
     std::unique_ptr<dynamicalgo::ModuleStore> m_module_store GUARDED_BY(::cs_main);
+
+    //! Memoized verify() verdicts (Bitmark). Sibling of m_module_store above: both are
+    //! node-local caches of an expensive derivation, neither is consensus state. Held by
+    //! value and not GUARDED_BY(cs_main) -- it carries its own lock, and a pure-function
+    //! cache needs no initialization order. REQUIRED for an expensive algo to be
+    //! mineable, not an optimization; see src/dynamicalgo/verifycache.h.
+    dynamicalgo::VerifyCache m_verify_cache;
 
     bool WriteBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     bool LoadBlockIndexDB(const std::optional<uint256>& snapshot_blockhash)

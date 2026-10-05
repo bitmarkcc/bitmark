@@ -15,6 +15,7 @@
 #include <deploymentstatus.h>
 #include <dynamicalgo/reward.h>
 #include <dynamicalgo/solution.h>
+#include <dynamicalgo/wasmexec.h>
 #include <kernel/chainparams.h>
 #include <kernel/chainstatemanager_opts.h>
 #include <kernel/cs_main.h> // IWYU pragma: export
@@ -554,19 +555,28 @@ enum class CoinsCacheSizeState
  *  -- it walks up to 125 blocks of each of the 8 algos -- so call it once per block. */
 bool DynamicForkActive(const CBlockIndex* pprev, const Consensus::Params& params);
 
+/** Bitmark: why a dynamic-algo computation could not be completed. `fatal` means a LOCAL
+ *  fault -- the node must stop rather than treat the block as invalid, since another node
+ *  with intact storage would accept it. Otherwise `reject_reason` is the consensus reject
+ *  code and the block really is invalid. */
+struct AlgoFailure {
+    bool fatal{false};
+    std::string reject_reason;
+    std::string err;
+};
+
 /** Bitmark: the dynamic-algo reward obligations for one block context, plus how a
  *  failure to compute them should be treated. See Chainstate::ResolveAlgoReward. */
 struct AlgoRewardPlan {
     dynamicalgo::RewardSplit split;  //!< what the coinbase may claim / must pay / must pot
     bool solution_valid{false};      //!< verify() accepted a solution actually present
-
-    //! Set when ResolveAlgoReward returns false. `fatal` means a LOCAL fault -- the node
-    //! must stop rather than treat the block as invalid, since another node with intact
-    //! storage would accept it. Otherwise `reject_reason` is the consensus reject code
-    //! and the block really is invalid.
-    bool fatal{false};
-    std::string reject_reason;
-    std::string err;
+    //! The verifier's own outputs, kept so a caller that must price the same verdict
+    //! against DIFFERENT amounts can reuse them through dynamicalgo::ComputeRewardSplit
+    //! instead of running the module again (the miner does exactly that: it learns alpha
+    //! per candidate before it knows the block's fees). Both 0 on a primitive-only slot.
+    uint32_t alpha_q32{0};
+    uint32_t beta_q32{0};
+    AlgoFailure fail;                //!< populated when ResolveAlgoReward returns false
 };
 
 class Chainstate
@@ -869,6 +879,27 @@ public:
                            CAmount subsidy, CAmount fees,
                            const std::optional<uint256>& branch,
                            AlgoRewardPlan& out) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+    /** Bitmark: the verify() half of ResolveAlgoReward on its own -- everything up to and
+     *  including running the module, without turning the result into money.
+     *
+     *  Exists because the miner has to ask "what would alpha be?" about each solution
+     *  candidate in the mempool before it knows the block's fees, and the answer does not
+     *  depend on them: alpha and beta come from verify(), which is fed only the anchor,
+     *  the payout, nBits and the solution bytes (doc sec 3). Asking through this instead
+     *  of calling ResolveAlgoReward with placeholder amounts also keeps the verifier run
+     *  REUSABLE -- the miner prices the winning candidate from the result it already has,
+     *  so selecting a solution costs exactly one extra verifier run per candidate.
+     *
+     *  Returns false only for a LOCAL fault (`err` set): unreadable code, no module store,
+     *  a failed compile, an unreadable slot block. A module that faults or runs out of gas
+     *  is NOT a local fault -- it comes back true with `out.ok == false`, which the caller
+     *  interprets (consensus rejects the block; the miner drops the candidate). */
+    bool RunAlgoVerifyForBlock(const CBlockIndex* prev, Algo algo, uint32_t nbits,
+                               const dynamicalgo::BlockSolution& sol,
+                               const uint256& branch,
+                               AlgoVerifyResult& out, AlgoFailure& fail)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
     //! Dictates whether we need to flush the cache to disk or not.
     //!

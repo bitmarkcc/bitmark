@@ -11,6 +11,7 @@
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <consensus/validation.h>
+#include <dynamicalgo/solution.h>
 #include <policy/feerate.h>
 #include <primitives/transaction.h>
 #include <script/interpreter.h>
@@ -148,11 +149,9 @@ bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_dat
     // demand -- see the derivation on the constants in policy.h. The test is the
     // two-byte OP_RETURN OP_SOLUTION prefix rather than Solver(), because this runs
     // before the per-output classification below and must stay trivial; an output
-    // that merely mimics the prefix still fails that classification.
-    const bool carries_solution{std::any_of(tx.vout.begin(), tx.vout.end(), [](const CTxOut& o) {
-        return o.scriptPubKey.size() >= 2 && o.scriptPubKey[0] == OP_RETURN
-               && o.scriptPubKey[1] == OP_SOLUTION;
-    })};
+    // that merely mimics the prefix still fails that classification. Shared with the
+    // miner's candidate scan so relay and selection classify a tx identically.
+    const bool carries_solution{dynamicalgo::HasSolutionOutput(tx)};
     unsigned int sz = GetTransactionWeight(tx);
     if (carries_solution) {
         if (sz > static_cast<unsigned int>(MAX_SOLUTION_TX_WEIGHT)) {

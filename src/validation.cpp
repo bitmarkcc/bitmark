@@ -3165,56 +3165,14 @@ std::optional<uint256> Chainstate::GetActiveAlgoBranch(int slot)
     return act.branch;
 }
 
-bool Chainstate::ResolveAlgoReward(const CBlockIndex* prev, Algo algo, uint32_t nbits,
-                                   const dynamicalgo::BlockSolution& sol,
-                                   CAmount subsidy, CAmount fees,
-                                   const std::optional<uint256>& branch,
-                                   AlgoRewardPlan& out)
+bool Chainstate::RunAlgoVerifyForBlock(const CBlockIndex* prev, Algo algo, uint32_t nbits,
+                                       const dynamicalgo::BlockSolution& sol,
+                                       const uint256& branch,
+                                       AlgoVerifyResult& out, AlgoFailure& fail)
 {
     AssertLockHeld(cs_main);
-    out = AlgoRewardPlan{};
-
-    if (!branch) {
-        // Primitive-only slot: the pre-dynamic ceiling, nothing owed and nothing withheld.
-        out.split.max_coinbase_value = subsidy + fees;
-        return true;
-    }
-
-    // Assemble the slot's algo module (a .wasm) from the OP_PUSHCODE code DB. A branch
-    // the CHAIN says cannot be assembled is block invalidity -- that verdict is a pure
-    // function of the confirmed chain, so every node agrees. UNAVAILABLE is different:
-    // this node could not read code the chain does have (pruned past the keep window, a
-    // damaged block file, no code DB), which says nothing about the block. Rejecting on
-    // that would fork this node off the chain, so it escalates instead.
-    std::vector<unsigned char> wasm;
-    std::string reason;
-    const PushCodeStatus st{AssemblePushCode(*branch, wasm, reason)};
-    if (st == PushCodeStatus::UNAVAILABLE) {
-        out.fatal = true;
-        out.err = "Cannot read the dynamic-algo code for branch " + branch->GetHex() +
-                  " (" + reason + "); it must be retained but is not available here";
-        return false;
-    }
-    if (st != PushCodeStatus::COMPLETE) {
-        out.reject_reason = "dynamic-algo-unavailable";
-        out.err = reason;
-        return false;
-    }
-
-    // The runtime is AOT-only, so execute the compiled form, materializing it the first
-    // time this branch is seen. Unlike assembly, failing here is a LOCAL problem: the
-    // .aot is a per-architecture artifact, so an x86 node succeeding where an ARM node
-    // fails must not decide block validity. See dynamicalgo/modulestore.h.
-    if (!m_blockman.m_module_store) {
-        out.fatal = true;
-        out.err = "Dynamic-algo module store not open";
-        return false;
-    }
-    std::vector<unsigned char> module;
-    if (!m_blockman.m_module_store->GetOrCompile(*branch, wasm, module, out.err)) {
-        out.fatal = true;
-        return false;
-    }
+    out = AlgoVerifyResult{};
+    fail = AlgoFailure{};
 
     // The ANCHOR is the previous block OF THIS SLOT, not the immediate parent (doc sec
     // 2.1bis, 3). seed = Hash256(payout || anchor), so it only changes when the slot
@@ -3235,35 +3193,133 @@ bool Chainstate::ResolveAlgoReward(const CBlockIndex* prev, Algo algo, uint32_t 
     // 94-of-125 per algo across ALL 8 algos, so every slot has >= 94 on-fork blocks
     // before any branch can be active. Assert rather than substitute another hash -- a
     // different anchor would be a silent divergence from the documented seed rule.
+    //
+    // Computed FIRST because it is part of the memoization key below, and a cache hit must
+    // skip everything after it -- reading the code DB, materializing the module, and the
+    // run itself. This walk is at most a handful of block-index steps.
     const CBlockIndex* const anchor_idx{
         (prev && prev->OnFork() && prev->GetAlgo() == algo)
             ? prev
             : CBlockIndex::GetPrevAlgoBlockIndex(prev, algo)};
     const uint256 anchor{Assert(anchor_idx)->GetBlockHash()};
 
+    // verify() is a pure function of these, so a previous verdict for them is still the
+    // verdict (doc sec 8.9). REQUIRED rather than an optimization: a template is rebuilt
+    // every few seconds and runs this twice each time, while one run costs up to ~38 s.
+    const uint256 cache_key{dynamicalgo::VerifyCache::Key(
+        branch, static_cast<uint8_t>(algo), anchor, nbits, sol.payout, sol.bytes)};
+    dynamicalgo::VerifyVerdict cached;
+    if (m_blockman.m_verify_cache.Get(cache_key, cached)) {
+        out.ok = cached.ok;
+        out.solution_valid = cached.solution_valid;
+        out.out_of_gas = cached.out_of_gas;
+        out.alpha_q32 = cached.alpha_q32;
+        out.beta_q32 = cached.beta_q32;
+        // A hit implies a previous run got far enough to produce a verdict, so the branch
+        // did assemble. It still does: `branch` is only ever the slot's ACTIVE algo, and a
+        // branch cannot be active unless its code is on the chain being validated.
+        return true;
+    }
+
+    // Assemble the slot's algo module (a .wasm) from the OP_PUSHCODE code DB. A branch
+    // the CHAIN says cannot be assembled is block invalidity -- that verdict is a pure
+    // function of the confirmed chain, so every node agrees. UNAVAILABLE is different:
+    // this node could not read code the chain does have (pruned past the keep window, a
+    // damaged block file, no code DB), which says nothing about the block. Rejecting on
+    // that would fork this node off the chain, so it escalates instead.
+    std::vector<unsigned char> wasm;
+    std::string reason;
+    const PushCodeStatus st{AssemblePushCode(branch, wasm, reason)};
+    if (st == PushCodeStatus::UNAVAILABLE) {
+        fail.fatal = true;
+        fail.err = "Cannot read the dynamic-algo code for branch " + branch.GetHex() +
+                   " (" + reason + "); it must be retained but is not available here";
+        return false;
+    }
+    if (st != PushCodeStatus::COMPLETE) {
+        fail.reject_reason = "dynamic-algo-unavailable";
+        fail.err = reason;
+        return false;
+    }
+
+    // The runtime is AOT-only, so execute the compiled form, materializing it the first
+    // time this branch is seen. Unlike assembly, failing here is a LOCAL problem: the
+    // .aot is a per-architecture artifact, so an x86 node succeeding where an ARM node
+    // fails must not decide block validity. See dynamicalgo/modulestore.h.
+    if (!m_blockman.m_module_store) {
+        fail.fatal = true;
+        fail.err = "Dynamic-algo module store not open";
+        return false;
+    }
+    std::vector<unsigned char> module;
+    if (!m_blockman.m_module_store->GetOrCompile(branch, wasm, module, fail.err)) {
+        fail.fatal = true;
+        return false;
+    }
+
     // alpha/beta are read even with no solution present, since the no-solution branch
     // needs them (doc sec 3). The slot's previous blocks are not passed in: the module
     // pulls what it needs through the chain.* imports, metered by the I/O budgets.
     const ChainSlotBlockSource slot_blocks{m_blockman, prev, algo};
-    const AlgoVerifyResult vr{RunAlgoVerify(module,
-                                            Span<const unsigned char>{anchor.begin(), anchor.size()},
-                                            sol.payout, nbits, sol.bytes, &slot_blocks)};
-    if (vr.chain_unavailable) {
+    out = RunAlgoVerify(module, Span<const unsigned char>{anchor.begin(), anchor.size()},
+                        sol.payout, nbits, sol.bytes, &slot_blocks);
+    if (out.chain_unavailable) {
         // A block consensus says is inside the window could not be read HERE: local
         // damage, not a property of the block. Same reasoning as an activation-store
         // desync.
-        out.fatal = true;
-        out.err = "Cannot read a dynamic-algo slot block that must be retained: " + vr.error;
+        fail.fatal = true;
+        fail.err = "Cannot read a dynamic-algo slot block that must be retained: " + out.error;
+        return false;
+    }
+    // A module that faulted or ran out of gas is NOT reported as a failure here: it is a
+    // deterministic property of the inputs, so `out.ok == false` is a verdict the caller
+    // acts on, not something this node got wrong. Consensus rejects the block;
+    // the miner drops the candidate.
+    //
+    // Which is also why a FAILED run is cached like a successful one: "this solution does
+    // not verify" is as much a function of the inputs as "it does", and it is the answer
+    // an attacker would most like to make us recompute (doc sec 2.1quater). Only
+    // chain_unavailable is excluded, handled above -- that one is about this node's disk,
+    // not the inputs, so caching it would make a transient local fault permanent.
+    m_blockman.m_verify_cache.Put(cache_key, dynamicalgo::VerifyVerdict{
+                                                 .ok = out.ok,
+                                                 .solution_valid = out.solution_valid,
+                                                 .out_of_gas = out.out_of_gas,
+                                                 .alpha_q32 = out.alpha_q32,
+                                                 .beta_q32 = out.beta_q32,
+                                             });
+    return true;
+}
+
+bool Chainstate::ResolveAlgoReward(const CBlockIndex* prev, Algo algo, uint32_t nbits,
+                                   const dynamicalgo::BlockSolution& sol,
+                                   CAmount subsidy, CAmount fees,
+                                   const std::optional<uint256>& branch,
+                                   AlgoRewardPlan& out)
+{
+    AssertLockHeld(cs_main);
+    out = AlgoRewardPlan{};
+
+    if (!branch) {
+        // Primitive-only slot: the pre-dynamic ceiling, nothing owed and nothing withheld.
+        out.split.max_coinbase_value = subsidy + fees;
+        return true;
+    }
+
+    AlgoVerifyResult vr;
+    if (!RunAlgoVerifyForBlock(prev, algo, nbits, sol, *branch, vr, out.fail)) {
         return false;
     }
     if (!vr.ok) {
-        out.reject_reason = vr.out_of_gas ? "dynamic-algo-out-of-gas" : "dynamic-algo-fault";
-        out.err = vr.error;
+        out.fail.reject_reason = vr.out_of_gas ? "dynamic-algo-out-of-gas" : "dynamic-algo-fault";
+        out.fail.err = vr.error;
         return false;
     }
 
     // alpha/beta are Q32 u32, so 0 <= alpha,beta < 1 is automatic (doc sec 3): no check.
     // A valid dynamic solution requires both verify()==0 and actual solution outputs.
+    out.alpha_q32 = vr.alpha_q32;
+    out.beta_q32 = vr.beta_q32;
     out.solution_valid = vr.solution_valid && sol.found;
     out.split = dynamicalgo::ComputeRewardSplit(subsidy, fees, vr.alpha_q32, vr.beta_q32,
                                                 out.solution_valid);
@@ -3334,10 +3390,11 @@ static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
     AlgoRewardPlan plan;
     if (!chainstate.ResolveAlgoReward(pindex->pprev, pindex->GetAlgo(), block.nBits, sol,
                                       subsidy, fees, branch, plan)) {
-        if (plan.fatal) {
-            return FatalError(chainstate.m_chainman.GetNotifications(), state, plan.err);
+        if (plan.fail.fatal) {
+            return FatalError(chainstate.m_chainman.GetNotifications(), state, plan.fail.err);
         }
-        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, plan.reject_reason, plan.err);
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, plan.fail.reject_reason,
+                             plan.fail.err);
     }
     const bool valid{plan.solution_valid};
     const dynamicalgo::RewardSplit& split{plan.split};

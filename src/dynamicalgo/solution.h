@@ -10,6 +10,7 @@
 #include <vector>
 
 class CBlock;
+class CTransaction;
 
 // Dynamic-algo solution assembly (doc/dynamic-algo-mining.md sec 2.1, 2.2 and sec 7
 // step 3). A block's solution is carried by a set of self-marking outputs
@@ -43,6 +44,13 @@ struct BlockSolution {
 //! outputs are malformed as a set: split across more than one tx, or a non-contiguous /
 //! duplicated seq. Returns true with out.found == false when there are none.
 bool ExtractBlockSolution(const CBlock& block, BlockSolution& out, std::string& error);
+
+//! Cheap test for "this transaction carries at least one OP_SOLUTION output", for callers
+//! that must classify every transaction they see rather than parse a solution. Matches the
+//! two-byte OP_RETURN OP_SOLUTION prefix directly instead of running Solver() per output:
+//! a hit is rare, and the full parse above is only worth paying for once a tx is known to
+//! carry one. A tx this returns true for may still be malformed as a solution.
+bool HasSolutionOutput(const CTransaction& tx);
 
 } // namespace dynamicalgo
 

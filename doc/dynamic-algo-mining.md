@@ -244,16 +244,34 @@ the budget. The budget is **candidate runs per slot per anchor epoch** (~16 min,
 §2.1bis), set by an explicit node option with a small default and raisable by a pool
 with CPU to spare:
 
-| per slot, per anchor epoch | runs |
+| per slot being mined, per anchor epoch | runs |
 | --- | --- |
-| empty-solution α₀, β₀ | 1, memoized for the whole epoch |
+| empty-solution α₀, β₀ | 1, memoized for the epoch |
 | candidates tried | ≤ `budget` |
 | every later template rebuild (~190 of them) | **0** — all cache hits |
 
 Worst case `(1 + budget)` runs per slot per epoch, independent of polling. At the ~38 s
 worst case with `budget = 1` that is ~76 s per 16 min, ~8% of a core per slot; at the LLM
-trunk's real ~1.5 s it is negligible. The single α₀/β₀ run is irreducible — it is the
-same work consensus does to validate one block of that slot.
+trunk's real ~1.5 s it is negligible. The single α₀/β₀ run is irreducible — it is the same
+work consensus does to validate one block of that slot.
+
+This holds because `nbits` is part of the memoization key (§8.9) and the per-algo retarget
+is epoch-stable: everything `DarkGravityWave` feeds into the target comes from the slot's
+OWN chain — the 25-block difficulty average, those blocks' median times, and the
+run-length terms, none of which a block of another algo at the tip disturbs. The one
+parent-dependent term, `time_since_last_algo` (`pow.cpp`), is inert below 9600 s, i.e.
+until the slot has gone 160 minutes — 10× its target interval — without a block.
+
+That also answers the question `nbits` raises for a *solution*, not just for the cache:
+since the target does not move within an epoch, a solution stays valid for the whole
+~16-minute window §2.1bis promises. When the 160-minute starvation retarget does fire it
+moves the target **easier** (`nActualTimespan` is scaled up, so the target grows), and
+work already done still satisfies an easier target. The sharp edge is that crossing the
+threshold also switches the base from the 25-block average to the algo's last `nBits`,
+which is *harder* if that algo's difficulty had been rising — rising difficulty plus 160
+minutes of starvation is nearly self-contradictory, but it is not impossible, so a
+dynamic miner aiming at the current target has no absolute guarantee across that one
+transition.
 
 **2. Memoize `verify()` by CONTENT (§8.9).** The cache is what keeps the budget from
 being spent re-deciding something already decided, and it must be keyed on
@@ -1547,10 +1565,18 @@ Being a pure-function cache it can never change a verdict — only skip recomput
 so unlike the activation store it carries no divergence risk if it is cold, dropped or
 sized differently from node to node.
 
-Consequences once it is in place: steady-state template construction does **zero**
-verifier runs; a block that arrives after we templated against the same solution
+Consequences once it is in place: every template rebuilt against the same tip does
+**zero** verifier runs; a block that arrives after we templated against the same solution
 validates without running the module; and the no-solution branch's second run (§7 step 4)
 is a hit rather than a recomputation.
+
+`nbits` is in the key because `verify()` takes it, and that costs nothing in practice: the
+per-algo retarget is epoch-stable (§2.1quater), so entries for a slot survive until that
+slot produces a block — which starts a new epoch and a new anchor anyway.
+
+A failed run is cached exactly like a successful one — "this does not verify" is as much a
+function of the inputs as "it does", and it is the answer an attacker would most like to
+make a node recompute. `chain_unavailable` is the sole exclusion.
 
 ---
 

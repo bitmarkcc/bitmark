@@ -63,4 +63,15 @@ bool ExtractBlockSolution(const CBlock& block, BlockSolution& out, std::string& 
     return true;
 }
 
+bool HasSolutionOutput(const CTransaction& tx)
+{
+    for (const CTxOut& o : tx.vout) {
+        if (o.scriptPubKey.size() >= 2 && o.scriptPubKey[0] == OP_RETURN
+            && o.scriptPubKey[1] == OP_SOLUTION) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace dynamicalgo
