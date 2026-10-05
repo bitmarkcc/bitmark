@@ -3063,25 +3063,6 @@ static dynamicalgo::CBlockVotes CollectBlockVotes(const CBlock& block, const CBl
     return out;
 }
 
-// Bitmark: the dynamic algo active for mPoW `slot` at the block being connected. The
-// per-slot activation store (dynamicalgo/activationdb.h) holds the state as of the
-// parent, but a block that itself activates this slot must already use the NEW branch --
-// the activation height IS the first height the branch is used -- so an activation
-// computed for this very block takes precedence over the stored value. Returns nullopt
-// when the slot is primitive-only (no algo voted in, or a voided activation).
-static std::optional<uint256> ActiveAlgoBranch(const dynamicalgo::CActivationDB& db, int slot,
-                                               const std::vector<dynamicalgo::CSlotEntry>& pending)
-{
-    for (const dynamicalgo::CSlotEntry& e : pending) {
-        if (static_cast<int>(e.slot) != slot) continue;
-        if (e.act.IsActive()) return e.act.branch;
-        return std::nullopt;
-    }
-    dynamicalgo::CSlotActivation act;
-    if (db.ReadSlot(slot, act) && act.IsActive()) return act.branch;
-    return std::nullopt;
-}
-
 namespace {
 //! Serves a verifier module its own mPoW slot's previous blocks through the chain.*
 //! imports (doc sec 2.5, 3). The window is this block's parent chain restricted to
@@ -3165,6 +3146,25 @@ std::optional<uint256> Chainstate::GetActiveAlgoBranch(int slot)
     return act.branch;
 }
 
+const CBlockIndex* AlgoSeedAnchor(const CBlockIndex* prev, Algo algo)
+{
+    if (prev && prev->OnFork() && prev->GetAlgo() == algo) return prev;
+    return CBlockIndex::GetPrevAlgoBlockIndex(prev, algo);
+}
+
+bool Chainstate::PeekAlgoVerify(const CBlockIndex* prev, Algo algo, uint32_t nbits,
+                                const dynamicalgo::BlockSolution& sol, const uint256& branch,
+                                dynamicalgo::VerifyVerdict& out)
+{
+    AssertLockHeld(cs_main);
+    const CBlockIndex* const anchor_idx{AlgoSeedAnchor(prev, algo)};
+    if (!anchor_idx) return false;
+    return m_blockman.m_verify_cache.Get(
+        dynamicalgo::VerifyCache::Key(branch, static_cast<uint8_t>(algo),
+                                      anchor_idx->GetBlockHash(), nbits, sol.payout, sol.bytes),
+        out);
+}
+
 bool Chainstate::RunAlgoVerifyForBlock(const CBlockIndex* prev, Algo algo, uint32_t nbits,
                                        const dynamicalgo::BlockSolution& sol,
                                        const uint256& branch,
@@ -3174,34 +3174,14 @@ bool Chainstate::RunAlgoVerifyForBlock(const CBlockIndex* prev, Algo algo, uint3
     out = AlgoVerifyResult{};
     fail = AlgoFailure{};
 
-    // The ANCHOR is the previous block OF THIS SLOT, not the immediate parent (doc sec
-    // 2.1bis, 3). seed = Hash256(payout || anchor), so it only changes when the slot
-    // produces a block -- ~16 minutes with 8 algos rather than 120 seconds, which is what
-    // gives a dynamic miner a workable window. Replay-safe because the branch verified is
-    // the block's OWN slot's: a slot-k solution can only pay in a slot-k block, and
-    // between two slot-k blocks there is exactly one "next" one.
-    //
-    // Derived from `prev` + `algo` HERE so consensus and the miner cannot disagree:
-    // GetPrevAlgoBlockIndex starts at its argument's pprev, so consensus passing the new
-    // block and a miner passing the tip would otherwise anchor to different blocks. The
-    // equivalent of consensus's old GetPrevAlgoBlockIndex(pindex) is "the first same-algo
-    // block at or below prev", which is what this computes.
-    //
-    // A same-slot predecessor always exists, so there is no fallback to get wrong:
-    // nVersion < 4 is invalid once DERSIG is active, so testnet's rolling OnFork() gate
-    // cannot lapse and mainnet/regtest gate on height; and DynamicForkActive needs
-    // 94-of-125 per algo across ALL 8 algos, so every slot has >= 94 on-fork blocks
-    // before any branch can be active. Assert rather than substitute another hash -- a
-    // different anchor would be a silent divergence from the documented seed rule.
+    // Replay-safe because the branch verified is the block's OWN slot's: a slot-k solution
+    // can only pay in a slot-k block, and between two slot-k blocks there is exactly one
+    // "next" one (doc sec 2.1bis).
     //
     // Computed FIRST because it is part of the memoization key below, and a cache hit must
     // skip everything after it -- reading the code DB, materializing the module, and the
     // run itself. This walk is at most a handful of block-index steps.
-    const CBlockIndex* const anchor_idx{
-        (prev && prev->OnFork() && prev->GetAlgo() == algo)
-            ? prev
-            : CBlockIndex::GetPrevAlgoBlockIndex(prev, algo)};
-    const uint256 anchor{Assert(anchor_idx)->GetBlockHash()};
+    const uint256 anchor{Assert(AlgoSeedAnchor(prev, algo))->GetBlockHash()};
 
     // verify() is a pure function of these, so a previous verdict for them is still the
     // verdict (doc sec 8.9). REQUIRED rather than an optimization: a template is rebuilt
@@ -3310,18 +3290,53 @@ bool Chainstate::ResolveAlgoReward(const CBlockIndex* prev, Algo algo, uint32_t 
     if (!RunAlgoVerifyForBlock(prev, algo, nbits, sol, *branch, vr, out.fail)) {
         return false;
     }
-    if (!vr.ok) {
-        out.fail.reject_reason = vr.out_of_gas ? "dynamic-algo-out-of-gas" : "dynamic-algo-fault";
-        out.fail.err = vr.error;
-        return false;
+
+    if (!vr.ok && sol.found) {
+        // The module faulted or exhausted a gas class on THIS block's solution. That is
+        // NOT block invalidity (doc sec 7 step 4): the block merely has no valid solution
+        // and is priced on the no-solution branch, exactly as if it carried none. Making
+        // it invalid instead would turn any relayed solution tx into a landmine for every
+        // miner doing ordinary feerate selection (doc sec 2.1quater).
+        //
+        // alpha/beta have to come from a run that COMPLETED, because a trap may never have
+        // written out_ab. Re-run with an empty solution -- the same input a block carrying
+        // no solution is priced from, so the two cases agree by construction. That
+        // agreement is the point: the attacker chooses the solution bytes, hence whether
+        // the module faults, so pricing a fault any worse than a plain no-solution block
+        // would hand them a way to make a block pay its miner less by getting one garbage
+        // tx mined ahead of the real solution. This is the only path on which a block
+        // costs two verifier runs, and the second is normally a cache hit (doc sec 8.9).
+        LogPrint(BCLog::VALIDATION,
+                 "dynamic algo: block solution did not verify (%s); pricing the "
+                 "no-solution branch\n", vr.error);
+        const dynamicalgo::BlockSolution empty{};
+        if (!RunAlgoVerifyForBlock(prev, algo, nbits, empty, *branch, vr, out.fail)) {
+            return false;
+        }
     }
 
-    // alpha/beta are Q32 u32, so 0 <= alpha,beta < 1 is automatic (doc sec 3): no check.
-    // A valid dynamic solution requires both verify()==0 and actual solution outputs.
-    out.alpha_q32 = vr.alpha_q32;
-    out.beta_q32 = vr.beta_q32;
+    if (!vr.ok) {
+        // The algo faults even on an EMPTY solution, so it cannot state its own alpha and
+        // beta. Unlike the case above, this input is not attacker-supplied -- it means the
+        // module itself is broken. Treat both as zero rather than rejecting: zero is
+        // deterministic, keeps the ceiling at or below the old-node one (T = 0, so the
+        // coinbase emits no subsidy and owes every fee to the pot), and leaves the slot's
+        // blocks VALID. Rejecting would make every block of the slot invalid -- a halt for
+        // that slot and wasted work for its miners. This way the slot simply pays nobody,
+        // which no one will mine and which voters can de-activate.
+        LogPrintf("Dynamic algo for slot %d faults on an empty solution (%s); pricing "
+                  "alpha=beta=0\n", static_cast<int>(algo), vr.error);
+        out.alpha_q32 = 0;
+        out.beta_q32 = 0;
+    } else {
+        // alpha/beta are Q32 u32, so 0 <= alpha,beta < 1 is automatic (doc sec 3).
+        out.alpha_q32 = vr.alpha_q32;
+        out.beta_q32 = vr.beta_q32;
+    }
+    // A valid dynamic solution requires both verify()==0 and actual solution outputs. On
+    // the fall-through above `vr` is the empty-solution run, whose verify() never returns 0.
     out.solution_valid = vr.solution_valid && sol.found;
-    out.split = dynamicalgo::ComputeRewardSplit(subsidy, fees, vr.alpha_q32, vr.beta_q32,
+    out.split = dynamicalgo::ComputeRewardSplit(subsidy, fees, out.alpha_q32, out.beta_q32,
                                                 out.solution_valid);
     return true;
 }
@@ -3376,12 +3391,17 @@ static bool CheckDynamicAlgoReward(Chainstate& chainstate, const CBlock& block,
         return CheckCoinbasePot(block, static_cast<int>(pindex->GetAlgo()), /*required=*/0, state);
     }
 
-    // Collect the block's OP_SOLUTION outputs: seq=0 is the payout scriptPubKey,
-    // seq=1..N-1 concatenated is the solution fed to verify() (doc sec 2.1).
+    // Read the block's solution from the FIRST solution-bearing tx: seq=0 is the payout
+    // scriptPubKey, seq=1..N-1 concatenated is the solution fed to verify() (doc sec 2.1,
+    // sec 7 step 3). Later solution-bearing txs are ignored, and malformed data just means
+    // "no solution" -- so this cannot fail, and there is no reject path to get wrong.
     dynamicalgo::BlockSolution sol;
-    std::string serr;
-    if (!dynamicalgo::ExtractBlockSolution(block, sol, serr)) {
-        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-solution", serr);
+    std::string why_not;
+    dynamicalgo::ExtractBlockSolution(block, sol, why_not);
+    if (!why_not.empty()) {
+        LogPrint(BCLog::VALIDATION, "dynamic algo: block %s carries malformed solution "
+                                    "data (%s); treating it as no solution\n",
+                 pindex->GetBlockHash().ToString(), why_not);
     }
 
     // The obligations themselves come from the SHARED resolver, which the miner also
@@ -3800,13 +3820,15 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
              Ticks<MillisecondsDouble>(time_connect) / num_blocks_total);
 
     // Bitmark: resolve this block's dynamic-algo activation (doc dynamic-algo-voting.md
-    // sec "Activation"). Computed HERE, before the reward check, because an activation
-    // landing at this height takes effect for this very block, and because it must be
-    // computed under fJustCheck too so validity never depends on whether we are actually
-    // connecting. This is sound: a block's own votes and fees cannot affect its own
-    // activation -- the window it evaluates ends at height-721 -- so nothing here depends
-    // on the store write made further below. The write itself happens only when
-    // connecting for real.
+    // sec "Activation"). Computed under fJustCheck too, so validity never depends on
+    // whether we are actually connecting; the store write itself happens only when
+    // connecting for real, further below. A block's own votes and fees cannot affect its
+    // own activation -- the window it evaluates ends at height-721 -- so nothing computed
+    // here depends on that write.
+    //
+    // An activation landing at THIS height does not apply to this block:
+    // which algo a slot runs is read from the store, i.e. the parent's state (see the
+    // active-branch read below).
     //
     // A MEMORY_ONLY pass skips all of this. The activation store sits at the active tip,
     // not at this block's parent, so the height-adjacency guard below would fire and turn
@@ -3859,7 +3881,21 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                               ". If this persists, restart with -reindex");
         }
         have_algo_write = true;
-        active_branch = ActiveAlgoBranch(adb, static_cast<int>(pindex->GetAlgo()), algo_write.slot_updates);
+        // Which algo this block's slot runs is evaluated on the PARENT chain, so a block
+        // never uses an activation that lands at its own height (doc sec 7). The store
+        // still reflects the parent here -- algo_write is applied further below, only when
+        // actually connecting -- so this plain read is that evaluation.
+        //
+        // Deliberately the SAME call the miner makes. An earlier version let an activation
+        // landing at this height take effect for this very block, on the reasoning that the
+        // activation height should be the first height the branch is used. That cannot
+        // work: the miner builds its template from the store, which does not yet hold the
+        // pending update, so it would price the block primitively and consensus would
+        // reject it -- the activating slot could not produce the block at its own
+        // activation height. Rather than duplicate the activation resolver in the miner to
+        // predict it, the branch simply takes effect from the NEXT block, which is what
+        // "evaluated on the parent chain" meant all along.
+        active_branch = GetActiveAlgoBranch(static_cast<int>(pindex->GetAlgo()));
     }
 
     // SSF-scaled subsidy (scale defaults true), i.e. S in the reward math (doc sec 4).

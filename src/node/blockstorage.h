@@ -10,6 +10,7 @@
 #include <dbwrapper.h>
 #include <dynamicalgo/activationdb.h>
 #include <dynamicalgo/modulestore.h>
+#include <dynamicalgo/selection.h>
 #include <dynamicalgo/verifycache.h>
 #include <flatfile.h>
 #include <pushcodedb.h>
@@ -313,6 +314,12 @@ public:
     //! cache needs no initialization order. REQUIRED for an expensive algo to be
     //! mineable, not an optimization; see src/dynamicalgo/verifycache.h.
     dynamicalgo::VerifyCache m_verify_cache;
+
+    //! Per-slot budget for verifying mempool solution candidates (Bitmark). Lives here,
+    //! next to the cache it works with, because it has to outlive a single template: the
+    //! bound is per anchor epoch, not per template (see dynamicalgo/selection.h). Miner
+    //! state, never consulted by consensus.
+    dynamicalgo::CandidateBudget m_candidate_budget;
 
     bool WriteBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     bool LoadBlockIndexDB(const std::optional<uint256>& snapshot_blockhash)

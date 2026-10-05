@@ -220,6 +220,7 @@ BITCOIN_CORE_H = \
   dynamicalgo/gasclasses.h \
   dynamicalgo/modulestore.h \
   dynamicalgo/reward.h \
+  dynamicalgo/selection.h \
   dynamicalgo/solution.h \
   dynamicalgo/verifycache.h \
   dynamicalgo/wasmexec.h \
@@ -542,6 +543,7 @@ libbitcoin_node_a_SOURCES = \
   dynamicalgo/modulestore.cpp \
   dynamicalgo/algovote.cpp \
   dynamicalgo/reward.cpp \
+  dynamicalgo/selection.cpp \
   dynamicalgo/verifycache.cpp \
   dynamicalgo/wasmexec.cpp \
   validation.cpp \
@@ -1077,6 +1079,7 @@ libbitcoinkernel_la_SOURCES = \
   dynamicalgo/modulestore.cpp \
   dynamicalgo/algovote.cpp \
   dynamicalgo/reward.cpp \
+  dynamicalgo/selection.cpp \
   dynamicalgo/solution.cpp \
   dynamicalgo/verifycache.cpp \
   dynamicalgo/wasmexec.cpp \

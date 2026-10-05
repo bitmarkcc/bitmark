@@ -146,10 +146,17 @@ Definitions (slot S):
     Ftot >= fee_floor  (fee_floor computed from the year ending at f-1).
 - The active algo for slot S = the branch b of the LATEST anchored window (largest
   f, searched over the last MAX_PUSHCODE_DEPTH blocks) that b wins AND whose first
-  block f carries a vote for b. Its ACTIVATION BLOCK (the first height b is used as
-  slot S's dynamic algo) is:
+  block f carries a vote for b. Its ACTIVATION BLOCK -- the height at which the
+  activation is DECIDED and recorded in the store -- is:
     activation = (f + VOTING_PERIOD - 1) + ACTIVATION_DELAY + 1
   i.e. the window's last block + 720 + 1.
+- b is first USED one block later, at `activation + 1`. Which algo a slot runs is
+  evaluated on a block's PARENT chain, so the block that records the activation is
+  itself still judged primitively. That is not a nicety: the miner builds its template
+  from the same store, which cannot yet hold a write that happens as part of connecting
+  the block being built, so any other rule would have the activating slot unable to
+  produce the block at its own activation height. `getalgovote` reports both, as
+  `activation_block` and `enforced_from`; `enforced_from` is the number a miner needs.
 - ACTIVATION_DELAY = 720 blocks after the window, during which VOTES DO NOT MATTER
   (a reorg buffer and lead time for nodes/miners to prepare). A later anchored win
   (re-vote) supersedes the earlier active algo. If none, the slot keeps its current
@@ -223,7 +230,8 @@ latest anchored winning window and return:
       "candidates": [ { "branch","fee_weight","fee_pct","stake_weight","stake_pct",
                         "assemblable" } ... ],           // for the reported window
       "winner": "<hash>" | null,                          // latest anchored win
-      "activation_block": (f+VOTING_PERIOD-1) + 720 + 1 | null
+      "activation_block": (f+VOTING_PERIOD-1) + 720 + 1 | null,  // decided/recorded
+      "enforced_from": activation_block + 1 | null        // first block that must comply
     }
 The reported window is the winning one, else the latest vote-anchored complete
 window (for diagnostics). Needs spent-input values for fees (reads CBlockUndo);

@@ -6,6 +6,7 @@
 #ifndef BITCOIN_NODE_MINER_H
 #define BITCOIN_NODE_MINER_H
 
+#include <dynamicalgo/solution.h>
 #include <policy/policy.h>
 #include <primitives/block.h>
 #include <txmempool.h>
@@ -37,6 +38,15 @@ static const bool DEFAULT_PRINTPRIORITY = false;
  *  because a node mining its own template runs the code that appends the coinbase
  *  outputs an activated algo requires, so its readiness is a property of its version. */
 static constexpr bool DEFAULT_SIGNAL_ALGO_READINESS{true};
+
+/** Bitmark: default for -maxsolutionverify, the number of mempool solution candidates a
+ *  template may run verify() on per slot per ANCHOR EPOCH (~16 min, doc sec 2.1quater
+ *  rule 1). One run costs up to ~38 s (doc sec 8.6) and anyone may publish candidates, so
+ *  this is the node's exposure to judging them. One is enough for the honest case -- a
+ *  dynamic miner broadcasts one solution per epoch -- and a pool with CPU to spare can
+ *  raise it to work through rivals faster. Zero disables candidate verification, which
+ *  means never mining a solution and always taking the no-solution branch. */
+static constexpr int DEFAULT_MAX_SOLUTION_VERIFY{1};
 
 struct CBlockTemplate
 {
@@ -172,6 +182,30 @@ private:
     int nHeight;
     int64_t m_lock_time_cutoff;
 
+    /** Bitmark: mempool transactions this template must NOT contain (doc sec 2.1quater).
+     *  Only ever solution-bearing txs whose solution is UNJUDGED -- either the per-epoch
+     *  verification budget ran out, or a verified-valid candidate was not the one chosen
+     *  and no other was. Both would be a hazard if they landed first among the block's
+     *  solution-bearing txs: an unjudged solution might verify, and a verified-valid one
+     *  certainly does, either way obliging a coinbase payment of alpha*r that this
+     *  template did not price. Note what is deliberately ABSENT: a candidate verified and
+     *  found NOT to verify is mined like any other tx, for its fee, which is what makes
+     *  publishing garbage cost its author something.
+     *  Checked in TestPackageTransactions, so a package containing one is skipped whole
+     *  and the exclusion covers in-block descendants for free. */
+    std::unordered_set<Txid, SaltedTxidHasher> m_exclude;
+
+    /** Bitmark: the mempool solution this template will mine, if any (doc sec 2.1quater).
+     *  `alpha_q32`/`beta_q32` come from the verifier run that judged it, so pricing the
+     *  coinbase needs no further run. */
+    struct SolutionChoice {
+        bool have{false};
+        CTxMemPool::txiter iter;
+        dynamicalgo::BlockSolution sol;
+        uint32_t alpha_q32{0};
+        uint32_t beta_q32{0};
+    };
+
     const CChainParams& chainparams;
     const CTxMemPool* const m_mempool;
     Chainstate& m_chainstate;
@@ -191,6 +225,9 @@ public:
          *  template but rewrites the coinbase with their own tooling. A pool driving GBT
          *  appends `coinbasesignal` itself and is unaffected either way. */
         bool signal_algo_readiness{DEFAULT_SIGNAL_ALGO_READINESS};
+        /** Bitmark -maxsolutionverify: candidate verifier runs per slot per anchor epoch
+         *  (doc sec 2.1quater). See DEFAULT_MAX_SOLUTION_VERIFY. */
+        int max_solution_verify{DEFAULT_MAX_SOLUTION_VERIFY};
     };
 
     explicit BlockAssembler(Chainstate& chainstate, const CTxMemPool* mempool);
@@ -229,6 +266,34 @@ private:
     bool TestPackageTransactions(const CTxMemPool::setEntries& package) const;
     /** Sort the package in an order that is valid to appear in a block */
     void SortForBlock(const CTxMemPool::setEntries& package, std::vector<CTxMemPool::txiter>& sortedEntries);
+
+    /** Bitmark: choose which mempool solution this block will mine, and record in
+     *  m_exclude the candidates that must be kept out (doc sec 2.1quater).
+     *
+     *  Candidates are tried in descending declared feerate. That ordering is sound only
+     *  because a losing candidate is still mined for its fee, so a high declared fee is a
+     *  real bid rather than a free bluff. Verdicts are memoized by CONTENT (doc sec 8.9),
+     *  so a candidate already judged this epoch costs nothing and a malleated copy of it
+     *  is not a new question; only genuinely new content draws on the per-epoch budget.
+     *
+     *  Among candidates that verify, the winner is the one leaving the miner the largest
+     *  share, (1 - alpha). A candidate is taken only if that beats T = beta*(1-alpha0),
+     *  what this block would keep with no solution at all -- a scale-free comparison, so
+     *  it needs no estimate of the block's eventual fees. */
+    void SelectSolution(const CTxMemPool& mempool, const CBlockIndex* prev, Algo algo,
+                        uint32_t nbits, const uint256& branch, SolutionChoice& out)
+        EXCLUSIVE_LOCKS_REQUIRED(mempool.cs, ::cs_main);
+
+    /** Bitmark: add the chosen solution tx and its unconfirmed ancestors, BEFORE any
+     *  fee-driven selection, so it is the first solution-bearing tx in the block and
+     *  therefore the one consensus reads (doc sec 7 step 3) -- and so the block's most
+     *  valuable transaction gets first claim on the weight limit. Returns false if the
+     *  package does not fit, is not final, or would place another solution-bearing tx
+     *  ahead of it (an ancestor carrying one), in which case the caller must fall back to
+     *  the no-solution branch rather than mine a block priced for a solution it is not
+     *  actually presenting. */
+    bool AddSolutionPackage(const CTxMemPool& mempool, CTxMemPool::txiter winner)
+        EXCLUSIVE_LOCKS_REQUIRED(mempool.cs);
 };
 
 int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev);

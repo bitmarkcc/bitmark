@@ -324,6 +324,7 @@ BASE_SCRIPTS = [
     'feature_cltv.py',
     'feature_pushcode.py',
     'feature_solutionpot.py',
+    'feature_dynamicalgo.py',
     'rpc_pushcode.py',
     'feature_reservefee.py',
     'rpc_uptime.py',

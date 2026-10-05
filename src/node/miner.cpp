@@ -82,6 +82,8 @@ void ApplyArgsManOptions(const ArgsManager& args, BlockAssembler::Options& optio
     }
     options.signal_algo_readiness = args.GetBoolArg("-signalalgoreadiness",
                                                     options.signal_algo_readiness);
+    options.max_solution_verify = static_cast<int>(
+        args.GetIntArg("-maxsolutionverify", options.max_solution_verify));
 }
 static BlockAssembler::Options ConfiguredOptions()
 {
@@ -96,6 +98,9 @@ BlockAssembler::BlockAssembler(Chainstate& chainstate, const CTxMemPool* mempool
 void BlockAssembler::resetBlock()
 {
     inBlock.clear();
+    // Bitmark: solution exclusions are decided per template from per-epoch state, so a
+    // reused assembler must not inherit the last one's (see m_exclude).
+    m_exclude.clear();
 
     // Reserve space for coinbase tx
     nBlockWeight = 4000;
@@ -171,18 +176,6 @@ void BlockAssembler::resetBlock()
     pblock->nTime = TicksSinceEpoch<std::chrono::seconds>(NodeClock::now());
     m_lock_time_cutoff = pindexPrev->GetMedianTimePast();
 
-    int nPackagesSelected = 0;
-    int nDescendantsUpdated = 0;
-    if (m_mempool) {
-        LOCK(m_mempool->cs);
-        addPackageTxs(*m_mempool, nPackagesSelected, nDescendantsUpdated);
-    }
-
-    const auto time_1{SteadyClock::now()};
-
-    m_last_block_num_txs = nBlockTx;
-    m_last_block_weight = nBlockWeight;
-
     if (onMultiPoWFork) {
 	CBlockIndex* pprevAlgo = pindexPrev;
 	if (pprevAlgo->GetAlgo()!=algo) {
@@ -221,6 +214,38 @@ void BlockAssembler::resetBlock()
 	pblock->nSolution.clear();
     }
 
+    // Bitmark: which algo, if any, this slot runs. Needed before transaction selection,
+    // because a solution transaction is not an ordinary one: it must be chosen on its
+    // alpha rather than its feerate, and must end up FIRST among the block's
+    // solution-bearing txs to be the one consensus reads (doc sec 7 step 3, 2.1quater).
+    const std::optional<uint256> active_branch{
+        m_chainstate.GetActiveAlgoBranch(static_cast<int>(algo))};
+
+    int nPackagesSelected = 0;
+    int nDescendantsUpdated = 0;
+    SolutionChoice solution;
+    if (m_mempool) {
+        LOCK(m_mempool->cs);
+        if (active_branch) {
+            SelectSolution(*m_mempool, pindexPrev, algo, pblock->nBits, *active_branch, solution);
+            // Added before the fee-driven pass so it leads the block and gets first claim
+            // on the weight limit. If it cannot be placed, fall back to no solution rather
+            // than price a block for one it is not presenting.
+            if (solution.have && !AddSolutionPackage(*m_mempool, solution.iter)) {
+                LogPrintf("CreateNewBlock(): chosen solution tx %s could not be placed; "
+                          "building the no-solution branch\n",
+                          solution.iter->GetSharedTx()->GetHash().ToString());
+                solution.have = false;
+            }
+        }
+        addPackageTxs(*m_mempool, nPackagesSelected, nDescendantsUpdated);
+    }
+
+    const auto time_1{SteadyClock::now()};
+
+    m_last_block_num_txs = nBlockTx;
+    m_last_block_weight = nBlockWeight;
+
     // Create coinbase transaction.
     CMutableTransaction coinbaseTx;
     coinbaseTx.nVersion = nVersionTx;
@@ -247,14 +272,11 @@ void BlockAssembler::resetBlock()
     // produce blocks this very node rejects -- bad-cb-amount, or
     // solutionpot-coinbase-amount.
     //
-    // The obligations come from Chainstate::ResolveAlgoReward, the SAME function
-    // ConnectBlock uses, so the template cannot be built against different rules than
-    // the ones that will judge it. The solution is left empty here: selecting a candidate
-    // from the mempool is phase 6.7c, so for now the node always builds the no-solution
-    // branch, which is valid (just smaller) and is what an unsolved slot looks like.
-    const std::optional<uint256> active_branch{
-        m_chainstate.GetActiveAlgoBranch(static_cast<int>(algo))};
-
+    // Either way the split comes from dynamicalgo::ComputeRewardSplit, the SAME pure
+    // function ConnectBlock reaches through ResolveAlgoReward, fed the same alpha and beta,
+    // so the template cannot be priced against different rules than the ones that will
+    // judge it.
+    //
     // The voluntary readiness signal (doc sec 4.5), advertising that this miner's
     // software can append the coinbase outputs an activated algo will require.
     //
@@ -290,30 +312,58 @@ void BlockAssembler::resetBlock()
         // by unit tests, which never have an active branch. Asserted rather than assumed
         // silently, since the consequence is an invalid block.
         Assume(mpowValue);
-        const dynamicalgo::BlockSolution no_solution{};
-        AlgoRewardPlan plan;
-        if (!m_chainstate.ResolveAlgoReward(pindexPrev, algo, pblock->nBits, no_solution,
-                                            coinbase_subsidy, nFees, active_branch, plan)) {
-            // A template we cannot price is one we must not hand out: mining it would
-            // either forfeit value or produce an invalid block.
-            throw std::runtime_error(strprintf(
-                "CreateNewBlock: cannot resolve the dynamic-algo reward (%s%s)",
-                plan.fail.fatal ? "local fault: " : plan.fail.reject_reason + ": ",
-                plan.fail.err));
+        dynamicalgo::RewardSplit split;
+        if (solution.have) {
+            // SelectSolution already ran verify() on this candidate, so its alpha and beta
+            // are in hand and the split needs no further run -- which matters, because a
+            // run can cost ~38 s (doc sec 8.6, 8.9).
+            split = dynamicalgo::ComputeRewardSplit(coinbase_subsidy, nFees,
+                                                    solution.alpha_q32, solution.beta_q32,
+                                                    /*solution_valid=*/true);
+        } else {
+            // No solution to present. Priced through the shared resolver, which runs the
+            // empty solution to read alpha and beta exactly as consensus will (doc sec 7
+            // step 4) -- normally a memoized hit, since SelectSolution asked the same
+            // question moments ago.
+            const dynamicalgo::BlockSolution no_solution{};
+            AlgoRewardPlan plan;
+            if (!m_chainstate.ResolveAlgoReward(pindexPrev, algo, pblock->nBits, no_solution,
+                                                coinbase_subsidy, nFees, active_branch, plan)) {
+                // A template we cannot price is one we must not hand out: mining it would
+                // either forfeit value or produce an invalid block.
+                throw std::runtime_error(strprintf(
+                    "CreateNewBlock: cannot resolve the dynamic-algo reward (%s%s)",
+                    plan.fail.fatal ? "local fault: " : plan.fail.reject_reason + ": ",
+                    plan.fail.err));
+            }
+            split = plan.split;
         }
-        coinbaseTx.vout[0].nValue = plan.split.max_coinbase_value - plan.split.required_pot;
-        if (plan.split.required_pot > 0) {
+
+        // vout[0] keeps what is left after the obligations below, so a pool reading
+        // `coinbasevalue` sees only its OWN share and cannot over-claim by appending them.
+        coinbaseTx.vout[0].nValue =
+            split.max_coinbase_value - split.required_pot - split.required_payout;
+        if (split.required_pot > 0) {
             // The withheld fees, in a pot for this block's own slot. Deferred rather than
             // burned, and claimable by a later solution-bearing block of this slot.
             CTxOut pot;
-            pot.nValue = plan.split.required_pot;
+            pot.nValue = split.required_pot;
             pot.scriptPubKey = CScript() << CScriptNum(static_cast<int>(algo)) << OP_SOLUTIONPOT;
             coinbaseTx.vout.push_back(pot);
             // Also recorded for GBT: a pool builds its own coinbase, so the obligation
             // has to be handed over explicitly (doc sec 6bis).
             pblocktemplate->vRequiredCoinbaseOutputs.push_back(pot);
         }
-
+        if (split.required_payout > 0) {
+            // alpha*r to the scriptPubKey the solution committed to (doc sec 2.3). The
+            // target is the solution's own seq=0 chunk, and the seed binds to it, so this
+            // cannot be redirected without invalidating the solution being paid for.
+            CTxOut payout;
+            payout.nValue = split.required_payout;
+            payout.scriptPubKey = CScript(solution.sol.payout.begin(), solution.sol.payout.end());
+            coinbaseTx.vout.push_back(payout);
+            pblocktemplate->vRequiredCoinbaseOutputs.push_back(payout);
+        }
     }
 
     pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
@@ -370,6 +420,12 @@ bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& packa
 {
     for (CTxMemPool::txiter it : package) {
         if (!IsFinalTx(it->GetTx(), nHeight, m_lock_time_cutoff)) {
+            return false;
+        }
+        // Bitmark: an unjudged solution tx must not reach the block (see m_exclude).
+        // Rejecting the whole package rather than the one tx also keeps its in-block
+        // descendants out, which a per-tx skip would not.
+        if (!m_exclude.empty() && m_exclude.count(it->GetSharedTx()->GetHash())) {
             return false;
         }
     }
@@ -446,6 +502,151 @@ void BlockAssembler::SortForBlock(const CTxMemPool::setEntries& package, std::ve
 // Each time through the loop, we compare the best transaction in
 // mapModifiedTxs with the next transaction in the mempool to decide what
 // transaction package to work on next.
+void BlockAssembler::SelectSolution(const CTxMemPool& mempool, const CBlockIndex* prev,
+                                    Algo algo, uint32_t nbits, const uint256& branch,
+                                    SolutionChoice& out)
+{
+    AssertLockHeld(mempool.cs);
+    // Not `out = SolutionChoice{}`: a default-constructed mempool iterator has no
+    // defined value, and copying one is undefined even though nobody reads it while
+    // `have` is false.
+    out.have = false;
+    const int slot{static_cast<int>(algo)};
+
+    // The no-solution reference point. Needed to price the coinbase if nothing is chosen
+    // (doc sec 7 step 4), and needed here to decide whether a candidate is worth taking at
+    // all, so it is not an extra cost. Memoized per epoch, so this is one run per anchor.
+    const dynamicalgo::BlockSolution empty{};
+    AlgoVerifyResult vr0;
+    AlgoFailure fail0;
+    if (!m_chainstate.RunAlgoVerifyForBlock(prev, algo, nbits, empty, branch, vr0, fail0)) {
+        throw std::runtime_error(strprintf(
+            "CreateNewBlock: cannot read the dynamic algo's reward fractions (%s%s)",
+            fail0.fatal ? "local fault: " : fail0.reject_reason + ": ", fail0.err));
+    }
+    // A module that faults on an empty solution states no alpha/beta; consensus prices
+    // that as zero (doc sec 7 step 4), and so must we, or the template would not match.
+    static constexpr uint64_t Q{uint64_t{1} << 32}; // Q32 one
+    const uint64_t a0{vr0.ok ? vr0.alpha_q32 : 0};
+    const uint64_t b0{vr0.ok ? vr0.beta_q32 : 0};
+    // What this block keeps per unit of r with no solution: T = beta * (1 - alpha).
+    const uint64_t keep_without{((Q - a0) * b0) >> 32};
+
+    struct Cand {
+        CTxMemPool::txiter iter;
+        dynamicalgo::BlockSolution sol;
+        CAmount fee;
+        int64_t size;
+    };
+    std::vector<Cand> cands;
+    for (auto it{mempool.mapTx.begin()}; it != mempool.mapTx.end(); ++it) {
+        if (!dynamicalgo::HasSolutionOutput(it->GetTx())) continue;
+        dynamicalgo::BlockSolution sol;
+        std::string why_not;
+        dynamicalgo::ExtractTxSolution(it->GetTx(), sol, why_not);
+        // Malformed, or merely prefix-shaped: consensus would read no solution from it
+        // (doc sec 7 step 3), which is exactly how this template prices a block without
+        // one. So it is not a candidate and needs no exclusion -- it can be mined for its
+        // fee like any other transaction.
+        if (!sol.found) continue;
+        cands.push_back({mempool.mapTx.iterator_to(*it), std::move(sol),
+                         it->GetModFeesWithAncestors(), it->GetSizeWithAncestors()});
+    }
+    if (cands.empty()) return;
+
+    // Highest declared feerate first (see the header note on why that is a real bid).
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+        // a.fee/a.size vs b.fee/b.size, cross-multiplied in double as
+        // CompareTxMemPoolEntryByAncestorFee does: the integer product can reach ~8e20
+        // and overflow int64. Ties broken by txid so the order is total and deterministic.
+        const double lhs{static_cast<double>(a.fee) * static_cast<double>(b.size)};
+        const double rhs{static_cast<double>(b.fee) * static_cast<double>(a.size)};
+        if (lhs != rhs) return lhs > rhs;
+        return a.iter->GetSharedTx()->GetHash() < b.iter->GetSharedTx()->GetHash();
+    });
+
+    const CBlockIndex* const anchor_idx{AlgoSeedAnchor(prev, algo)};
+    if (!anchor_idx) return; // cannot happen where an algo is active; nothing to spend on
+    const uint256 anchor{anchor_idx->GetBlockHash()};
+
+    std::vector<CTxMemPool::txiter> verified_valid;
+    uint64_t best_keep{0};
+    for (const Cand& c : cands) {
+        dynamicalgo::VerifyVerdict v;
+        if (!m_chainstate.PeekAlgoVerify(prev, algo, nbits, c.sol, branch, v)) {
+            if (!m_chainstate.m_blockman.m_candidate_budget.TrySpend(
+                    slot, anchor, m_options.max_solution_verify)) {
+                // Out of budget for this epoch: this candidate stays unjudged, so it must
+                // not be mined (it might verify, which would oblige an alpha*r payment
+                // this template is not making). A later template will judge it.
+                m_exclude.insert(c.iter->GetSharedTx()->GetHash());
+                continue;
+            }
+            AlgoVerifyResult vr;
+            AlgoFailure fail;
+            if (!m_chainstate.RunAlgoVerifyForBlock(prev, algo, nbits, c.sol, branch, vr, fail)) {
+                throw std::runtime_error(strprintf(
+                    "CreateNewBlock: cannot verify a solution candidate (%s%s)",
+                    fail.fatal ? "local fault: " : fail.reject_reason + ": ", fail.err));
+            }
+            v = dynamicalgo::VerifyVerdict{.ok = vr.ok, .solution_valid = vr.solution_valid,
+                                           .out_of_gas = vr.out_of_gas,
+                                           .alpha_q32 = vr.alpha_q32, .beta_q32 = vr.beta_q32};
+        }
+        if (!v.ok || !v.solution_valid) continue; // judged and no good: mine it for its fee
+        verified_valid.push_back(c.iter);
+
+        // Taking it leaves (1 - alpha) of r; leaving it leaves T of r. Both are fractions
+        // of the same r, so comparing the fractions needs no estimate of the block's
+        // fees -- which is useful, since they are not known until selection has run.
+        const uint64_t keep_with{Q - v.alpha_q32};
+        if (keep_with <= keep_without) continue;
+        if (!out.have || keep_with > best_keep) {
+            best_keep = keep_with;
+            out.have = true;
+            out.iter = c.iter;
+            out.sol = c.sol;
+            out.alpha_q32 = v.alpha_q32;
+            out.beta_q32 = v.beta_q32;
+        }
+    }
+
+    if (!out.have) {
+        // Nothing chosen, so no verified-valid candidate may be mined either: whichever
+        // landed first would present consensus with a valid solution and oblige the
+        // alpha*r payment. (With a winner they are harmless -- it goes in first, so they
+        // are never the tx consensus reads, and they still pay their fees.)
+        for (const CTxMemPool::txiter& it : verified_valid) {
+            m_exclude.insert(it->GetSharedTx()->GetHash());
+        }
+    }
+}
+
+bool BlockAssembler::AddSolutionPackage(const CTxMemPool& mempool, CTxMemPool::txiter winner)
+{
+    AssertLockHeld(mempool.cs);
+    auto ancestors{mempool.AssumeCalculateMemPoolAncestors(
+        __func__, *winner, CTxMemPool::Limits::NoLimits(), /*fSearchForParents=*/false)};
+    onlyUnconfirmed(ancestors);
+    ancestors.insert(winner);
+
+    if (!TestPackage(winner->GetSizeWithAncestors(), winner->GetSigOpCostWithAncestors())) {
+        return false;
+    }
+    if (!TestPackageTransactions(ancestors)) return false;
+
+    std::vector<CTxMemPool::txiter> sorted;
+    SortForBlock(ancestors, sorted);
+    // An ancestor must precede the winner, so an ancestor carrying solution outputs would
+    // be the tx consensus reads instead of it. Checked across the whole package before
+    // anything is added, so declining leaves the block untouched.
+    for (const CTxMemPool::txiter& it : sorted) {
+        if (it != winner && dynamicalgo::HasSolutionOutput(it->GetTx())) return false;
+    }
+    for (const CTxMemPool::txiter& it : sorted) AddToBlock(it);
+    return true;
+}
+
 void BlockAssembler::addPackageTxs(const CTxMemPool& mempool, int& nPackagesSelected, int& nDescendantsUpdated)
 {
     AssertLockHeld(mempool.cs);

@@ -1060,20 +1060,35 @@ the parent chain per `dynamic-algo-voting.md`, so a block can't self-activate):
    `verify(anchor_hash, payout, nbits, solution, out_ab)` under the gas/memory/I-O
    limits (§8), with the slot's previous blocks served through the `chain.*` imports
    (§3.1). Three outcomes, and only one of them is an error:
-   - **returns 0** ⇒ valid solution; `α, β` come from `out_ab`.
-   - **returns non-zero, or faults, or breaches a gas/memory/I-O limit** ⇒ no valid
-     solution — *not* an invalid block (§2.1quater). `α, β` then come from a SECOND run
-     with an empty solution, since a trap may never have written `out_ab`. This is the
-     only path on which a block costs two verifier runs; each is separately bounded by
-     the gas limits, so the worst case is 2× and whoever mined the block paid its fees.
+   - **returns 0** ⇒ valid solution; `α, β` come from `out_ab`. One run.
+   - **returns non-zero** ⇒ no valid solution, and `α, β` are still in `out_ab` because
+     the run completed. One run.
+   - **faults, or breaches a gas/memory/I-O limit** ⇒ no valid solution — *not* an invalid
+     block (§2.1quater) — but a trap may never have written `out_ab`, so `α, β` come from
+     a SECOND run with an empty solution. The only path costing two runs, and the second
+     is normally a memoized hit (§8.9). Pricing a fault identically to a plain
+     no-solution block is deliberate: the attacker picks the solution bytes, hence whether
+     the module faults, so any harsher treatment would let one garbage tx mined ahead of
+     the real solution cut what that block pays its miner.
    - **a slot block consensus says must be retained cannot be read HERE** ⇒ a LOCAL
      fault ⇒ fatal error, never invalidity (§3.1).
 
+   A block with no solution at all is priced from that same empty-solution run, which is
+   how `α, β` are obtained when there is nothing to verify (§3; the empty case is the one
+   input an algo's ABI must define). Getting the full per-block budget for it is wasteful
+   and is an open improvement — see §9, which also records the requirement that algos
+   answer it cheaply. If the algo faults even on the empty solution it cannot state its
+   own `α, β`; take both as **zero**. That is deterministic, keeps the ceiling at or below
+   the old-node one, and leaves the slot's blocks valid but paying nobody — which no one
+   will mine and voters can de-activate — rather than invalidating every block of the
+   slot. Unlike the fault case above, this input is not attacker-supplied, so zero cannot
+   be provoked.
+
    `0 ≤ α < 1` and `0 ≤ β < 1` are automatic from the Q32 encoding (§3): nothing to
    check. Note the asymmetry with `OP_PUSHCODE`, whose grammar errors *do* invalidate a
-   block (step 6bis of the voting doc): pushcode bytes become consensus state every node
-   must build identically, whereas solution bytes are only an input to a payment
-   decision, so the worst a bad one can do is forfeit the payment.
+   block (see the voting doc): pushcode bytes become consensus state every node must
+   build identically, whereas solution bytes are only an input to a payment decision, so
+   the worst a bad one can do is forfeit the payment.
 5. **Reward split** (with `r = subsidy + total_fees`, `T = β(1−α)`, integer α,β per
    §4.4). `total_fees` already includes any solution pot released by this block, since a
    pot claim leaves its value as fee (§4.5):
@@ -1603,8 +1618,13 @@ make a node recompute. `chain_unavailable` is the sole exclusion.
   standardness (multiple `OP_RETURN`s, dust-exempt) + `MAX_SOLUTION_TX_WEIGHT` /
   `MAX_SOLUTION_TX_INPUTS` (§2.1ter). Still optional: a global `MAX_SOLUTION_TXS` queue
   cap.
-- **Solution selection from the mempool (§2.1quater): SPECIFIED, NOT YET IMPLEMENTED.**
-  Settled by this round of spec work:
+- **Solution selection from the mempool (§2.1quater): IMPLEMENTED.**
+  `BlockAssembler::SelectSolution` / `AddSolutionPackage` (`node/miner.cpp`), the
+  per-epoch budget in `dynamicalgo::CandidateBudget` behind `-maxsolutionverify`, the
+  first-wins read in `dynamicalgo::ExtractBlockSolution`, and the fall-through in
+  `Chainstate::ResolveAlgoReward`. The `α·r` coinbase output joins the pot output in
+  `vRequiredCoinbaseOutputs`, so GBT's `coinbaserequired` carries it to pools unchanged.
+  What the spec work settled:
   - a solution can never invalidate a block — malformed chunk sets, a verifier fault,
     out-of-gas and rival solution txs all fall through to the no-solution branch (§7
     steps 3–4), so the mempool is not a minefield for pools that have not implemented
@@ -1616,9 +1636,42 @@ make a node recompute. `chain_unavailable` is the sole exclusion.
     which is what makes ordering by declared feerate sound rather than a free bluff;
   - the verification budget is **candidate runs per slot per anchor epoch**, never per
     template rebuild (§2.1quater rule 1). Needs a node option and a default.
-  - *Open:* nothing structural, but the `budget` default and `MAX_SOLUTION_TXS` value
-    want a second look once a real algo's measured verify time is known, since the
-    ~38 s figure is the adversarial bound and the LLM trunk's real forward is ~1.5 s.
+  - *Open:* the `-maxsolutionverify` default (1) and the optional `MAX_SOLUTION_TXS`
+    queue cap (not implemented) want a second look once a real algo's measured verify
+    time is known, since ~38 s is the adversarial bound and the LLM trunk's real forward
+    is ~1.5 s. Also untested end-to-end: no test activates an algo yet, so the selection
+    path has only unit coverage of its parts
+    (`feature_solutionpot.py` Layer B is where this gets exercised).
+- **Nothing uses the 720-block activation notice.** The delay exists so miners can
+  prepare: once a window closes, the winner and the height are settled and `getalgovote`
+  reports `winner`, `activation_block` and `enforced_from`. But the node itself does not
+  act on it — `ModuleStore::GetOrCompile` materializes a branch on FIRST USE, so the AOT
+  compile lands on whichever template or block first needs it, i.e. exactly at
+  `enforced_from`. With compile time still unbounded (§8.8) that is the worst possible
+  moment for it. It should pre-compile during the delay instead: on each new tip, if a
+  slot has a settled winner that is assemblable and not yet materialized, compile it in
+  the background. Cheap to do, and it turns §8.8's compile-bound problem from a
+  block-validation risk into a day's advance work.
+  One wrinkle to respect: assemblability is only final AT the activation height, because
+  pushcode allows forward references, so a branch that cannot be assembled when the
+  window closes may become assemblable during the delay. Pre-compilation must therefore
+  re-check rather than conclude once.
+- **A stricter gas budget for the EMPTY solution (future improvement, but state the ABI
+  requirement now).** `verify()` is called with an empty solution purely to read α and β
+  (§7 step 4) — there is nothing to verify, so an algo should be able to answer from its
+  parameters without touching its model. Today that call gets the full per-block budget,
+  so the no-solution branch, and the second run on the fall-through, can each cost up to
+  ~38 s (§8.6) for work that produces two 32-bit numbers. A separate, much smaller limit
+  for `solution_len == 0` would make a no-solution block nearly free to validate, cut the
+  miner's per-epoch α₀/β₀ cost to almost nothing (§2.1quater), and shrink what an
+  attacker gets out of a faulting solution. The condition is unambiguous — exactly
+  `solution_len == 0`, so a 1-byte solution still buys the full budget and there is no
+  cliff to game.
+  **Do not wait to state the requirement, though:** algo authors must know that the
+  empty-solution path has to be cheap, because adding the limit after algos exist would
+  invalidate any that fold their model to answer it. The approval process (§8.6
+  data-obliviousness check) is the natural place to measure it. The limit value itself,
+  and whether it is one number or a per-class scaling of the main table, is open.
 - **`verify()` memoization (§8.9): REQUIRED, NOT YET IMPLEMENTED.** Discovered while
   specifying selection: `getblocktemplate` rebuilds a template every 5 s (and on every
   algo change, with a one-entry cache), and each rebuild runs `verify()` twice, so an

@@ -101,7 +101,8 @@ static RPCHelpMan getalgovote()
                     }},
                 }},
                 {RPCResult::Type::STR_HEX, "winner", /*optional=*/true, "Branch of the latest anchored window it wins (75% of both + fee floor, and voted in the window's first block), or null"},
-                {RPCResult::Type::NUM, "activation_block", /*optional=*/true, "Height the winner takes effect: window last block + 720 + 1, or null"},
+                {RPCResult::Type::NUM, "activation_block", /*optional=*/true, "Height at which the activation is DECIDED and recorded (window last block + 720 + 1), or null. NOT the first height the algo applies -- see enforced_from"},
+                {RPCResult::Type::NUM, "enforced_from", /*optional=*/true, "First height on this slot whose block must satisfy the algo's reward rules, i.e. activation_block + 1, or null. Which algo a slot runs is evaluated on a block's PARENT chain, so the block that records the activation is itself still judged primitively. This is the height a miner must be ready for"},
             }
         },
         RPCExamples{
@@ -250,10 +251,16 @@ static RPCHelpMan getalgovote()
             if (have_winner) {
                 result.pushKV("winner", winner.GetHex());
                 // last block of the sequence + 720 + 1
-                result.pushKV("activation_block", (win_f + voting_period - 1) + ACTIVATION_DELAY + 1);
+                const int64_t recorded_at{(win_f + voting_period - 1) + ACTIVATION_DELAY + 1};
+                result.pushKV("activation_block", recorded_at);
+                // One later: a slot's algo is evaluated on a block's parent chain, so the
+                // block that records the activation is still judged primitively. This is
+                // the number a miner needs -- the first block it must be ready for.
+                result.pushKV("enforced_from", recorded_at + 1);
             } else {
                 result.pushKV("winner", UniValue());
                 result.pushKV("activation_block", UniValue());
+                result.pushKV("enforced_from", UniValue());
             }
             return result;
         },

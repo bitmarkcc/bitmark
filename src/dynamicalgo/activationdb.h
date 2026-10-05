@@ -41,8 +41,13 @@
 namespace dynamicalgo {
 
 //! The active dynamic algo for one slot. A null branch means the slot is primitive-only
-//! (no algo activated yet). `activation_height` is the height at which `branch` became
-//! the slot's algo (0 when primitive-only).
+//! (no algo activated yet). `activation_height` is the height at which the activation was
+//! DECIDED and recorded (0 when primitive-only) -- not the first height the branch is
+//! used. Which algo a block's slot runs is evaluated on that block's PARENT chain (doc
+//! sec 7), so the branch first applies to blocks whose parent is at or after
+//! `activation_height`, i.e. from the next block on. Keeping it that way is what lets the
+//! miner and consensus read this store and reach the same answer; see the note at the
+//! active-branch read in ConnectBlock.
 struct CSlotActivation {
     uint256 branch;               //!< OP_PUSHCODE branch tip of the active algo (null == primitive-only)
     int32_t activation_height{0}; //!< height `branch` became active (0 == none)

@@ -555,6 +555,24 @@ enum class CoinsCacheSizeState
  *  -- it walks up to 125 blocks of each of the 8 algos -- so call it once per block. */
 bool DynamicForkActive(const CBlockIndex* pprev, const Consensus::Params& params);
 
+/** Bitmark: the seed anchor for a block on `algo` whose parent is `prev` -- the first
+ *  same-algo block AT OR BELOW `prev` (doc/dynamic-algo-mining.md sec 2.1bis). The seed is
+ *  Hash256(payout || anchor), so it only changes when the slot produces a block: ~16
+ *  minutes with 8 algos rather than 120 seconds, which is what gives a dynamic miner a
+ *  workable window to compute and relay a solution.
+ *
+ *  One function because consensus and the miner must agree exactly, and the obvious
+ *  spelling is wrong for one of them: GetPrevAlgoBlockIndex starts at its argument's
+ *  pprev, so consensus passing the new block and a miner passing the tip would anchor to
+ *  different blocks. "At or below prev" is the formulation that makes both callers right.
+ *
+ *  Never null wherever this can be reached: nVersion < 4 is invalid once DERSIG is active,
+ *  so testnet's rolling OnFork() gate cannot lapse and mainnet/regtest gate on height; and
+ *  DynamicForkActive needs 94-of-125 per algo across ALL 8 algos, so every slot has >= 94
+ *  on-fork blocks before any branch can be active. Callers Assert rather than substitute
+ *  another hash -- a different anchor would silently diverge from the documented seed. */
+const CBlockIndex* AlgoSeedAnchor(const CBlockIndex* prev, Algo algo);
+
 /** Bitmark: why a dynamic-algo computation could not be completed. `fatal` means a LOCAL
  *  fault -- the node must stop rather than treat the block as invalid, since another node
  *  with intact storage would accept it. Otherwise `reject_reason` is the consensus reject
@@ -900,6 +918,18 @@ public:
                                const uint256& branch,
                                AlgoVerifyResult& out, AlgoFailure& fail)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+    /** Bitmark: the memoized verdict for these inputs IF one is already known, without
+     *  ever running the module. Returns false when it is not.
+     *
+     *  For the miner's candidate selection (doc sec 2.1quater): a run costs up to ~38 s,
+     *  so the question "do I already know this candidate's verdict?" has to be answerable
+     *  without paying for the answer. Goes through Chainstate rather than the cache
+     *  directly so the key is built in exactly one place -- a miner that keyed it
+     *  differently would get silent misses, or worse, hits on the wrong computation. */
+    bool PeekAlgoVerify(const CBlockIndex* prev, Algo algo, uint32_t nbits,
+                        const dynamicalgo::BlockSolution& sol, const uint256& branch,
+                        dynamicalgo::VerifyVerdict& out) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
     //! Dictates whether we need to flush the cache to disk or not.
     //!
