@@ -20,6 +20,7 @@
 #include <policy/policy.h>
 #include <pow.h>
 #include <primitives/transaction.h>
+#include <script/solver.h>
 #include <util/check.h>
 #include <util/moneystr.h>
 #include <util/time.h>
@@ -348,7 +349,7 @@ void BlockAssembler::resetBlock()
             // burned, and claimable by a later solution-bearing block of this slot.
             CTxOut pot;
             pot.nValue = split.required_pot;
-            pot.scriptPubKey = CScript() << CScriptNum(static_cast<int>(algo)) << OP_SOLUTIONPOT;
+            pot.scriptPubKey = SolutionPotScript(static_cast<int>(algo));
             coinbaseTx.vout.push_back(pot);
             // Also recorded for GBT: a pool builds its own coinbase, so the obligation
             // has to be handed over explicitly (doc sec 6bis).

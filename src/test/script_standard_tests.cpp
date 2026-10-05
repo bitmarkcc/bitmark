@@ -8,6 +8,7 @@
 #include <key_io.h>
 #include <script/script.h>
 #include <script/signingprovider.h>
+#include <primitives/algo.h>
 #include <script/solver.h>
 #include <test/util/setup_common.h>
 #include <util/strencodings.h>
@@ -238,27 +239,62 @@ BOOST_AUTO_TEST_CASE(script_standard_Solver_success)
     s << OP_3 << s0 << refund_pkh << OP_RESERVEFEE << OP_1;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
 
-    // TxoutType::SOLUTIONPOT -- the real pot: <algo> OP_SOLUTIONPOT, SPENDABLE, and a
-    // non-empty vSolutions carrying the algo is what distinguishes it from the signal.
+    // TxoutType::SOLUTIONPOT -- the real pot: <algo+1> OP_SOLUTIONPOT, SPENDABLE, and a
+    // non-empty vSolutions is what distinguishes it from the signal. The slot is stored
+    // off by one so this script's last stack item is never a zero-valued push, which
+    // would make the output unspendable; SolutionPotAlgo owns that conversion.
+    int algo{-1};
     s.clear();
-    s << OP_3 << OP_SOLUTIONPOT;                        // algo 3 (OP_3)
+    s << OP_4 << OP_SOLUTIONPOT;                        // algo 3 encodes as 4
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
     BOOST_CHECK_EQUAL(solutions.size(), 1U);
-    BOOST_CHECK(solutions[0] == std::vector<unsigned char>{3});
+    BOOST_CHECK(solutions[0] == std::vector<unsigned char>{4});
     BOOST_CHECK(!s.IsUnspendable());
+    BOOST_CHECK(SolutionPotAlgo(solutions, algo));
+    BOOST_CHECK_EQUAL(algo, 3);
 
-    // algo 0 encodes as OP_0, i.e. an empty push -- the pot for slot 0 must still match.
+    // Slot 0 -- the case the off-by-one exists for. It encodes as OP_1, so the spend's
+    // final stack top is true; a 0-based encoding would have been OP_0, i.e. an empty
+    // push, which CastToBool reads as false and no spend could ever satisfy.
     s.clear();
-    s << OP_0 << OP_SOLUTIONPOT;
+    s << OP_1 << OP_SOLUTIONPOT;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
-    BOOST_CHECK_EQUAL(solutions.size(), 1U);
-    BOOST_CHECK(solutions[0].empty());                  // OP_0 -> empty valtype == algo 0
+    BOOST_CHECK(SolutionPotAlgo(solutions, algo));
+    BOOST_CHECK_EQUAL(algo, 0);
+    // Which is exactly what the canonical builder emits -- OP_1..OP_8 rather than a data
+    // push, so a pot output is 2 bytes and not 3.
+    BOOST_CHECK(SolutionPotScript(0) == s);
+    BOOST_CHECK_EQUAL(SolutionPotScript(0).size(), 2U);
+    for (int a = 0; a < NUM_ALGOS; a++) {
+        BOOST_CHECK_EQUAL(Solver(SolutionPotScript(a), solutions), TxoutType::SOLUTIONPOT);
+        BOOST_CHECK(SolutionPotAlgo(solutions, algo));
+        BOOST_CHECK_EQUAL(algo, a);
+        BOOST_CHECK(!SolutionPotScript(a).IsUnspendable());
+    }
 
-    // a 1-byte algo push is accepted too
+    // a 1-byte push is accepted too (same normalized value)
     s.clear();
-    s << std::vector<unsigned char>{0x07} << OP_SOLUTIONPOT;
+    s << std::vector<unsigned char>{0x08} << OP_SOLUTIONPOT;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
-    BOOST_CHECK(solutions[0] == std::vector<unsigned char>{7});
+    BOOST_CHECK(solutions[0] == std::vector<unsigned char>{8});
+    BOOST_CHECK(SolutionPotAlgo(solutions, algo));
+    BOOST_CHECK_EQUAL(algo, 7);
+
+    // The matcher is a shape test, so out-of-range encodings still MATCH -- it is
+    // SolutionPotAlgo that refuses them, and every consensus caller goes through it.
+    s.clear();
+    s << OP_0 << OP_SOLUTIONPOT;                        // <0>: no slot
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
+    BOOST_CHECK(!SolutionPotAlgo(solutions, algo));
+    s.clear();
+    s << OP_9 << OP_SOLUTIONPOT;                        // 9 > NUM_ALGOS
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
+    BOOST_CHECK(!SolutionPotAlgo(solutions, algo));
+    // ...and the readiness signal has no slot at all.
+    s.clear();
+    s << OP_RETURN << OP_SOLUTIONPOT;
+    BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::SOLUTIONPOT);
+    BOOST_CHECK(!SolutionPotAlgo(solutions, algo));
 
     // TxoutType::SOLUTIONPOT -- the voluntary readiness signal: OP_RETURN OP_SOLUTIONPOT.
     // Same type, but UNSPENDABLE with an EMPTY vSolutions, so it never enters the UTXO
@@ -276,7 +312,7 @@ BOOST_AUTO_TEST_CASE(script_standard_Solver_success)
 
     // missing the OP_SOLUTIONPOT terminator is not a match, in either form
     s.clear();
-    s << OP_3;
+    s << OP_4;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
     s.clear();
     s << OP_RETURN << OP_SOLUTION;                      // the chunk opcode, not the pot one
@@ -284,7 +320,7 @@ BOOST_AUTO_TEST_CASE(script_standard_Solver_success)
 
     // trailing data after OP_SOLUTIONPOT is not a match, in either form
     s.clear();
-    s << OP_3 << OP_SOLUTIONPOT << OP_1;
+    s << OP_4 << OP_SOLUTIONPOT << OP_1;
     BOOST_CHECK_EQUAL(Solver(s, solutions), TxoutType::NONSTANDARD);
     s.clear();
     s << OP_RETURN << OP_SOLUTIONPOT << OP_1;

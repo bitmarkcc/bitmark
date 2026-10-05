@@ -3,6 +3,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <primitives/algo.h>
 #include <pubkey.h>
 #include <script/interpreter.h>
 #include <script/script.h>
@@ -277,6 +278,26 @@ static bool MatchSolution(const CScript& script, std::vector<valtype>& sols)
     return true;
 }
 
+CScript SolutionPotScript(int algo)
+{
+    assert(algo >= 0 && algo < NUM_ALGOS);
+    // algo+1 so the final stack item is never a zero-valued push; see TxoutType::SOLUTIONPOT.
+    // The int64_t overload emits OP_1..OP_8 (one byte) rather than the data push a
+    // CScriptNum would (two), so every pot output is 2 bytes rather than 3. The matcher
+    // normalizes both forms, so this is only about block space.
+    return CScript() << static_cast<int64_t>(algo + 1) << OP_SOLUTIONPOT;
+}
+
+bool SolutionPotAlgo(const std::vector<std::vector<unsigned char>>& sols, int& algo)
+{
+    if (sols.empty() || sols[0].empty()) return false; // the readiness signal, or <0>
+    if (sols[0].size() != 1) return false;
+    const int stored{sols[0][0]};
+    if (stored < 1 || stored > NUM_ALGOS) return false;
+    algo = stored - 1;
+    return true;
+}
+
 // Bitmark RESERVEFEE: <algo> <s0> <refund_pkh> OP_RESERVEFEE, a SPENDABLE
 // hashrate-contingent reserve-fee covenant output (flow model). <algo> (1..NUM_ALGOS)
 // selects which algo's hashrate recovery pays it out; <s0> is the 2-byte (Q16)
@@ -327,8 +348,9 @@ static bool MatchSolutionPot(const CScript& script, std::vector<valtype>& sols)
         if (!NextOp(script, it, OP_SOLUTIONPOT)) return false;
         return it == script.end();                    // sols deliberately left empty
     }
-    // Real pot: rewind and read the first item as <algo>, which NextNum validates as a
-    // minimal <=1-byte number (so OP_0 / OP_1..OP_16 / a 1-byte push).
+    // Real pot: rewind and read the first item as <algo+1>, which NextNum validates as a
+    // minimal <=1-byte number (so OP_0 / OP_1..OP_16 / a 1-byte push). The range is not
+    // checked here -- SolutionPotAlgo does that, so the matcher stays a pure shape test.
     it = script.begin();
     valtype algo;
     if (!NextNum(script, it, 1, algo)) return false;  // <algo>

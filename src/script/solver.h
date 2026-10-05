@@ -37,15 +37,33 @@ enum class TxoutType {
     SOLUTION, //!< Bitmark: OP_RETURN OP_SOLUTION <seq> <chunk>, a dynamic-algo solution chunk (unspendable; coinbase or solution-tx)
     RESERVEFEE, //!< Bitmark: <algo> <s0> <refund_pkh> OP_RESERVEFEE, a spendable hashrate-contingent reserve-fee covenant output
     //! Bitmark: the per-slot pot holding fees withheld from no-solution blocks, in two forms:
-    //!   <algo> OP_SOLUTIONPOT       the real pot -- SPENDABLE, carries value;
-    //!                               vSolutions = [algo]
+    //!   <algo+1> OP_SOLUTIONPOT     the real pot -- SPENDABLE, carries value;
+    //!                               vSolutions = [algo+1], i.e. 1..NUM_ALGOS
     //!   OP_RETURN OP_SOLUTIONPOT    a miner's VOLUNTARY readiness signal -- 0-value and
     //!                               unspendable, so it never enters the UTXO set;
     //!                               vSolutions = [] (empty)
     //! So a non-empty vSolutions distinguishes a real pot from a signal (equivalently,
     //! CScript::IsUnspendable() is true only for the signal).
+    //!
+    //! The slot is stored OFF BY ONE, and that is load-bearing rather than a quirk: the
+    //! algo push is the LAST item this script leaves on the stack, and a spend only
+    //! succeeds if the final stack top is true. A zero-valued push is false, so a 0-based
+    //! encoding would make every slot-0 pot permanently unspendable while slots 1..7
+    //! worked -- a bug that is invisible until something tries to claim one. Always go
+    //! through SolutionPotScript / SolutionPotAlgo below rather than touching the byte.
+    //! (OP_RESERVEFEE needs no such trick: its script ends with the 20-byte refund_pkh,
+    //! which is truthy, so it stores the slot 0-based. The two differ for that reason.)
     SOLUTIONPOT,
 };
+
+/** Bitmark: the canonical scriptPubKey of a real solution pot for `algo` (see
+ *  TxoutType::SOLUTIONPOT). Callers must not build this by hand -- the +1 lives here. */
+CScript SolutionPotScript(int algo);
+
+/** Bitmark: the slot a SOLUTIONPOT output names, from Solver's vSolutions. Returns false
+ *  for the readiness signal (empty vSolutions) and for an out-of-range encoding, which the
+ *  matcher accepts but no valid pot can carry -- callers treat that as invalid. */
+bool SolutionPotAlgo(const std::vector<std::vector<unsigned char>>& sols, int& algo);
 
 /** Get the name of a TxoutType as a string */
 std::string GetTxnOutputType(TxoutType t);

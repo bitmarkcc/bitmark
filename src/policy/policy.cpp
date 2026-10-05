@@ -113,7 +113,7 @@ bool IsStandard(const CScript& scriptPubKey, const std::optional<unsigned>& max_
         // MAX_SOLUTION_TX_INPUTS, applied in IsStandardTx below.
     } else if (whichType == TxoutType::SOLUTIONPOT) {
         // Bitmark: the per-slot solution pot (doc sec 4.5), in either form -- the
-        // valued spendable <algo> OP_SOLUTIONPOT, or the 0-value unspendable
+        // valued spendable <algo+1> OP_SOLUTIONPOT, or the 0-value unspendable
         // OP_RETURN OP_SOLUTIONPOT readiness signal.
         //
         // The valued form has to be standard because a CONSOLIDATE transaction creates

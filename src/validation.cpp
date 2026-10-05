@@ -2946,7 +2946,13 @@ static bool CheckSolutionPotTx(const CTransaction& tx, const CCoinsViewCache& vi
         if (sol.empty()) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-spend-signal");
         }
-        const int algo_i{sol[0].empty() ? 0 : sol[0][0]};
+        int algo_i{-1};
+        if (!SolutionPotAlgo(sol, algo_i)) {
+            // The matcher is a shape test, so an out-of-range <algo+1> reaches here. No
+            // valid pot can carry one (every creation path checks the slot), so a coin
+            // like this cannot exist on a valid chain -- reject rather than guess.
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-spend-algo");
+        }
 
         std::vector<std::vector<unsigned char>> pushes;
         if (!ReserveScriptSigPushes(tx.vin[j].scriptSig, pushes) || pushes.empty()) {
@@ -3022,7 +3028,8 @@ static bool CheckSolutionPotTx(const CTransaction& tx, const CCoinsViewCache& vi
             Solver(tx.vout[0].scriptPubKey, sol) != TxoutType::SOLUTIONPOT || sol.empty()) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-consolidate-shape");
         }
-        if ((sol[0].empty() ? 0 : sol[0][0]) != pot_algo) {
+        int out_algo{-1};
+        if (!SolutionPotAlgo(sol, out_algo) || out_algo != pot_algo) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-consolidate-algo");
         }
         // Exactly the sum: no value created, and (with pot-only inputs and one output)
@@ -3356,7 +3363,8 @@ static bool CheckCoinbasePot(const CBlock& block, int block_algo, CAmount requir
         std::vector<std::vector<unsigned char>> psol;
         if (Solver(o.scriptPubKey, psol) != TxoutType::SOLUTIONPOT) continue;
         if (psol.empty()) continue; // the readiness signal: 0-value, carries no obligation
-        if ((psol[0].empty() ? 0 : psol[0][0]) != block_algo) {
+        int pot_algo{-1};
+        if (!SolutionPotAlgo(psol, pot_algo) || pot_algo != block_algo) {
             // Minting a pot for another slot would let a miner divert its own withheld
             // fees into a different slot's jackpot.
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,

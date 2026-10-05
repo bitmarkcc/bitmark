@@ -41,7 +41,7 @@ from decimal import Decimal
 
 from test_framework.blocktools import NORMAL_GBT_REQUEST_PARAMS
 from test_framework.messages import COIN, CTxOut
-from test_framework.script import CScript, CScriptNum, OP_RETURN, OP_TRUE
+from test_framework.script import CScript, CScriptNum, OP_1, OP_RETURN, OP_TRUE
 from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.util import assert_equal, assert_greater_than
 from test_framework.wallet import MiniWallet, MiniWalletMode
@@ -259,9 +259,13 @@ class DynamicAlgoTest(BitcoinTestFramework):
                 for o in block["tx"][0]["vout"]]
 
     def pot_value(self, outs):
-        """Total value in <algo> OP_SOLUTIONPOT outputs for SLOT (0 if none)."""
-        want = bytes(CScript([CScriptNum.encode(CScriptNum(SLOT))[1:] or b""])).hex() \
-            + format(OP_SOLUTIONPOT, "02x")
+        """Total value in this slot's OP_SOLUTIONPOT outputs (0 if none).
+
+        The slot is encoded as SLOT+1, so the script's last stack item is never a
+        zero-valued push -- a 0-based encoding would leave every slot-0 pot unspendable.
+        """
+        # Canonically OP_1..OP_8 then OP_SOLUTIONPOT -- two bytes (see SolutionPotScript).
+        want = format(OP_1 + SLOT, "02x") + format(OP_SOLUTIONPOT, "02x")
         return sum(v for v, spk in outs if spk == want)
 
     def broadcast(self, tx):

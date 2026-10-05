@@ -664,12 +664,22 @@ value must be a **UTXO spend**, never a coinbase over-claim. So the pot is a rea
 spendable output.
 
 ```
-output = ( V , "<algo> OP_SOLUTIONPOT" )    // SPENDABLE, TxoutType::SOLUTIONPOT
+output = ( V , "<algo+1> OP_SOLUTIONPOT" )  // SPENDABLE, TxoutType::SOLUTIONPOT
 ```
 - `V` — accumulated withheld fees for this slot.
-- `algo ∈ [0, NUM_ALGOS)` — the slot whose solutions this pot funds (`OP_0` for algo 0,
-  else `OP_1..OP_16` / a 1-byte push). A slot's missed solutions must not subsidise a
-  different slot, so the pot is per-slot, as the reserve-fee contract is (§6.1).
+- `algo ∈ [0, NUM_ALGOS)` — the slot whose solutions this pot funds. A slot's missed
+  solutions must not subsidise a different slot, so the pot is per-slot, as the
+  reserve-fee contract is (§6.1).
+- **Stored as `algo + 1`**, i.e. `OP_1..OP_8`, and that is required rather than
+  cosmetic. The algo push is the LAST item this scriptPubKey leaves on the stack, and a
+  spend only succeeds if the final stack top is true — so a 0-based encoding puts an
+  empty push (`OP_0`) there for slot 0, `CastToBool` reads it as false, and **every
+  slot-0 pot is permanently unspendable** while slots 1–7 work. Found by trying to build
+  a claim; invisible until then, since creating pots looks perfectly healthy. Build and
+  read the script only through `SolutionPotScript` / `SolutionPotAlgo`
+  (`script/solver.h`), which own the conversion and reject out-of-range encodings.
+  `OP_RESERVEFEE` needs no such trick — its script ends with the 20-byte `refund_pkh`,
+  which is always truthy — so the two covenants encode the slot differently, on purpose.
 - `OP_SOLUTIONPOT = OP_NOP8` (`0xb7`) — a defined no-op, so the output is
   anyone-can-spend *at the script level*; every real rule lives in the `ConnectBlock`
   covenant. This is deliberately the same shape as `OP_RESERVEFEE` (§6.1).

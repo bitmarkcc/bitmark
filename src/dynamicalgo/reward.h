@@ -30,7 +30,7 @@ CAmount fp_mul(CAmount x, uint64_t q_q32);
 //!     scriptPubKey (the floor of sec 4.3), its total value <= max_coinbase_value = r,
 //!     and it emits the full subsidy. required_pot = 0.
 //!   * no solution: required_payout = 0; the primitive miner keeps floor(T*r) and the
-//!     coinbase must ALSO carry a <algo> OP_SOLUTIONPOT output of exactly required_pot
+//!     coinbase must ALSO carry a <algo+1> OP_SOLUTIONPOT output of exactly required_pot
 //!     (sec 4.5), so its total value is max_coinbase_value = emitted_subsidy + fees.
 //!     Only emitted_subsidy = floor(T*S) of the subsidy is emitted; the rest is
 //!     milestone-deferred, and the withheld fees go to the pot rather than being burned.

@@ -1,6 +1,7 @@
 #ifndef BITCOIN_PRIMITIVES_ALGO_H
 #define BITCOIN_PRIMITIVES_ALGO_H
 
+#include <cstdint>
 #include <sstream>
 
 const int NUM_ALGOS = 8;
