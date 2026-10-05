@@ -767,10 +767,34 @@ indefinitely at zero cost to its miners.
   the sum of the inputs, with **zero fee**. Value-preserving, so invariant 1's per-tx
   fee rule does not apply to this path.
 
-Consolidate exists because a coinbase cannot spend inputs, so creation necessarily adds
-one output per no-solution block. Without it a long dry spell would accumulate one UTXO
-per block. Anyone may consolidate, and miners are motivated to, since it makes their own
-eventual claim cheaper. The pot thus settles toward one UTXO per slot.
+Consolidate exists because a coinbase cannot spend inputs — a coinbase's single input
+must be the null prevout, which is why the claim is an ORDINARY transaction whose fee the
+coinbase then collects, rather than something the coinbase does directly. So creation
+necessarily adds one output per no-solution block. Without consolidate a long dry spell
+would accumulate one UTXO per block. Anyone may consolidate, and miners are motivated to,
+since it makes their own eventual claim cheaper. The pot thus settles toward one UTXO per
+slot.
+
+**Pots mature.** A pot output lives in a coinbase, so like any coinbase output it cannot
+be spent for `COINBASE_MATURITY` (720) blocks. A slot's withheld fees are therefore locked
+for ~a day after the block that withheld them, and neither path can touch them before
+that: a claim releases only MATURED pots, and so does a consolidation. Nothing special is
+needed to enforce this — it is the ordinary coinbase rule — but it does mean the claimable
+pot at any height is the sum of the slot's no-solution blocks up to 720 blocks ago, not up
+to the tip.
+
+**Neither path relays**, and that is deliberate (policy, `AreInputsStandard`). A claim is
+only valid in a block carrying a valid solution, while its fee is the WHOLE pot — so in a
+mempool it would be selected on feerate ahead of everything else by a miner that has no
+solution, and every block that miner built would be rejected
+(`solutionpot-claim-nosolution`), stalling it outright. Relaying a claim also has no
+legitimate use: the only party who can validly mine one is a miner that already holds a
+valid solution, and that is precisely the party assembling the block, which must price its
+coinbase to include the released fee. Consolidate cannot relay either, for the duller
+reason that being exactly value-preserving it pays zero fee. Both are built by the miner
+that mines them — `createsolutionpotclaim` and `createsolutionpotconsolidate`, which find
+their inputs via `scantxoutset start '["raw(51b7)"]'` for slot 0 (`raw(52b7)` for slot 1,
+and so on), so no pot index is needed in the node.
 
 #### Invariants
 - A block cannot both create and claim a pot for its slot: creation requires no valid

@@ -39,11 +39,13 @@ can run it), so it skips cleanly on a --disable-wamrc build.
 import os
 from decimal import Decimal
 
-from test_framework.blocktools import NORMAL_GBT_REQUEST_PARAMS
-from test_framework.messages import COIN, CTxOut
+from test_framework.blocktools import COINBASE_MATURITY, NORMAL_GBT_REQUEST_PARAMS
+from io import BytesIO
+
+from test_framework.messages import COIN, CTransaction, CTxOut
 from test_framework.script import CScript, CScriptNum, OP_1, OP_RETURN, OP_TRUE
 from test_framework.test_framework import BitcoinTestFramework, SkipTest
-from test_framework.util import assert_equal, assert_greater_than
+from test_framework.util import assert_equal, assert_greater_than, assert_raises_rpc_error
 from test_framework.wallet import MiniWallet, MiniWalletMode
 
 NUM_ALGOS = 8
@@ -249,6 +251,15 @@ class DynamicAlgoTest(BitcoinTestFramework):
 
     # ---- helpers for reading what got mined ------------------------------------------
 
+    def pot_utxos(self, height):
+        """[(txid, vout, value_sat)] of the pot outputs in the coinbase at `height`."""
+        node = self.nodes[0]
+        block = node.getblock(node.getblockhash(height), 2)
+        cb = block["tx"][0]
+        want = format(OP_1 + SLOT, "02x") + format(OP_SOLUTIONPOT, "02x")
+        return [(cb["txid"], n, int(round(o["value"] * COIN)))
+                for n, o in enumerate(cb["vout"]) if o["scriptPubKey"]["hex"] == want]
+
     def coinbase_outs(self, height=None):
         """[(value_sat, scriptPubKey_hex)] of the coinbase at `height` (default: tip)."""
         node = self.nodes[0]
@@ -394,6 +405,91 @@ class DynamicAlgoTest(BitcoinTestFramework):
         outs = self.coinbase_outs()
         assert_equal(self.pot_value(outs), 0)
         assert_greater_than(sum(v for v, spk in outs if spk == payout_spk.hex()), 0)
+
+        self.log.info("the pot covenant: consolidating two pots into one")
+        # Two no-solution blocks, each withholding fees into its own pot output. A coinbase
+        # cannot spend, so this is the only shape pots ever come in -- one per block --
+        # which is why something has to collapse them.
+        pots = []
+        while len(pots) < 2:
+            self.wallet.send_self_transfer(from_node=node, fee=Decimal("0.01"))
+            self.generate(self.wallet, 1)
+            found = self.pot_utxos(node.getblockcount())
+            assert_equal(len(found), 1)
+            pots.append(found[0])
+        inputs = [{"txid": t, "vout": v} for t, v, _ in pots]
+        total = sum(val for _, _, val in pots)
+
+        # A pot lives in a COINBASE, so it is subject to coinbase maturity like any other
+        # coinbase output -- a slot's withheld fees are locked for COINBASE_MATURITY blocks
+        # after the block that withheld them, and no claim or consolidation can touch them
+        # before that. Mine it out. These blocks carry no transactions, so F = 0 and they
+        # withhold nothing, which is why they do not pile up further pots.
+        self.log.info("maturing the pots (%d blocks)", COINBASE_MATURITY)
+        target = node.getblockcount() + COINBASE_MATURITY
+        while node.getblockcount() < target:
+            self.generate(self.wallet, min(200, target - node.getblockcount()))
+
+        built = node.createsolutionpotconsolidate(inputs)
+        assert_equal(built["slot"], SLOT)
+        assert_equal(int(round(built["amount"] * COIN)), total)
+
+        # It must NOT relay: value-preserving means zero fee, and a pot spend in the
+        # mempool is a hazard in general (a claim there would stall miners without a
+        # solution). The miner that mines one builds it.
+        assert_raises_rpc_error(-26, "bad-txns-nonstandard-inputs",
+                                node.sendrawtransaction, built["hex"], 0)
+
+        # The covenant's rejections, BEFORE the good consolidation below -- these cases are
+        # expected to fail, so they mine nothing and leave the two pots unspent, whereas a
+        # successful consolidation consumes them and everything after would then fail on
+        # missing inputs instead of the rule under test. They are consensus checks reached
+        # only through a block, so TestBlockValidity inside generateblock reports them.
+        self.log.info("the pot covenant: rejections")
+        bad = CTransaction()
+        bad.deserialize(BytesIO(bytes.fromhex(built["hex"])))
+        # A single input is not a consolidation -- that shape is reserved for a claim.
+        one = CTransaction()
+        one.deserialize(BytesIO(bytes.fromhex(built["hex"])))
+        one.vin = one.vin[:1]
+        one.vout[0].nValue = pots[0][2]
+        one.rehash()
+        assert_raises_rpc_error(-25, "solutionpot-consolidate-count", node.generateblock,
+                                self.wallet.get_address(), [one.serialize().hex()],
+                                invalid_call=False)
+        # Skimming value off a consolidation. Under-paying rather than over-paying: an
+        # output ABOVE the inputs is caught by the generic bad-txns-in-belowout check long
+        # before the covenant, whereas one satoshi BELOW is a well-formed transaction that
+        # leaves that satoshi as fee -- which is precisely the leak of pot value to the
+        # mining miner that the exact-sum rule exists to prevent.
+        bad.vout[0].nValue = total - 1
+        bad.rehash()
+        assert_raises_rpc_error(-25, "solutionpot-consolidate-value", node.generateblock,
+                                self.wallet.get_address(), [bad.serialize().hex()],
+                                invalid_call=False)
+        # Rolling the value into ANOTHER slot's pot, which would let one slot's missed
+        # solutions subsidise a different slot.
+        bad2 = CTransaction()
+        bad2.deserialize(BytesIO(bytes.fromhex(built["hex"])))
+        bad2.vout[0].scriptPubKey = bytes([OP_1 + SLOT + 1, OP_SOLUTIONPOT])
+        bad2.rehash()
+        assert_raises_rpc_error(-25, "solutionpot-consolidate-algo", node.generateblock,
+                                self.wallet.get_address(), [bad2.serialize().hex()],
+                                invalid_call=False)
+
+        # generateblock bypasses the mempool. A zero-fee transaction leaves the block's
+        # fee total untouched, so the coinbase it prices against an empty mempool is still
+        # correct -- which is what makes consolidation testable this way and a claim not.
+        self.log.info("the pot covenant: consolidating for real")
+        node.generateblock(self.wallet.get_address(), [built["hex"]], invalid_call=False)
+        # The rollover pot is in the consolidate tx, not the coinbase, so look there.
+        block = node.getblock(node.getblockhash(node.getblockcount()), 2)
+        want = format(OP_1 + SLOT, "02x") + format(OP_SOLUTIONPOT, "02x")
+        rollover = [o for t in block["tx"][1:] for o in t["vout"]
+                    if o["scriptPubKey"]["hex"] == want]
+        assert_equal(len(rollover), 1)
+        assert_equal(int(round(rollover[0]["value"] * COIN)), total)
+        self.log.info("two pots worth %d sat merged into one", total)
 
         self.log.info("dynamic-algo activation and reward rules OK")
 

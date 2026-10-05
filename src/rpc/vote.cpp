@@ -463,6 +463,167 @@ static RPCHelpMan getalgoreadiness()
     };
 }
 
+
+// Bitmark: shared front half of the two pot-spend builders (doc sec 4.5 "Spend paths").
+// Resolves the requested outpoints against the UTXO set, insists every one is a real
+// solution pot of ONE slot, and returns their total. `selector` is the scriptSig push
+// that picks the spend path, and is the only difference between the two transactions'
+// inputs.
+static CAmount BuildPotSpendInputs(const UniValue& inputs, ChainstateManager& chainman,
+                                   int selector, CMutableTransaction& mtx, int& algo_out)
+{
+    if (inputs.empty()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "no pot outputs given");
+    }
+    CAmount total{0};
+    algo_out = -1;
+    LOCK(cs_main);
+    const CCoinsViewCache& coins{chainman.ActiveChainstate().CoinsTip()};
+    for (size_t i = 0; i < inputs.size(); i++) {
+        const UniValue& o{inputs[i].get_obj()};
+        RPCTypeCheckObj(o, {{"txid", UniValueType(UniValue::VSTR)},
+                            {"vout", UniValueType(UniValue::VNUM)}});
+        const Txid txid{Txid::FromUint256(ParseHashO(o, "txid"))};
+        const int vout{o.find_value("vout").getInt<int>()};
+        if (vout < 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "vout must not be negative");
+        const COutPoint outpoint{txid, static_cast<uint32_t>(vout)};
+
+        const Coin& coin{coins.AccessCoin(outpoint)};
+        if (coin.IsSpent()) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               strprintf("%s:%d is not an unspent output", txid.GetHex(), vout));
+        }
+        std::vector<std::vector<unsigned char>> sols;
+        int algo{-1};
+        if (Solver(coin.out.scriptPubKey, sols) != TxoutType::SOLUTIONPOT
+            || !SolutionPotAlgo(sols, algo)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               strprintf("%s:%d is not a solution pot output", txid.GetHex(), vout));
+        }
+        if (algo_out == -1) {
+            algo_out = algo;
+        } else if (algo != algo_out) {
+            // The covenant rejects mixed slots, since the value accounting would be
+            // ambiguous -- catch it here rather than hand back an unusable transaction.
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               strprintf("%s:%d is a slot-%d pot; all inputs must be one slot (saw %d)",
+                                         txid.GetHex(), vout, algo, algo_out));
+        }
+        total += coin.out.nValue;
+        // Keyless: the scriptSig is just the selector, and nothing signs anything -- the
+        // covenant settles both paths by value accounting alone.
+        CTxIn in{outpoint};
+        in.scriptSig = selector == 0 ? (CScript() << OP_0) : (CScript() << CScriptNum(selector));
+        mtx.vin.push_back(std::move(in));
+    }
+    return total;
+}
+
+static RPCHelpMan createsolutionpotclaim()
+{
+    return RPCHelpMan{
+        "createsolutionpotclaim",
+        "\nBuild the transaction that releases a slot's solution pot (doc sec 4.5). Pot-only\n"
+        "inputs with scriptSig selector 0, and a single 0-value OP_RETURN output, so the\n"
+        "whole pot becomes transaction fee and the coinbase of the block carrying it claims\n"
+        "the value.\n"
+        "\nIT IS ONLY VALID IN A BLOCK THAT CARRIES A VALID DYNAMIC-ALGO SOLUTION for the\n"
+        "pot's own slot. Do NOT broadcast it: a claim in the mempool would be selected on\n"
+        "its (enormous) feerate by miners that have no solution, and every such block is\n"
+        "invalid -- so pot spends are deliberately non-standard and will not relay. Put it\n"
+        "in a block you are assembling yourself.\n"
+        "\nFind a slot's pots with scantxoutset and the pot scriptPubKey, which is OP_1..OP_8\n"
+        "(the slot plus one) followed by OP_SOLUTIONPOT -- e.g. slot 0 is\n"
+        "scantxoutset start '[\"raw(51b7)\"]', slot 1 is raw(52b7).\n",
+        {
+            {"inputs", RPCArg::Type::ARR, RPCArg::Optional::NO, "The pot outputs to release",
+                {
+                    {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+                        {
+                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
+                        }},
+                }},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "hex", "The raw transaction"},
+            {RPCResult::Type::NUM, "slot", "The mPoW slot whose pot this releases"},
+            {RPCResult::Type::STR_AMOUNT, "amount", "Total value released, which becomes fee"},
+        }},
+        RPCExamples{HelpExampleCli("createsolutionpotclaim", "'[{\"txid\":\"<id>\",\"vout\":0}]'")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+            ChainstateManager& chainman = EnsureAnyChainman(request.context);
+            CMutableTransaction mtx;
+            int algo{-1};
+            const CAmount total{BuildPotSpendInputs(request.params[0].get_array(), chainman,
+                                                    /*selector=*/0, mtx, algo)};
+            // One 0-value unspendable output: with pot-only inputs that makes the fee
+            // exactly the pot, which is the covenant's "released value becomes fee" rule.
+            mtx.vout.emplace_back(0, CScript() << OP_RETURN);
+
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));
+            result.pushKV("slot", algo);
+            result.pushKV("amount", ValueFromAmount(total));
+            return result;
+        },
+    };
+}
+
+static RPCHelpMan createsolutionpotconsolidate()
+{
+    return RPCHelpMan{
+        "createsolutionpotconsolidate",
+        "\nBuild the transaction that merges several of a slot's solution pots into one\n"
+        "(doc sec 4.5). Pot-only inputs with scriptSig selector 1, and a single pot output\n"
+        "for the same slot carrying exactly the sum, so it is value-preserving and pays no\n"
+        "fee.\n"
+        "\nA coinbase cannot spend, so every no-solution block adds another pot output and\n"
+        "something has to collapse them; this is that. Unlike a claim it needs no solution\n"
+        "and is valid in any block -- but it pays no fee, so it will not relay either. Put\n"
+        "it in a block you are assembling yourself.\n"
+        "\nFind a slot's pots with scantxoutset -- see createsolutionpotclaim.\n",
+        {
+            {"inputs", RPCArg::Type::ARR, RPCArg::Optional::NO, "The pot outputs to merge (at least two)",
+                {
+                    {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+                        {
+                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
+                        }},
+                }},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "hex", "The raw transaction"},
+            {RPCResult::Type::NUM, "slot", "The mPoW slot these pots belong to"},
+            {RPCResult::Type::STR_AMOUNT, "amount", "Value of the merged pot"},
+        }},
+        RPCExamples{HelpExampleCli("createsolutionpotconsolidate", "'[{\"txid\":\"<id>\",\"vout\":0},{\"txid\":\"<id2>\",\"vout\":0}]'")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+            ChainstateManager& chainman = EnsureAnyChainman(request.context);
+            const UniValue inputs{request.params[0].get_array()};
+            if (inputs.size() < 2) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "consolidating needs at least two pot outputs");
+            }
+            CMutableTransaction mtx;
+            int algo{-1};
+            const CAmount total{BuildPotSpendInputs(inputs, chainman, /*selector=*/1, mtx, algo)};
+            // Exactly the sum, to the same slot: no value created, and zero fee, so
+            // consolidating cannot leak pot value to a miner.
+            mtx.vout.emplace_back(total, SolutionPotScript(algo));
+
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));
+            result.pushKV("slot", algo);
+            result.pushKV("amount", ValueFromAmount(total));
+            return result;
+        },
+    };
+}
+
 void RegisterVoteRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -470,6 +631,8 @@ void RegisterVoteRPCCommands(CRPCTable& t)
         {"voting", &createstakevotescript},
         {"voting", &getalgovote},
         {"voting", &getalgoreadiness},
+        {"mining", &createsolutionpotclaim},
+        {"mining", &createsolutionpotconsolidate},
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);
