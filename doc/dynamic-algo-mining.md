@@ -101,12 +101,17 @@ each:
 OP_RETURN OP_SOLUTION <seq> <chunk>
 ```
 - Self-marking, unspendable, 0-value, no UTXO.
-- `<seq>` gives a total order: the verifier collects all `OP_SOLUTION` outputs IN THE
-  BLOCK, requires `seq = 0..N-1` (contiguous, unique), concatenates → the block's
-  solution bytes.
-- Self-correcting: the assembled bytes feed `verify()`; a stray/wrong `OP_SOLUTION`
-  output changes the bytes and `verify()` fails, so the miner is forced to include
-  exactly the intended set.
+- `<seq>` gives a total order: the verifier collects the `OP_SOLUTION` outputs of ONE
+  transaction — the first in block order that has any (§7 step 3) — requires
+  `seq = 0..N-1` (contiguous, unique), and concatenates → the block's solution bytes.
+  A block may contain further solution-bearing txs; they are ignored outright, never
+  parsed and never verified, which is what keeps a block's verification cost at one
+  `verify()` run however many are present (§2.1quater).
+- Self-correcting, and strictly so BECAUSE the scope is one tx: the chunk set is fixed
+  by a single signed transaction, so no third party can alter what `verify()` is fed.
+  A stray or wrong `OP_SOLUTION` output inside that tx changes the bytes and `verify()`
+  fails, so its author is forced to carry exactly the intended set — and a rival tx
+  elsewhere in the block cannot interfere with it at all.
 - Chunk ≤ 520 bytes (`MAX_SCRIPT_ELEMENT_SIZE`). There is NO consensus cap on the
   per-block total: block weight already bounds the size and the gas limits (§8.6,
   §8.7) already bound the verification cost, so a separate one would be redundant
@@ -127,9 +132,23 @@ front-running risk. The relay fee lands in `nFees` and the coinbase claims it.
 Enabling this is purely **policy/mempool work, not consensus** (§9): relax standardness
 so a tx may carry multiple `OP_RETURN OP_SOLUTION` outputs, and add a per-tx relay-size
 cap (a policy limit, distinct from any consensus rule). Out-of-band hand-off (a dynamic
-miner selling a solution directly to a pool) remains possible as a fallback but is no
-longer the assumed path. Either way, **consensus is identical**: `ConnectBlock` scans
-the whole block for `OP_SOLUTION` outputs (§7) and does not care how the tx arrived.
+miner selling a solution directly to a pool, or `submitsolution`) remains possible as a
+fallback but is no longer the assumed path. Either way, **consensus is identical**:
+`ConnectBlock` reads the solution from the first solution-bearing tx (§7 step 3) and does
+not care how it arrived.
+
+What makes permissionless relay safe to *receive* is that a solution tx can never make a
+block invalid. Whatever it contains — a solution that does not verify, one aimed at
+another slot, outright garbage, or a rival alongside the real one — the worst outcome is
+that the block has no valid solution and takes the no-solution branch (§7 steps 3–4). So
+accepting, relaying or even mining one adds **no** invalidity an attacker can exploit:
+the mempool cannot be turned into a minefield for miners who have not implemented
+solution selection.
+
+That is narrower than "nothing can go wrong". A pool mining a slot with an active algo
+still owes the coinbase outputs that slot requires on *every* block, solution or not
+(§6bis.2) — an obligation it has regardless of what is in the mempool. The point here is
+only that no solution tx can *add* to it. §2.1quater covers what that leaves open.
 
 ### 2.1bis The anchor: why the seed binds to the previous SLOT block
 `anchor_hash` is the hash of the previous block of **this block's own mPoW slot**, not
@@ -186,9 +205,101 @@ all **policy, never consensus**:
   tx strictly needs, because funding ~975 kB costs a real fee (~975k sat at 1 sat/B),
   possibly assembled from several UTXOs.
 
+- **A cap on how many may be queued** (optional). Solution txs are the one class of
+  transaction a node may want to bound by *count* as well as by feerate, because the
+  mempool cannot tell a real one from garbage without running the verifier. A single
+  global `MAX_SOLUTION_TXS` (say 8), evicting the lowest declared feerate, bounds how
+  many rivals can compete for a miner's per-epoch verification budget (§2.1quater). It
+  is NOT itself a CPU bound — that budget is — so the exact value is not
+  safety-critical.
+
 Being policy, a miner may include a solution tx that breaches these; it simply will
 not have propagated. Consensus bounds a solution only by block weight and the gas
 limits.
+
+### 2.1quater Rival solution transactions
+Permissionless relay (§2.1) means anyone can put a solution tx in the mempool, so a
+miner may face several — two honest dynamic miners, or one honest miner and an attacker.
+Only one can be the block's solution (§7 step 3), so the miner must choose.
+
+**Why a solution cannot be checked on arrival.** The obvious design — verify a solution
+tx when it enters the mempool, drop it if it fails — does not survive the cost. One
+`verify()` is up to **~38 s of reference-core CPU** (§8.6), and the algos this mechanism
+exists for are *data-oblivious*: input-independent control flow is exactly the property
+that lets one measurement bound their gas counts (§8.6), so **garbage costs the same as
+a real solution**. There is no fast rejection path, and a transaction that is never
+mined never pays its fee, so verifying unmined transactions would hand anyone an
+unpriced way to spend every node's CPU.
+
+So nothing speculative is verified. Three rules make selection work anyway.
+
+**1. A candidate must be verified to be included, so the budget is per EPOCH.** A
+template cannot dodge the verdict of whatever solution it carries: pricing the
+no-solution branch while carrying a valid solution creates a pot output consensus
+rejects, and pricing the solution branch without one omits the required `α·r`. So
+including a candidate costs a run. What *can* be decoupled is runs from template
+rebuilds — the rebuild rate is set by how often pools poll (every 5 s, or every call for
+a pool rotating algos) and has nothing to do with what a run costs, so it must not be
+the budget. The budget is **candidate runs per slot per anchor epoch** (~16 min,
+§2.1bis), set by an explicit node option with a small default and raisable by a pool
+with CPU to spare:
+
+| per slot, per anchor epoch | runs |
+| --- | --- |
+| empty-solution α₀, β₀ | 1, memoized for the whole epoch |
+| candidates tried | ≤ `budget` |
+| every later template rebuild (~190 of them) | **0** — all cache hits |
+
+Worst case `(1 + budget)` runs per slot per epoch, independent of polling. At the ~38 s
+worst case with `budget = 1` that is ~76 s per 16 min, ~8% of a core per slot; at the LLM
+trunk's real ~1.5 s it is negligible. The single α₀/β₀ run is irreducible — it is the
+same work consensus does to validate one block of that slot.
+
+**2. Memoize `verify()` by CONTENT (§8.9).** The cache is what keeps the budget from
+being spent re-deciding something already decided, and it must be keyed on
+`(branch, algo, anchor, nbits, payout, solution)` — never on the txid, because **txids
+are malleable**: the same garbage solution can be rewrapped under a new txid for free (a
+different funding input, a 1-satoshi change to an output, reordered outputs), and a
+txid-keyed cache would hand every copy a fresh ~38 s run. Content-keying collapses them
+all onto one entry.
+
+Note what this does *not* claim. Flipping one byte of the solution produces a genuinely
+new key, and that is free for an attacker too, so the number of distinct keys is
+unbounded. The cache is not the bound — rule 1's per-epoch budget is. Content-keying
+simply ensures each unit of that budget goes to a *new* question.
+
+**3. Mine the losers anyway, and collect their fees.** A candidate that fails to verify
+is still an ordinary fee-paying transaction, and since it cannot invalidate a block
+(§2.1 "Delivery") there is no reason to leave it out: including it is better than not by
+exactly its fee. It must simply be ordered *after* the chosen solution tx, so consensus
+ignores it (§7 step 3). This is what makes ordering candidates by declared feerate sound
+— the fee of a losing candidate is collected rather than forgone, so a high declared fee
+is a real bid and not a free bluff.
+
+The one ordering constraint: if a known-bad solution tx were an *ancestor* of the chosen
+candidate it would have to be placed first, making it the block's solution source. In
+that case the miner drops the chosen candidate instead.
+
+**The economics, for an attacker publishing solutions that do not verify.** With
+`T = β(1−α)` (§4.4), a miner keeps `(1−α)·r` with a valid solution and only `T·r`
+without:
+
+| what they do | their cost | the network's cost |
+| --- | --- | --- |
+| queue garbage in the mempool | a funded UTXO per distinct txid, plus mempool admission | one verifier run per txid, **once, ever** |
+| it gets mined after the chosen solution tx | **the fee they declared, actually paid** | nothing — ignored unparsed (§7 step 3) |
+| it gets mined as the block's solution source | **the fee they declared, actually paid** | nothing; block still valid, and that pool keeps `T·r` rather than `(1−α)·r` |
+
+Denying one block's `α·r` means outranking the real solution on declared feerate across
+`budget + 1` transactions *and* having them mined — so the attacker pays a fee above the
+real solution tx's on each one, while the dynamic miner has to outbid on only one. The
+contest is asymmetric in the defender's favour and priced by the ordinary fee market.
+The last row is self-policing too: a pool that lets garbage sort ahead of the real
+solution pays for that mistake out of its own reward, not the chain's.
+
+`submitsolution` (§9) remains available for a dynamic miner who would rather not pay
+relay fees at all, or wants a private arrangement with a pool — but it is a convenience,
+not a defence.
 
 ### 2.2 Alternative: solution in the coinbase
 The separate solution tx (§2.1) is the form that makes standard GBT pool integration
@@ -201,9 +312,10 @@ coinbase.vout += OP_RETURN OP_SOLUTION <seq> <chunk>   (one per chunk)
 Both forms are consensus-equivalent: `seq = 0..N-1`, contiguous/unique, concatenated,
 and the assembled bytes feed `verify()` identically. The
 payout may likewise be committed in the coinbase (scriptSig or a marker output) in this
-form. A block MUST NOT mix the two — all `OP_SOLUTION` outputs for a block live either
-in the coinbase or in exactly one solution tx (the whole-block scan tolerates either,
-but keeping them together keeps the `seq` ordering unambiguous).
+form. Mixing the two is not *invalid*, but it is pointless: the coinbase is tx 0, so
+whenever it carries any `OP_SOLUTION` output it is the block's solution source and a
+separate solution tx in the same block is ignored (§7 step 3). A miner choosing this
+form should therefore put the whole stream in the coinbase.
 
 When to use the coinbase form:
 - **Solo miners** building their own block/coinbase — no reason to spend a funding
@@ -234,7 +346,9 @@ Whatever an algo needs to validate ONE block must fit in that block.
 
 ### 2.5 Multi-block solutions
 An algo may read the FULL BLOCK DATA of its own slot's previous blocks, and so the
-`OP_SOLUTION` outputs in them (found by the same whole-block scan). A running data
+`OP_SOLUTION` outputs in them (found by the same first-solution-bearing-tx rule as §7
+step 3 — an algo walking its own history should apply that rule, not collect every
+`OP_SOLUTION` output it sees, or it will read chunks that block's consensus ignored). A running data
 stream (e.g. accumulating LLM LoRA deltas) SPANS multiple blocks: each block
 contributes its chunk; `verify()` for the current block uses the window. Those blocks
 are fetched on demand through the `chain.*` imports (§3.1), not passed as a buffer.
@@ -862,7 +976,10 @@ the `α·r` output. Consequences:
   it and its blocks are **invalid**. Lowering `coinbasevalue` is not enough to steer it,
   because the obligation is an extra output, not merely a smaller claim.
 - **Unmodified pool + a solution exists.** Likewise invalid rather than merely
-  unrewarded: the `α·r` output is required, not optional.
+  unrewarded: the `α·r` output is required, not optional. Note the cause, though — it is
+  the missing coinbase output, never the solution tx. A solution tx can never itself
+  invalidate a block (§2.1 "Delivery"), so a pool on an active slot is in the same
+  position whether or not one is in the mempool: it owes the outputs either way.
 - **To mine a slot with an active algo at all**, the pool must read the GBT fields and
   append the outputs they carry.
 
@@ -912,24 +1029,40 @@ the parent chain per `dynamic-algo-voting.md`, so a block can't self-activate):
    appear as ordinary fees from their spending txs (the released slice left unassigned)
    and are already inside `total_fees`; the covenant checks in step 6 gate their
    validity.
-3. **Solution & payout.** Scan the WHOLE block for `OP_SOLUTION` outputs (in the
-   solution tx per §2.1, or the coinbase per §2.2), order by `seq` (0..N-1,
-   contiguous/unique), concatenate. Read the committed
-   `payout_scriptPubKey` from the same source. (If no `OP_SOLUTION` outputs exist,
-   there is no solution this block → go to the no-solution branch of step 6.)
+3. **Solution & payout.** Find the FIRST transaction in block order carrying any
+   `OP_SOLUTION` output — the coinbase (§2.2) or a solution tx (§2.1). That ONE tx is
+   the block's solution source; every later solution-bearing tx is ignored entirely,
+   never parsed and never verified (§2.1quater). Within it, order its `OP_SOLUTION`
+   outputs by `seq` (0..N-1, contiguous/unique): the `seq = 0` chunk is the committed
+   `payout_scriptPubKey`, and `seq = 1..N-1` concatenated is the solution. If no tx
+   carries one — **or that tx's set is malformed**, i.e. a `seq` that is non-minimal,
+   negative, out of range or duplicated — the block simply **has no solution** and
+   takes the no-solution branch of step 5. It is never *invalid* for this.
 4. **Execute.** Load the slot's materialized algo module; run
    `verify(anchor_hash, payout, nbits, solution, out_ab)` under the gas/memory/I-O
    limits (§8), with the slot's previous blocks served through the `chain.*` imports
-   (§3.1). A limit breach or module fault ⇒ invalid; a slot block that must be
-   retained but cannot be read is a local fault ⇒ fatal error, not invalid.
-   Require `0 ≤ α < 1`, `0 ≤ β < 1`. For the no-solution branch, run `verify()` with an
-   empty solution solely to read `α, β`.
+   (§3.1). Three outcomes, and only one of them is an error:
+   - **returns 0** ⇒ valid solution; `α, β` come from `out_ab`.
+   - **returns non-zero, or faults, or breaches a gas/memory/I-O limit** ⇒ no valid
+     solution — *not* an invalid block (§2.1quater). `α, β` then come from a SECOND run
+     with an empty solution, since a trap may never have written `out_ab`. This is the
+     only path on which a block costs two verifier runs; each is separately bounded by
+     the gas limits, so the worst case is 2× and whoever mined the block paid its fees.
+   - **a slot block consensus says must be retained cannot be read HERE** ⇒ a LOCAL
+     fault ⇒ fatal error, never invalidity (§3.1).
+
+   `0 ≤ α < 1` and `0 ≤ β < 1` are automatic from the Q32 encoding (§3): nothing to
+   check. Note the asymmetry with `OP_PUSHCODE`, whose grammar errors *do* invalidate a
+   block (step 6bis of the voting doc): pushcode bytes become consensus state every node
+   must build identically, whereas solution bytes are only an input to a payment
+   decision, so the worst a bad one can do is forfeit the payment.
 5. **Reward split** (with `r = subsidy + total_fees`, `T = β(1−α)`, integer α,β per
    §4.4). `total_fees` already includes any solution pot released by this block, since a
    pot claim leaves its value as fee (§4.5):
-   - `verify()==0`: the coinbase must contain the one required output paying `≥ α·r`
+   - valid solution (step 4, first outcome): the coinbase must contain the one required
+     output paying `≥ α·r`
      to `payout_scriptPubKey` (§2.3); total coinbase value `≤ r`; emitted subsidy = `S`.
-   - else: the coinbase keeps `≤ T·r` for itself and must pay exactly `(1 − T)·F` into a
+   - otherwise: the coinbase keeps `≤ T·r` for itself and must pay exactly `(1 − T)·F` into a
      `<algo> OP_SOLUTIONPOT` output for its own slot (§4.5); total coinbase value
      `≤ T·S + F`, hence `≤ S + F`; emitted subsidy = `T·S`, with the rest deferred via
      the milestone accounting.
@@ -1373,6 +1506,52 @@ not the guarantee.
   a different bounded compiler (Cranelift/wasmtime is the Rust analog other wasm chains
   use for exactly this bounded-compile reason).
 
+### 8.9 Memoizing `verify()` — required, not an optimization
+`verify()` is a pure function of a small, fully enumerable set of inputs, and one call
+costs up to ~38 s (§8.6). Its results must therefore be cached, and this is a
+**requirement for an expensive algo to be mineable at all** rather than a performance
+nicety. Two independent reasons:
+
+- **Template construction.** `getblocktemplate` rebuilds a template on every new tip, at
+  most every 5 s when the mempool changes, **and on every change of the requested algo**
+  (`rpc/mining.cpp`) — and the cache holds exactly one template, so a pool rotating
+  through 8 algos rebuilds on every single call. Each rebuild runs `verify()` twice: once
+  in `ResolveAlgoReward` to price the coinbase, once more inside `TestBlockValidity`. At
+  the LLM trunk's real ~1.5 s that is ~3 s of CPU *per call per algo*; at the gas limits
+  it is ~76 s, i.e. no template can be produced at all. This is a latent property of the
+  current code, not something solution selection introduces.
+- **Solution selection** (§2.1quater) depends on a rejected candidate staying rejected
+  for free, which is exactly a cache hit — and on that holding for every malleated copy
+  of the same solution, which is why the key below is content and not a txid.
+
+**The key must be the complete input set**, or the cache can return a verdict for a
+different computation:
+
+```
+key = Hash(branch ‖ algo ‖ anchor ‖ nbits ‖ payout ‖ solution)
+val = { ok, solution_valid, alpha_q32, beta_q32 }
+```
+
+`branch` fixes the module, and `anchor`, `nbits`, `payout` and `solution` are verify()'s
+literal arguments (§3). The slot-block window served through the `chain.*` imports (§3.1)
+is **not** a further input: for any parent between two blocks of the slot, the newest
+same-algo block at or below it *is* the anchor, so `(branch, algo, anchor)` fixes both
+the window and `slot_block_count()`. A reorg below the anchor changes the anchor hash,
+since a block hash commits to its ancestors. Nothing outside the key can change the
+result.
+
+This sits on the consensus path, so it takes the same care as Core's script execution
+cache (`InitScriptExecutionCache`): a fixed memory bound set at startup, and a cuckoo
+cache or equivalent so eviction is O(1) and the size is a hard limit rather than a hope.
+Being a pure-function cache it can never change a verdict — only skip recomputing one —
+so unlike the activation store it carries no divergence risk if it is cold, dropped or
+sized differently from node to node.
+
+Consequences once it is in place: steady-state template construction does **zero**
+verifier runs; a block that arrives after we templated against the same solution
+validates without running the module; and the no-solution branch's second run (§7 step 4)
+is a hit rather than a recomputation.
+
 ---
 
 ## 9. Open items / parameters
@@ -1392,11 +1571,34 @@ not the guarantee.
 - Solution assembly: RESOLVED -- no consensus `MAX_SOLUTION_BYTES` (block weight + gas
   bound it, §2.1); payout scriptPubKey is the `seq=0` chunk, solution is `seq=1..N-1`
   (§2.1); assembled by `dynamicalgo::ExtractBlockSolution`.
-- `submitsolution`-style RPC for handing a solution tx to the node, and the node-side
-  template policy that injects it + the `dynamic` GBT field (§6bis).
-- Relay of solution txs (policy, not consensus): mempool relay is the primary delivery
-  model (§2.1). Needs `OP_SOLUTION` standardness (allow multiple `OP_RETURN`s) + a per-tx
-  relay-size cap so solutions propagate p2p. Out-of-band hand-off stays as a fallback.
+- `submitsolution`-style RPC for handing a solution tx to the node, bypassing mempool
+  ranking (§2.1quater). A convenience, not a defence.
+- Relay of solution txs (policy, not consensus): **implemented** — `OP_SOLUTION`
+  standardness (multiple `OP_RETURN`s, dust-exempt) + `MAX_SOLUTION_TX_WEIGHT` /
+  `MAX_SOLUTION_TX_INPUTS` (§2.1ter). Still optional: a global `MAX_SOLUTION_TXS` queue
+  cap.
+- **Solution selection from the mempool (§2.1quater): SPECIFIED, NOT YET IMPLEMENTED.**
+  Settled by this round of spec work:
+  - a solution can never invalidate a block — malformed chunk sets, a verifier fault,
+    out-of-gas and rival solution txs all fall through to the no-solution branch (§7
+    steps 3–4), so the mempool is not a minefield for pools that have not implemented
+    selection, and a miner's mistake costs part of one reward rather than the block;
+  - the block's solution is the FIRST solution-bearing tx in block order; later ones are
+    ignored unparsed, which is what holds block verification at one `verify()` run (§7
+    step 3);
+  - losing candidates are mined anyway for their fees, placed after the chosen one —
+    which is what makes ordering by declared feerate sound rather than a free bluff;
+  - the verification budget is **candidate runs per slot per anchor epoch**, never per
+    template rebuild (§2.1quater rule 1). Needs a node option and a default.
+  - *Open:* nothing structural, but the `budget` default and `MAX_SOLUTION_TXS` value
+    want a second look once a real algo's measured verify time is known, since the
+    ~38 s figure is the adversarial bound and the LLM trunk's real forward is ~1.5 s.
+- **`verify()` memoization (§8.9): REQUIRED, NOT YET IMPLEMENTED.** Discovered while
+  specifying selection: `getblocktemplate` rebuilds a template every 5 s (and on every
+  algo change, with a one-entry cache), and each rebuild runs `verify()` twice, so an
+  activated expensive algo is unmineable without this — a latent problem in the current
+  code, independent of selection. Content-addressed key, fixed memory bound, cuckoo
+  cache like `InitScriptExecutionCache`. Pure-function cache, so no divergence risk.
 - Gas metering (§8.6): **implemented.** Mechanism + 15 count classes + combined BULK
   budget + measured trunk profile + per-class limits + per-op times calibrated, and
   per-class enforcement wired end-to-end: shared taxonomy/limits in
