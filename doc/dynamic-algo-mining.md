@@ -1780,20 +1780,21 @@ make a node recompute. `chain_unavailable` is the sole exclusion.
     is ~1.5 s. Also untested end-to-end: no test activates an algo yet, so the selection
     path has only unit coverage of its parts
     (`feature_solutionpot.py` Layer B is where this gets exercised).
-- **Nothing uses the 720-block activation notice.** The delay exists so miners can
-  prepare: once a window closes, the winner and the height are settled and `getalgovote`
-  reports `winner`, `activation_block` and `enforced_from`. But the node itself does not
-  act on it — `ModuleStore::GetOrCompile` materializes a branch on FIRST USE, so the AOT
-  compile lands on whichever template or block first needs it, i.e. exactly at
-  `enforced_from`. With compile time still unbounded (§8.8) that is the worst possible
-  moment for it. It should pre-compile during the delay instead: on each new tip, if a
-  slot has a settled winner that is assemblable and not yet materialized, compile it in
-  the background. Cheap to do, and it turns §8.8's compile-bound problem from a
-  block-validation risk into a day's advance work.
-  One wrinkle to respect: assemblability is only final AT the activation height, because
-  pushcode allows forward references, so a branch that cannot be assembled when the
-  window closes may become assemblable during the delay. Pre-compilation must therefore
-  re-check rather than conclude once.
+- **Pre-compiling during the 720-block notice: CONSIDERED, REJECTED (2026-10-06).** The
+  delay looks like free lead time to materialize the winning branch before it is needed,
+  rather than letting `ModuleStore::GetOrCompile` do it on FIRST USE -- which lands the
+  AOT compile inside block validation at `enforced_from`, on every node at once, the worst
+  possible moment given that compile time is still unbounded (§8.8).
+  It does not work, because assemblability is not settled when the window closes:
+  `OP_PUSHCODE` resolves no references, so a branch may be `incomplete` then and become
+  assemblable only when a missing part lands — possibly in the block before
+  `enforced_from`. Pre-compilation is therefore best-effort by construction. It would help
+  where the code was pushed well ahead and do nothing in precisely the case worth
+  protecting, while adding background machinery triggered off tip updates.
+  So the exposure stays where it belongs: on **bounding compile time** (§8.8's structural
+  caps, deferred). Note the failure mode is already the safe one — `GetOrCompile` failing
+  is a LOCAL fault, not block invalidity, so a node that cannot materialize a module halts
+  rather than disagreeing with the network. Bad availability, not a split.
 - **A stricter gas budget for the EMPTY solution (future improvement, but state the ABI
   requirement now).** `verify()` is called with an empty solution purely to read α and β
   (§7 step 4) — there is nothing to verify, so an algo should be able to answer from its

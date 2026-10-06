@@ -421,6 +421,26 @@ class DynamicAlgoTest(BitcoinTestFramework):
         assert_equal(self.pot_value(outs), 0)  # nothing withheld when a solution is paid
         assert_equal(sum(v for v, spk in outs if spk == payout_spk.hex()), payout_sat)
 
+        self.log.info("rejections: a coinbase that ignores its obligations")
+        # These need a coinbase this node's miner would never build, and generateblock
+        # obliges by accident: it prices the coinbase against an EMPTY mempool and only
+        # then appends the transactions it was given, so on an activated slot the result
+        # is a coinbase that does not satisfy the dynamic rules. (That is also why
+        # generateblock is unusable for honest mining on an activated slot -- see doc
+        # sec 9.) TestBlockValidity inside it reports the rejection.
+        #
+        # Withheld fees with no pot output to hold them: the miner would simply keep them.
+        fee_tx = self.wallet.create_self_transfer(fee=Decimal("0.01"))["tx"]
+        assert_raises_rpc_error(-25, "solutionpot-coinbase-amount", node.generateblock,
+                                self.wallet.get_address(), [fee_tx.serialize().hex()],
+                                invalid_call=False)
+        # A valid solution in the block but no alpha*r paid to its committed payout: the
+        # dynamic miner does the work and is not paid.
+        unpaid = self.solution_tx(b"\x07", payout_spk, Decimal("0.004"))
+        assert_raises_rpc_error(-25, "bad-cb-dynamic-payout", node.generateblock,
+                                self.wallet.get_address(), [unpaid.serialize().hex()],
+                                invalid_call=False)
+
         self.log.info("fall-through: a trapping solution leaves the block valid, and is mined")
         trap = self.solution_tx(bytes([TRAP_BYTE]) + b"\x00", payout_spk, Decimal("0.01"))
         self.broadcast(trap)
