@@ -39,17 +39,22 @@ can run it), so it skips cleanly on a --disable-wamrc build.
 import os
 from decimal import Decimal
 
-from test_framework.blocktools import COINBASE_MATURITY, NORMAL_GBT_REQUEST_PARAMS
+from test_framework.blocktools import (
+    COINBASE_MATURITY,
+    NORMAL_GBT_REQUEST_PARAMS,
+    add_witness_commitment,
+)
 from io import BytesIO
 
-from test_framework.messages import COIN, CTransaction, CTxOut
-from test_framework.script import CScript, CScriptNum, OP_1, OP_RETURN, OP_TRUE
+from test_framework.messages import COIN, COutPoint, CBlock, CTransaction, CTxIn, CTxOut
+from test_framework.script import CScript, CScriptNum, OP_0, OP_1, OP_2, OP_RETURN, OP_TRUE
 from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.util import assert_equal, assert_greater_than, assert_raises_rpc_error
 from test_framework.wallet import MiniWallet, MiniWalletMode
 
 NUM_ALGOS = 8
 SLOT = 0  # scrypt: the node can mine it quickly, and it is the default -miningalgo
+SHA256D_SLOT = 1  # the one algo the Python framework can solve, so blocks can be hand-built
 
 OP_SOLUTION = 0xB5
 OP_SOLUTIONPOT = 0xB7
@@ -64,6 +69,10 @@ TRAP_BYTE = 0xFF     # a solution starting with this makes the module trap
 # scriptPubKey makes "what was paid to the payout" indistinguishable from "what the miner
 # kept", and every assertion about alpha*r silently reads r instead.
 PAYOUT_SPK = bytes(CScript([OP_TRUE]))
+
+# Where a hand-built slot-1 block sends its own coinbase share. Distinct from PAYOUT_SPK,
+# or assertions that sum "what was paid to the payout" would also count the miner's share.
+MINER_SPK = bytes(CScript([OP_2]))
 
 
 def fp_mul(x, q_q32):
@@ -234,14 +243,19 @@ class DynamicAlgoTest(BitcoinTestFramework):
         (weighted by its own output value) in the window's first block.
         """
         node = self.nodes[0]
-        fee_spk = node.createfeevotescript(branch, SLOT)["hex"]
-        # The relative lock must be at least one voting period for the stake to count.
-        stake_spk = node.createstakevotescript(branch, SLOT, 20, self.wallet.get_address())["hex"]
-
+        # Both slots in ONE window: the windows are anchored at the same first block, so
+        # they activate at the same height and SHA256D costs no extra 720-block wait. Slot
+        # 1 is activated purely so the rejection tests below can hand-build blocks, since
+        # sha256d is the one algo the Python framework can solve.
         tx = self.wallet.create_self_transfer(fee=Decimal("0.01"))["tx"]
-        tx.vout[0].nValue -= 10 * COIN  # fund the stake vote out of the change
-        tx.vout.append(CTxOut(10 * COIN, bytes.fromhex(stake_spk)))
-        tx.vout.append(CTxOut(0, bytes.fromhex(fee_spk)))
+        for slot in (SLOT, SHA256D_SLOT):
+            fee_spk = node.createfeevotescript(branch, slot)["hex"]
+            # The relative lock must be at least one voting period for the stake to count.
+            stake_spk = node.createstakevotescript(branch, slot, 20,
+                                                   self.wallet.get_address())["hex"]
+            tx.vout[0].nValue -= 5 * COIN  # fund the stake vote out of the change
+            tx.vout.append(CTxOut(5 * COIN, bytes.fromhex(stake_spk)))
+            tx.vout.append(CTxOut(0, bytes.fromhex(fee_spk)))
         first = node.getblockcount() + 1
         self.mine_tx(tx)
         assert_equal(node.getblockcount(), first)
@@ -250,6 +264,7 @@ class DynamicAlgoTest(BitcoinTestFramework):
         self.generate(self.wallet, 19)
         vote = node.getalgovote(SLOT)
         assert_equal(vote["winner"], branch)
+        assert_equal(node.getalgovote(SHA256D_SLOT)["winner"], branch)
         assert_equal(vote["activation_block"], first + 20 + 720)
         assert_equal(vote["enforced_from"], vote["activation_block"] + 1)
         self.log.info("window [%d..%d] won by %s; recorded at %d, enforced from %d",
@@ -277,14 +292,14 @@ class DynamicAlgoTest(BitcoinTestFramework):
         return [(int(round(o["value"] * COIN)), o["scriptPubKey"]["hex"])
                 for o in block["tx"][0]["vout"]]
 
-    def pot_value(self, outs):
-        """Total value in this slot's OP_SOLUTIONPOT outputs (0 if none).
+    def pot_value(self, outs, slot=SLOT):
+        """Total value in `slot`'s OP_SOLUTIONPOT outputs (0 if none).
 
         The slot is encoded as SLOT+1, so the script's last stack item is never a
         zero-valued push -- a 0-based encoding would leave every slot-0 pot unspendable.
         """
         # Canonically OP_1..OP_8 then OP_SOLUTIONPOT -- two bytes (see SolutionPotScript).
-        want = format(OP_1 + SLOT, "02x") + format(OP_SOLUTIONPOT, "02x")
+        want = format(OP_1 + slot, "02x") + format(OP_SOLUTIONPOT, "02x")
         return sum(v for v, spk in outs if spk == want)
 
     def broadcast(self, tx):
@@ -299,6 +314,47 @@ class DynamicAlgoTest(BitcoinTestFramework):
         tx.vout.append(solution_output(0, payout_spk))
         tx.vout.append(solution_output(1, solution_bytes))
         return tx
+
+    def submit_sha256d_block(self, mutate):
+        """Build, solve and submit a slot-1 (SHA256D) block, mutated by `mutate`.
+
+        Everything structural comes from getblocktemplate -- `version` (so the algo bits
+        AND the SSF flag are the node's own, not a reimplementation of SetUpdateSSF),
+        `bits`, `curtime`, the transaction list, the coinbase value and its required
+        outputs. Only what is under test gets changed, so a rejection is about the mutation
+        rather than about this builder guessing Bitmark's reward arithmetic wrong.
+
+        Returns submitblock's result: a reject reason, or None when accepted.
+        """
+        node = self.nodes[0]
+        tmpl = node.getblocktemplate({"rules": ["segwit"], "algo": SHA256D_SLOT})
+
+        cb = CTransaction()
+        cb.vin = [CTxIn(COutPoint(0, 0xFFFFFFFF),
+                        CScript([CScriptNum(tmpl["height"]), OP_0]), 0xFFFFFFFF)]
+        cb.vout = [CTxOut(tmpl["coinbasevalue"], MINER_SPK)]
+        for o in tmpl.get("coinbaserequired", []):
+            cb.vout.append(CTxOut(o["value"], bytes.fromhex(o["scriptPubKey"])))
+
+        block = CBlock()
+        block.nVersion = tmpl["version"]
+        block.hashPrevBlock = int(tmpl["previousblockhash"], 16)
+        block.nTime = tmpl["curtime"]
+        block.nBits = int(tmpl["bits"], 16)
+        block.nNonce = 0
+        block.vtx = [cb]
+        for t in tmpl["transactions"]:
+            tx = CTransaction()
+            tx.deserialize(BytesIO(bytes.fromhex(t["data"])))
+            tx.rehash()
+            block.vtx.append(tx)
+
+        mutate(block)
+        # Computes the commitment from the block's own wtxids and fixes up the merkle root,
+        # so it must come after the mutation.
+        add_witness_commitment(block)
+        block.solve()
+        return node.submitblock(block.serialize().hex())
 
     def run_test(self):
         node = self.nodes[0]
@@ -440,6 +496,44 @@ class DynamicAlgoTest(BitcoinTestFramework):
         assert_raises_rpc_error(-25, "bad-cb-dynamic-payout", node.generateblock,
                                 self.wallet.get_address(), [unpaid.serialize().hex()],
                                 invalid_call=False)
+
+        self.log.info("rejections: a coinbase whose outputs are wrong, not merely missing")
+        # These need control of the coinbase's OUTPUTS, which generateblock cannot give --
+        # it builds its own. So hand-build a block on slot 1 (SHA256D), the one algo whose
+        # proof-of-work the Python framework can solve: GetPoWHash for it is
+        # Hash256(nVersion..nNonce), i.e. the standard 80-byte double-SHA256.
+        #
+        # A fee-paying tx first, so the slot-1 template owes a pot to mutate.
+        self.wallet.send_self_transfer(from_node=node, fee=Decimal("0.01"))
+
+        def wrong_slot_pot(block):
+            mine = bytes([OP_1 + SHA256D_SLOT, OP_SOLUTIONPOT])
+            for o in block.vtx[0].vout:
+                if o.scriptPubKey == mine:
+                    # Point it at another slot: one slot's missed solutions must not be
+                    # able to fund a different slot's jackpot.
+                    o.scriptPubKey = bytes([OP_1 + SHA256D_SLOT + 1, OP_SOLUTIONPOT])
+                    return
+            raise AssertionError("slot-1 template owed no pot to mutate")
+
+        assert_equal(self.submit_sha256d_block(wrong_slot_pot), "solutionpot-coinbase-algo")
+
+        def overpay(block):
+            block.vtx[0].vout[0].nValue += 1
+
+        assert_equal(self.submit_sha256d_block(overpay), "bad-cb-amount")
+
+        # And the UNMUTATED block is accepted. Without this the two rejections above prove
+        # nothing -- they would pass just as well if the builder were producing garbage. It
+        # also independently exercises the pot obligation on a second slot, since this
+        # block owes one and pays it.
+        before = node.getblockcount()
+        assert_equal(self.submit_sha256d_block(lambda block: None), None)
+        assert_equal(node.getblockcount(), before + 1)
+        # It withheld fees into a pot for ITS OWN slot, which is the obligation the two
+        # mutations above violated in different ways.
+        assert_greater_than(self.pot_value(self.coinbase_outs(), slot=SHA256D_SLOT), 0)
+        assert_equal(self.pot_value(self.coinbase_outs(), slot=SLOT), 0)
 
         self.log.info("fall-through: a trapping solution leaves the block valid, and is mined")
         trap = self.solution_tx(bytes([TRAP_BYTE]) + b"\x00", payout_spk, Decimal("0.01"))
