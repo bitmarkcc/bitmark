@@ -345,6 +345,43 @@ class DynamicAlgoTest(BitcoinTestFramework):
 
         # From here on the store holds the branch, so every block on this slot must comply.
         assert_equal(node.getalgovote(SLOT)["winner"], branch)
+        # The witness used below is `coinbasesignal`, not `coinbaserequired`: the miner
+        # emits the readiness marker exactly when the mined slot has NO active algo, so its
+        # presence is a direct read of the activation store. `coinbaserequired` is not --
+        # on the no-solution branch it appears only when there are fees to withhold, and
+        # right after mining an empty block there are none.
+        assert "coinbasesignal" not in node.getblocktemplate(NORMAL_GBT_REQUEST_PARAMS)
+
+        self.log.info("reorg across the activation puts the slot back to primitive-only")
+        # The activation store is CONSENSUS state written as this block connected, so a
+        # reorg has to unwind it -- ComputeDisconnect restores the slot's prior value from
+        # the undo record that block wrote. Nothing had ever exercised that, and it is the
+        # case the ChainMove work (VerifyDB / ReplayBlocks) did not cover. Done here, while
+        # the activation is a block from the tip, so the reorg is shallow: at the end of
+        # the test it would disconnect and reconnect ~730 blocks, each needing its own
+        # verify() since the anchor moves every block on a single-algo chain.
+        activation_hash = node.getblockhash(activation_block)
+        node.invalidateblock(activation_hash)
+        assert_equal(node.getblockcount(), activation_block - 1)
+
+        # The STORE rolled back, not just the chain: the readiness marker reappears, which
+        # the miner emits only while the mined slot has no active algo. Had the store kept
+        # the branch, the template built on this tip would still think the slot was live.
+        assert "coinbasesignal" in node.getblocktemplate(NORMAL_GBT_REQUEST_PARAMS), \
+            "the activation survived a reorg"
+
+        node.reconsiderblock(activation_hash)
+        assert_equal(node.getblockcount(), activation_block)
+        assert "coinbasesignal" not in node.getblocktemplate(NORMAL_GBT_REQUEST_PARAMS), \
+            "the activation did not come back"
+
+        # Advance the tip before anything else asks for a template. getblocktemplate caches
+        # one and rebuilds only on a new tip, an algo change, or a mempool change that is
+        # also more than five seconds old (rpc/mining.cpp) -- so a later call at THIS tip,
+        # milliseconds from now, would be served the template just built above, with
+        # whatever mempool it saw. Every other template call in this test happens to follow
+        # a generate(); this one has to say so.
+        self.generate(self.wallet, 1)
 
         self.log.info("no-solution branch: fees are withheld into the slot's pot")
         # A fee-paying tx, so the withheld amount is non-zero: with no fees the whole
@@ -551,6 +588,21 @@ class DynamicAlgoTest(BitcoinTestFramework):
         assert_equal(self.pot_value(outs), 0)  # a claiming block withholds nothing
         assert_equal(sum(v for v, spk in outs if spk == payout_spk.hex()), payout_sat)
         self.log.info("pot of %d sat released into the block's fees", total)
+
+        self.log.info("reorg across the claim returns the pot")
+        # The pot covenant keeps no side state -- its comments say so ("pure validation, so
+        # DisconnectBlock needs nothing"), meaning everything it depends on lives in the
+        # UTXO set. A reorg is the only thing that can check that claim.
+        claim_block = node.getblockhash(node.getblockcount())
+        node.invalidateblock(claim_block)
+        assert node.gettxout(merged_txid, merged_vout, False) is not None, \
+            "the pot did not come back after the claim was reorged out"
+        # The claim itself is an ordinary relayable transaction, so it returns to the
+        # mempool rather than being dropped -- which is also a check that it really is
+        # acceptable there, the premise the whole delivery model rests on.
+        assert raw_txid(claim["hex"]) in node.getrawmempool()
+        node.reconsiderblock(claim_block)
+        assert_equal(node.gettxout(merged_txid, merged_vout, False), None)
 
         self.log.info("dynamic-algo activation and reward rules OK")
 

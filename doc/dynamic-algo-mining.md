@@ -1639,6 +1639,27 @@ not the guarantee.
   a different bounded compiler (Cranelift/wasmtime is the Rust analog other wasm chains
   use for exactly this bounded-compile reason).
 
+### 8.8bis Per-thread signal environment (a consensus requirement)
+WAMR's AOT mode bounds-checks guest memory with a **per-thread** signal handler, so every
+thread that executes a module must call `wasm_runtime_init_thread_env()` first or the
+guest's first memory access traps with `thread signal env not inited`.
+`wasm_runtime_full_init()` only initialises it for whichever thread calls it, and
+consensus runs `verify()` from several — an RPC worker for `getblocktemplate` or
+`submitblock`, the message-handling thread for a block arriving over p2p, whichever thread
+connects a block during a reorg.
+
+This is a **consensus** requirement, not a performance detail. Without it, whether
+`verify()` runs at all depends on which thread reached it, so one node can judge a
+solution valid while another judges the same block's solution a module fault and prices
+the no-solution branch — a split with no on-chain cause. It is also exactly the kind of
+bug that hides: the thread that initialised the runtime works, so the first execution
+after startup usually succeeds and the failures look intermittent.
+
+`wasmexec.cpp` initialises it per thread on first use and releases it when that thread
+exits, taking care not to destroy the env belonging to the thread that ran `full_init`.
+Found by a reorg test, where the second template happened to be built on a different RPC
+worker than the first.
+
 ### 8.9 Memoizing `verify()` — required, not an optimization
 `verify()` is a pure function of a small, fully enumerable set of inputs, and one call
 costs up to ~38 s (§8.6). Its results must therefore be cached, and this is a

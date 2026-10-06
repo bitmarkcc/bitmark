@@ -226,6 +226,35 @@ void* bm_realloc(void* ptr, unsigned size)
 
 //! WAMR's runtime must be initialized once per process (with our capped allocator),
 //! and the gas native registered before any instrumented module is instantiated.
+//! WAMR's AOT mode bounds-checks guest memory with a per-THREAD signal handler, so every
+//! thread that executes a module must initialise its own signal environment or the first
+//! guest memory access traps with "thread signal env not inited".
+//!
+//! wasm_runtime_full_init() (EnsureWamrReady below) only initialises it for whichever
+//! thread happens to call it first, and consensus runs verify() from several: an RPC
+//! worker for getblocktemplate or submitblock, the message-handling thread for a block
+//! arriving over p2p, whichever thread connects a block during a reorg. Without this,
+//! whether verify() works depends on which thread ran it -- so one node could judge a
+//! solution valid and another judge the same block's solution a fault, purely from
+//! threading. That is a consensus split, not a performance problem.
+//!
+//! Initialised once per thread on first use and released when that thread exits. `mine`
+//! so the thread that already owns an env (the one that ran full_init) does not have it
+//! destroyed underneath the runtime.
+namespace {
+struct WamrThreadEnv {
+    bool ok{false};
+    bool mine{false};
+    WamrThreadEnv()
+    {
+        if (wasm_runtime_thread_env_inited()) { ok = true; return; }
+        ok = wasm_runtime_init_thread_env();
+        mine = ok;
+    }
+    ~WamrThreadEnv() { if (mine) wasm_runtime_destroy_thread_env(); }
+};
+} // namespace
+
 bool EnsureWamrReady()
 {
     static std::once_flag once;
@@ -282,6 +311,10 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
     // The guest reads exactly 32 anchor_hash bytes; reject anything else.
     if (anchor_hash.size() != 32) { res.error = "anchor_hash must be 32 bytes"; return res; }
     if (!EnsureWamrReady()) { res.error = "WAMR init/register failed"; return res; }
+    // Per-thread signal environment; see WamrThreadEnv. Must come after the runtime is
+    // up and before anything touches guest memory.
+    static thread_local WamrThreadEnv thread_env;
+    if (!thread_env.ok) { res.error = "WAMR thread env init failed"; return res; }
 
     // WAMR references the module buffer until wasm_runtime_unload; keep our own
     // copy alive for the whole call (declared before the guard so it outlives it).

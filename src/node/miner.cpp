@@ -537,6 +537,14 @@ void BlockAssembler::SelectSolution(const CTxMemPool& mempool, const CBlockIndex
     }
     // A module that faults on an empty solution states no alpha/beta; consensus prices
     // that as zero (doc sec 7 step 4), and so must we, or the template would not match.
+    // Logged, because this is the FIRST place that run happens -- so a silent fallback
+    // here hides the reason from everything downstream: the verdict is memoized and the
+    // cache deliberately does not keep error strings, so ConnectBlock's own report of the
+    // same fault would come back with an empty reason.
+    if (!vr0.ok) {
+        LogPrintf("CreateNewBlock(): dynamic algo for slot %d faults on an empty "
+                  "solution (%s); pricing alpha=beta=0\n", slot, vr0.error);
+    }
     static constexpr uint64_t Q{uint64_t{1} << 32}; // Q32 one
     const uint64_t a0{vr0.ok ? vr0.alpha_q32 : 0};
     const uint64_t b0{vr0.ok ? vr0.beta_q32 : 0};
