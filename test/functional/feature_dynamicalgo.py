@@ -155,6 +155,14 @@ def num_push(n):
     return bytes(CScript([enc[1:] if enc else b""]))
 
 
+def raw_txid(raw_hex):
+    """The txid of a raw transaction, for looking it up in a mined block."""
+    tx = CTransaction()
+    tx.deserialize(BytesIO(bytes.fromhex(raw_hex)))
+    tx.rehash()
+    return tx.hash
+
+
 def solution_output(seq, chunk):
     """One OP_RETURN OP_SOLUTION <seq> <chunk> output (TxoutType::SOLUTION), 0-value."""
     return CTxOut(0, CScript(bytes([OP_RETURN, OP_SOLUTION]) + num_push(seq)
@@ -434,10 +442,11 @@ class DynamicAlgoTest(BitcoinTestFramework):
         assert_equal(built["slot"], SLOT)
         assert_equal(int(round(built["amount"] * COIN)), total)
 
-        # It must NOT relay: value-preserving means zero fee, and a pot spend in the
-        # mempool is a hazard in general (a claim there would stall miners without a
-        # solution). The miner that mines one builds it.
-        assert_raises_rpc_error(-26, "bad-txns-nonstandard-inputs",
+        # A consolidation cannot relay, and not because any rule forbids it: being exactly
+        # value-preserving it has no fee to offer, so it cannot meet the minimum relay
+        # feerate. (A CLAIM is different -- it relays, and its fee is the whole pot. See
+        # the claim steps below.) So whoever mines a consolidation builds it.
+        assert_raises_rpc_error(-26, "min relay fee not met",
                                 node.sendrawtransaction, built["hex"], 0)
 
         # The covenant's rejections, BEFORE the good consolidation below -- these cases are
@@ -490,6 +499,58 @@ class DynamicAlgoTest(BitcoinTestFramework):
         assert_equal(len(rollover), 1)
         assert_equal(int(round(rollover[0]["value"] * COIN)), total)
         self.log.info("two pots worth %d sat merged into one", total)
+
+        # The merged pot, for the claim below. It lives in the consolidate tx, so it is an
+        # ordinary output rather than a coinbase one and needs no further maturity wait.
+        merged_txid = block["tx"][1]["txid"]
+        merged_vout = [n for n, o in enumerate(block["tx"][1]["vout"])
+                       if o["scriptPubKey"]["hex"] == want][0]
+
+        self.log.info("the pot covenant: a claim relays, and waits for a solution")
+        claim = node.createsolutionpotclaim([{"txid": merged_txid, "vout": merged_vout}])
+        assert_equal(claim["slot"], SLOT)
+        assert_equal(int(round(claim["amount"] * COIN)), total)
+        # A claim is an ordinary relayable transaction -- that is what lets anyone build
+        # one and whichever miner holds a solution collect it, so no node has to hunt for
+        # pots. maxfeerate off because its fee IS the whole pot.
+        node.sendrawtransaction(claim["hex"], 0)
+        assert raw_txid(claim["hex"]) in node.getrawmempool()
+
+        # Its feerate dwarfs everything, so ordinary selection would take it first -- but
+        # it is only valid in a block that carries a valid solution. The miner must
+        # therefore leave it out while it has none, and keep producing blocks regardless.
+        # If it did not, one relayed claim would stall this slot outright.
+        before = node.getblockcount()
+        self.generate(self.wallet, 1)
+        assert_equal(node.getblockcount(), before + 1)
+        mined = node.getblock(node.getblockhash(before + 1), 1)["tx"]
+        assert raw_txid(claim["hex"]) not in mined, "a claim was mined with no solution"
+        assert raw_txid(claim["hex"]) in node.getrawmempool()  # still pending, not dropped
+        # include_mempool=False: the claim is sitting in the mempool spending this pot, so
+        # the default view would report it gone. What matters is that the CHAIN still has
+        # it -- the claim was kept out of the block, not mined.
+        assert node.gettxout(merged_txid, merged_vout, False) is not None
+
+        self.log.info("the pot covenant: claiming the pot alongside a solution")
+        # Nothing about the claim changes -- only its block context does.
+        self.broadcast(self.solution_tx(b"\x42", payout_spk, Decimal("0.004")))
+        tmpl = node.getblocktemplate(NORMAL_GBT_REQUEST_PARAMS)
+        assert_equal(len(tmpl["coinbaserequired"]), 1)
+        payout_sat = tmpl["coinbaserequired"][0]["value"]
+        r = tmpl["coinbasevalue"] + payout_sat
+        assert_equal(payout_sat, fp_mul(r, ALPHA_Q32))
+        # The released pot is fee, so it is inside r. That is the whole design: the jackpot
+        # reaches the miner through the ordinary reward split, with no new coinbase rule.
+        assert_greater_than(r, total)
+
+        self.generate(self.wallet, 1)
+        mined = node.getblock(node.getblockhash(node.getblockcount()), 1)["tx"]
+        assert raw_txid(claim["hex"]) in mined, "the claim was not mined with a solution"
+        assert_equal(node.gettxout(merged_txid, merged_vout, False), None)  # pot spent for real
+        outs = self.coinbase_outs()
+        assert_equal(self.pot_value(outs), 0)  # a claiming block withholds nothing
+        assert_equal(sum(v for v, spk in outs if spk == payout_spk.hex()), payout_sat)
+        self.log.info("pot of %d sat released into the block's fees", total)
 
         self.log.info("dynamic-algo activation and reward rules OK")
 

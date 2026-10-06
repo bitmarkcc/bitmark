@@ -10,6 +10,7 @@
 #include <core_io.h>
 #include <key_io.h>
 #include <node/blockstorage.h>
+#include <policy/policy.h>
 #include <primitives/algo.h>
 #include <primitives/block.h>
 #include <pushcodedb.h>
@@ -511,9 +512,12 @@ static CAmount BuildPotSpendInputs(const UniValue& inputs, ChainstateManager& ch
         }
         total += coin.out.nValue;
         // Keyless: the scriptSig is just the selector, and nothing signs anything -- the
-        // covenant settles both paths by value accounting alone.
+        // covenant settles both paths by value accounting alone. The int64_t overload
+        // emits OP_0 / OP_1, which is the ONE encoding the covenant accepts: anything
+        // else, including a data push of the same value, is rejected so that no third
+        // party can re-encode the scriptSig and change the txid.
         CTxIn in{outpoint};
-        in.scriptSig = selector == 0 ? (CScript() << OP_0) : (CScript() << CScriptNum(selector));
+        in.scriptSig = CScript() << static_cast<int64_t>(selector);
         mtx.vin.push_back(std::move(in));
     }
     return total;
@@ -561,6 +565,25 @@ static RPCHelpMan createsolutionpotclaim()
             // One 0-value unspendable output: with pot-only inputs that makes the fee
             // exactly the pot, which is the covenant's "released value becomes fee" rule.
             mtx.vout.emplace_back(0, CScript() << OP_RETURN);
+
+            // Pad to the minimum relayable size. A one-input claim serializes to 62 bytes,
+            // and anything below MIN_STANDARD_TX_NONWITNESS_SIZE (65, "one larger than
+            // 64") will not relay -- that rule keeps 64-byte transactions off the network,
+            // because one is byte-indistinguishable from two concatenated 32-byte hashes,
+            // i.e. a merkle tree internal node, which is what lets an attacker forge SPV
+            // merkle proofs. The covenant asks only that this output be 0-value and
+            // unspendable, and OP_RETURN with a few bytes of data still is, so complying
+            // costs three bytes. Computed rather than fixed: a claim with two or more
+            // inputs is already past 100 bytes and pays nothing.
+            const size_t bare{::GetSerializeSize(TX_NO_WITNESS(CTransaction(mtx)))};
+            if (bare < MIN_STANDARD_TX_NONWITNESS_SIZE) {
+                const size_t need{MIN_STANDARD_TX_NONWITNESS_SIZE - bare};
+                // One byte of the growth is the push opcode itself.
+                mtx.vout[0].scriptPubKey =
+                    CScript() << OP_RETURN << std::vector<unsigned char>(need - 1, 0x00);
+            }
+            CHECK_NONFATAL(::GetSerializeSize(TX_NO_WITNESS(CTransaction(mtx)))
+                           >= MIN_STANDARD_TX_NONWITNESS_SIZE);
 
             UniValue result(UniValue::VOBJ);
             result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));

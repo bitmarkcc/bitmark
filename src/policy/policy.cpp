@@ -261,22 +261,6 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
             // this type of NONSTANDARD transaction earlier in transaction
             // validation.
             return false;
-        } else if (whichType == TxoutType::SOLUTIONPOT && !vSolutions.empty()) {
-            // Bitmark: a solution-pot spend must NOT relay (doc sec 4.5 "Spend paths").
-            // Neither path can work through the mempool, and one of them is actively
-            // dangerous there:
-            //   * CLAIM (selector 0) is only valid in a block that carries a valid
-            //     dynamic-algo solution, and its fee is the WHOLE pot -- so a miner with
-            //     no solution would select it on feerate ahead of everything else and
-            //     every block it built would be rejected (solutionpot-claim-nosolution),
-            //     i.e. one relayed claim could stall a slot's miners outright.
-            //   * CONSOLIDATE (selector 1) is value-preserving and therefore pays zero
-            //     fee, so it could not meet the minimum relay feerate anyway.
-            // Both are built by the miner that mines them (createsolutionpotclaim /
-            // createsolutionpotconsolidate), where neither the block context nor the
-            // relay feerate is an obstacle. Keeping them out of the mempool is what makes
-            // a pot safe to exist.
-            return false;
         } else if (whichType == TxoutType::SCRIPTHASH) {
             std::vector<std::vector<unsigned char> > stack;
             // convert the scriptSig into a stack, so we can inspect the redeemScript

@@ -756,12 +756,36 @@ governance has chosen to activate, and the largest-hashpower slot can stay algo-
 indefinitely at zero cost to its miners.
 
 #### Spend paths (first push of the input's scriptSig selects)
+Each path's scriptSig is pinned to exactly ONE byte sequence — `OP_0` to claim, `OP_1` to
+consolidate — and any other encoding is rejected, including a data push of the same value.
+Nothing signs a scriptSig, so without that a third party could pad or re-encode one
+without invalidating the spend, changing the txid for the same economic transaction. The
+same rule applies to `OP_RESERVEFEE`'s three paths (`ParseCovenantScriptSig`), whose refund
+carries `<sig> <pubkey>` after the selector.
+
+This replaces what `SCRIPT_VERIFY_CLEANSTACK` would otherwise be doing, and has to,
+because a covenant output cannot satisfy CLEANSTACK at all: these scripts are BARE and
+push their parameters, so execution always ends with more than one stack item, and the
+spender's selector adds another. No fixed number of `OP_DROP`s can fix it either, since
+the arity varies by path. So the mempool skips CLEANSTACK for transactions spending a
+covenant output, which is safe precisely because the scriptSig is pinned — a tighter rule
+(one scriptSig, not any that leaves one item) and a stronger one (consensus, so it holds
+in blocks too). Without the carve-out a claim could never be delivered and a reserve-fee
+REFUND could not be broadcast by the user it belongs to, since CLEANSTACK is relay policy
+and both were always valid in a block.
+
 - **`0` = claim-on-solution** — keyless, any miner. Requires: the spending block's algo
   `== algo`, and that block contains a **valid** solution for its slot (`verify() == 0`
   over real `OP_SOLUTION` outputs, §7). Releases `V` in full — the pot is a jackpot,
   not a trickle — leaving it as fee, so it enters `F` for that block and `r = S + F`
   grows with no new coinbase rule anywhere. A claim tx spends pot inputs only and has a
-  single 0-value `OP_RETURN` output.
+  single 0-value `OP_RETURN` output. That output carries a few bytes of padding when the
+  claim has one input: the bare form serializes to 62 bytes, and anything under
+  `MIN_STANDARD_TX_NONWITNESS_SIZE` (65, "one larger than 64") will not relay — a rule
+  that keeps 64-byte transactions off the network, since one is byte-indistinguishable
+  from two concatenated 32-byte hashes, i.e. a merkle internal node, and so can be used
+  to forge SPV proofs. Three bytes, and only for a single-input claim; the covenant asks
+  only that the output be 0-value and unspendable, which `OP_RETURN <data>` still is.
 - **`1` = consolidate** — keyless, anyone, no block-context gate. Spends ≥ 2 pot outputs
   of the SAME `algo` and creates exactly one pot output of that `algo` whose value is
   the sum of the inputs, with **zero fee**. Value-preserving, so invariant 1's per-tx
@@ -783,18 +807,60 @@ needed to enforce this — it is the ordinary coinbase rule — but it does mean
 pot at any height is the sum of the slot's no-solution blocks up to 720 blocks ago, not up
 to the tip.
 
-**Neither path relays**, and that is deliberate (policy, `AreInputsStandard`). A claim is
-only valid in a block carrying a valid solution, while its fee is the WHOLE pot — so in a
-mempool it would be selected on feerate ahead of everything else by a miner that has no
-solution, and every block that miner built would be rejected
-(`solutionpot-claim-nosolution`), stalling it outright. Relaying a claim also has no
-legitimate use: the only party who can validly mine one is a miner that already holds a
-valid solution, and that is precisely the party assembling the block, which must price its
-coinbase to include the released fee. Consolidate cannot relay either, for the duller
-reason that being exactly value-preserving it pays zero fee. Both are built by the miner
-that mines them — `createsolutionpotclaim` and `createsolutionpotconsolidate`, which find
-their inputs via `scantxoutset start '["raw(51b7)"]'` for slot 0 (`raw(52b7)` for slot 1,
-and so on), so no pot index is needed in the node.
+**A claim RELAYS, and that is what makes a pot claimable at all.** Anyone may build one
+(`createsolutionpotclaim`, finding a slot's pots with
+`scantxoutset start '["raw(51b7)"]'` for slot 0, `raw(52b7)` for slot 1, and so on) and
+broadcast it. Whichever miner happens to hold a valid solution for that slot then picks it
+up through ordinary feerate selection — its fee is the whole pot, so it sorts first — and
+the coinbase prices correctly because the released value is simply part of `F`. So no node
+has to hunt for pot outputs and no pot index is needed anywhere: the same permissionless
+relay that delivers solutions (§2.1) delivers claims.
+
+For a pot to be spendable at all, `OP_SOLUTIONPOT` must not be a *discouraged* upgradable
+NOP. `SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS` is a standardness flag the mempool
+applies, so while `OP_NOP8` sat in that set, executing it rejected the transaction with
+`non-mandatory-script-verify-flag (NOPx reserved for soft-fork upgrades)` — meaning
+nothing spending a pot could relay and a claim could never reach the miner meant to
+collect it. `interpreter.cpp` now treats it as a defined no-op, exactly as it already did
+for `OP_VOTE` (so a stake vote can be reclaimed) and `OP_RESERVEFEE` (so a reserve can be
+refunded). `OP_NOP8` is thereby permanently claimed.
+
+Unconditionally, unlike `OP_PUSHCODE`, which still falls back to NOP semantics while its
+fork is inactive — and that difference is forced, not chosen. `SCRIPT_VERIFY_PUSHCODE` is
+never in `STANDARD_SCRIPT_VERIFY_FLAGS` (only `GetBlockScriptFlags` sets it), so the
+mempool's policy pass cannot see it; gating would leave a pot discouraged there forever,
+which is the problem being fixed. `OP_PUSHCODE` can afford the gate because it only ever
+appears under `OP_RETURN`, so no spend executes it.
+
+The residual cost, stated plainly: before the fork a pot-*shaped* output is
+anyone-can-spend, since the covenant's creation and spend rules are gated on
+`DynamicForkActive`, while after it only claim/consolidate satisfy it. So a pre-fork spend
+of one can sit in a mempool across activation and become invalid. Bounded to that
+transition, requires someone to have built a covenant-shaped output beforehand, and
+identical for `OP_VOTE` and `OP_RESERVEFEE` — an accepted soft-fork transition risk rather
+than something this relaxation introduces.
+
+The cost is the miner's, not the network's. A claim is only valid in a block whose slot
+has an active algo AND carries a valid solution, so a miner WITHOUT one must keep claims
+out of its template, or every block it builds is rejected
+(`solutionpot-claim-nosolution`, or `solutionpot-claim-noalgo`) and it cannot produce a
+block at all. `BlockAssembler::ExcludePotClaims` does that cheaply: a claim has exactly one
+0-value unspendable output and a lone selector-0 push in every scriptSig, so a shape test
+filters ordinary traffic out before any UTXO is touched.
+
+This is deliberately a miner-side rule rather than a standardness rule. Making claims
+non-standard would look like it protects miners for free, but it does not: policy is not
+enforceable network-wide (`-acceptnonstdtxn`, another implementation, a miner who patches
+it out), so a miner would still need the exclusion — and it would additionally destroy the
+permissionless delivery above, putting the burden of FINDING pots back on every mining
+node. Nor does it protect unupgraded miners, since a miner without this code cannot mine
+an activated slot at all (§6bis.2).
+
+CONSOLIDATE is different, for a duller reason: being exactly value-preserving it pays zero
+fee, so it cannot meet a minimum relay feerate and will not propagate. Nothing forbids it;
+it simply has no fee to offer. A consolidation is therefore built by whoever mines it
+(`createsolutionpotconsolidate`) — fine, since miners are the ones motivated to tidy a
+slot's pots before claiming them.
 
 #### Invariants
 - A block cannot both create and claim a pot for its slot: creation requires no valid

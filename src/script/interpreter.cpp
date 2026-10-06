@@ -633,8 +633,43 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
                 }
                 break;
 
+                case OP_SOLUTIONPOT: // OP_NOP8 (0xb7): Bitmark solution-pot marker
+                {
+                    // A DEFINED no-op: OP_SOLUTIONPOT marks the spendable per-slot pot
+                    // (<algo+1> OP_SOLUTIONPOT) and, under OP_RETURN, a miner's readiness
+                    // signal. The spend rules (claim-on-solution vs consolidate, the slot
+                    // match, the fee and value-preservation accounting) are enforced at
+                    // block connect, not in the interpreter. Like OP_VOTE and
+                    // OP_RESERVEFEE it is deliberately NOT a discouraged upgradable NOP,
+                    // because the pot is a SPENDABLE output: while it was discouraged,
+                    // nothing spending a pot could relay, so a claim could never reach the
+                    // miner that is supposed to collect it (doc sec 4.5). OP_NOP8 is
+                    // thereby permanently claimed as OP_SOLUTIONPOT.
+                    //
+                    // UNCONDITIONAL, unlike OP_PUSHCODE above which falls back to NOP
+                    // semantics while its fork is inactive, and the difference is forced
+                    // rather than chosen. SCRIPT_VERIFY_PUSHCODE is never part of
+                    // STANDARD_SCRIPT_VERIFY_FLAGS -- only GetBlockScriptFlags sets it --
+                    // so the mempool's policy pass cannot see it. Gating here would leave
+                    // a pot discouraged in the mempool forever, i.e. unspendable via
+                    // relay, which is the whole problem. OP_PUSHCODE can afford the gate
+                    // because it only ever appears under OP_RETURN, so no spend executes
+                    // it and nothing needs to relay.
+                    //
+                    // The cost, stated plainly: before the fork a pot-SHAPED output is
+                    // anyone-can-spend (push, no-op, true) because the covenant's
+                    // creation and spend rules are gated on DynamicForkActive, while
+                    // after it only claim/consolidate satisfy it. So a pre-fork spend of
+                    // such an output can sit in a mempool across activation and become
+                    // invalid. Bounded to that transition, requires someone to have made a
+                    // covenant-shaped output before the fork, and identical for OP_VOTE
+                    // and OP_RESERVEFEE above -- an accepted soft-fork transition risk,
+                    // not something this relaxation introduces.
+                }
+                break;
+
                 case OP_NOP1:
-                case OP_NOP6: case OP_NOP8: case OP_NOP9: case OP_NOP10:
+                case OP_NOP6: case OP_NOP9: case OP_NOP10:
                 {
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
                         return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);

@@ -1081,7 +1081,36 @@ bool MemPoolAccept::PolicyScriptChecks(const ATMPArgs& args, Workspace& ws)
     const CTransaction& tx = *ws.m_ptx;
     TxValidationState& state = ws.m_state;
 
-    constexpr unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
+    unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
+
+    // Bitmark: a covenant output cannot satisfy SCRIPT_VERIFY_CLEANSTACK, so drop it for
+    // transactions that spend one. These scripts are BARE and push their parameters --
+    // <algo+1> OP_SOLUTIONPOT, <algo> <s0> <refund_pkh> OP_RESERVEFEE -- and the spender
+    // adds a selector, so execution always ends with more than one stack item. Nothing
+    // can be done about that from the scriptPubKey side: the arity varies by spend path
+    // (reserve-fee's refund carries <sig> <pubkey>, its claim and sweep do not), so no
+    // fixed number of OP_DROPs cleans up after all of them.
+    //
+    // CLEANSTACK is relay policy, not consensus, so these spends have always been VALID in
+    // a block -- they simply could not relay, which made a solution-pot claim undeliverable
+    // and a reserve-fee REFUND unbroadcastable by the user it belongs to.
+    //
+    // What CLEANSTACK protects against here, scriptSig malleability, is instead denied by
+    // ParseCovenantScriptSig, which permits exactly one byte sequence per spend path. That
+    // is both tighter (one scriptSig, versus any that happens to leave one item) and
+    // stronger (consensus, so it holds in blocks too).
+    //
+    // Whole-transaction granularity, because CheckInputScripts takes one flag set for all
+    // inputs. A reserve-fee refund may carry ordinary inputs alongside, and those lose
+    // CLEANSTACK too -- which costs nothing for a well-formed input, since its script ends
+    // with one item regardless.
+    if (std::any_of(tx.vin.begin(), tx.vin.end(), [&](const CTxIn& in) {
+            std::vector<std::vector<unsigned char>> sols;
+            const TxoutType t{Solver(m_view.AccessCoin(in.prevout).out.scriptPubKey, sols)};
+            return (t == TxoutType::SOLUTIONPOT && !sols.empty()) || t == TxoutType::RESERVEFEE;
+        })) {
+        scriptVerifyFlags &= ~SCRIPT_VERIFY_CLEANSTACK;
+    }
 
     // Check input scripts and signatures.
     // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -2806,6 +2835,43 @@ static bool ReserveScriptSigPushes(const CScript& scriptSig, std::vector<std::ve
     return true;
 }
 
+// Bitmark: parse a covenant spend's scriptSig into its selector plus any further
+// pushes, REQUIRING the one canonical encoding for what it contains.
+//
+// Both covenants dispatch on a selector the spender puts in the scriptSig, and nothing
+// signs a scriptSig -- so without this a third party could pad or re-encode one without
+// invalidating the spend, changing the txid for the same economic transaction. That is
+// ordinary malleability, and it bites hardest where a covenant spend has outputs someone
+// chains off before confirmation.
+//
+// Pinning it here is strictly better than leaning on SCRIPT_VERIFY_CLEANSTACK for the
+// same effect: CLEANSTACK is relay POLICY (so it does nothing in a block) and it merely
+// requires the stack to end with one item, whereas this permits exactly ONE byte sequence
+// per spend path. It is also what lets the mempool safely skip CLEANSTACK for covenant
+// inputs, which it must, since a bare covenant script leaves its parameters on the stack
+// and could never satisfy it.
+//
+// Canonical means: the selector as a minimal number push (so OP_0 / OP_1..OP_16, never a
+// data push of the same value), then each further push minimally encoded. Rebuilt and
+// compared rather than pattern-matched, so the encoding rules live in CScript rather than
+// being restated here.
+static bool ParseCovenantScriptSig(const CScript& scriptSig, int& selector,
+                                   std::vector<std::vector<unsigned char>>& extra)
+{
+    std::vector<std::vector<unsigned char>> pushes;
+    if (!ReserveScriptSigPushes(scriptSig, pushes) || pushes.empty()) return false;
+    const std::vector<unsigned char>& sel{pushes[0]};
+    if (sel.size() > 1) return false;
+    selector = sel.empty() ? 0 : sel[0];
+    if (selector < 0 || selector > 16) return false; // beyond OP_N; no path uses one
+    extra.assign(pushes.begin() + 1, pushes.end());
+
+    CScript canonical;
+    canonical << static_cast<int64_t>(selector);
+    for (const std::vector<unsigned char>& e : extra) canonical << e;
+    return canonical == scriptSig;
+}
+
 // Validate every OP_RESERVEFEE spend and creation in one transaction against the
 // covenant. `txfee` is the tx's fee (inputs - outputs; 0 is passed for a coinbase, which
 // has no reserve spends). Returns false with `state` set on any violation.
@@ -2830,13 +2896,19 @@ static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& vie
         const CAmount V_rem = coin.out.nValue;
         const int64_t age = (int64_t)pindex->nHeight - coin.nHeight;
 
+        // Exactly one canonical byte sequence per path, so no third party can re-encode
+        // or pad this scriptSig and change the txid (see ParseCovenantScriptSig). The
+        // per-path arity is checked below: keyless claim and sweep carry the selector
+        // alone, while refund carries <sig> <pubkey> after it.
+        int selector{-1};
         std::vector<std::vector<unsigned char>> pushes;
-        if (!ReserveScriptSigPushes(tx.vin[j].scriptSig, pushes) || pushes.empty())
+        if (!ParseCovenantScriptSig(tx.vin[j].scriptSig, selector, pushes))
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-bad-scriptsig");
-        const int selector = pushes[0].empty() ? 0 : pushes[0][0];
 
         if (selector == 0) { // CLAIM: dedicated 1-in/1-out tx, algo-matched, mature, recovering
             has_claim = true;
+            if (!pushes.empty())
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-scriptsig");
             if (tx.vin.size() != 1 || tx.vout.size() != 1)
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-claim-shape");
             if (algo_i != block_algo)
@@ -2871,10 +2943,12 @@ static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& vie
             const uint32_t s_t = get_rsf(pindex, (Algo)algo_i);
             if (s_t > s0)
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-recovered");
-            if (pushes.size() != 3)
+            // <sig> <pubkey> after the selector, and nothing else. ParseCovenantScriptSig
+            // already pinned their encoding, so the whole scriptSig is byte-exact.
+            if (pushes.size() != 2)
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-nosig");
-            const std::vector<unsigned char>& sig = pushes[1];
-            const std::vector<unsigned char>& pubkey = pushes[2];
+            const std::vector<unsigned char>& sig = pushes[0];
+            const std::vector<unsigned char>& pubkey = pushes[1];
             const uint160 pkh = Hash160(pubkey);
             if (refund_pkh.size() != 20 || !std::equal(pkh.begin(), pkh.end(), refund_pkh.begin()))
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-pkh");
@@ -2883,6 +2957,8 @@ static bool CheckReserveFeeTx(const CTransaction& tx, const CCoinsViewCache& vie
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-refund-badsig");
             required_fee += V_rem;
         } else if (selector == 2) { // SWEEP: keyless, any miner, expired
+            if (!pushes.empty())
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-sweep-scriptsig");
             if (age < reserve_expiry)
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "reservefee-sweep-tooearly");
             required_fee += V_rem;
@@ -2954,11 +3030,13 @@ static bool CheckSolutionPotTx(const CTransaction& tx, const CCoinsViewCache& vi
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-spend-algo");
         }
 
-        std::vector<std::vector<unsigned char>> pushes;
-        if (!ReserveScriptSigPushes(tx.vin[j].scriptSig, pushes) || pushes.empty()) {
+        int sel{-1};
+        std::vector<std::vector<unsigned char>> extra;
+        if (!ParseCovenantScriptSig(tx.vin[j].scriptSig, sel, extra) || !extra.empty()) {
+            // Both pot paths are keyless, so the scriptSig is the selector and nothing
+            // else -- exactly OP_0 to claim, exactly OP_1 to consolidate.
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "solutionpot-bad-scriptsig");
         }
-        const int sel{pushes[0].empty() ? 0 : pushes[0][0]};
 
         if (pot_inputs == 0) {
             pot_algo = algo_i;

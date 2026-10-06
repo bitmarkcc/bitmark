@@ -182,8 +182,9 @@ private:
     int nHeight;
     int64_t m_lock_time_cutoff;
 
-    /** Bitmark: mempool transactions this template must NOT contain (doc sec 2.1quater).
-     *  Only ever solution-bearing txs whose solution is UNJUDGED -- either the per-epoch
+    /** Bitmark: mempool transactions this template must NOT contain. Two kinds:
+     *  solution-pot CLAIMS when this block has no valid solution (see ExcludePotClaims),
+     *  and solution-bearing txs whose solution is UNJUDGED (doc sec 2.1quater) -- either the per-epoch
      *  verification budget ran out, or a verified-valid candidate was not the one chosen
      *  and no other was. Both would be a hazard if they landed first among the block's
      *  solution-bearing txs: an unjudged solution might verify, and a verified-valid one
@@ -283,6 +284,22 @@ private:
     void SelectSolution(const CTxMemPool& mempool, const CBlockIndex* prev, Algo algo,
                         uint32_t nbits, const uint256& branch, SolutionChoice& out)
         EXCLUSIVE_LOCKS_REQUIRED(mempool.cs, ::cs_main);
+
+    /** Bitmark: keep solution-pot CLAIMS out of a block that has no valid solution
+     *  (doc sec 4.5). A claim releases the whole pot as fee, so its feerate dwarfs
+     *  everything else and ordinary selection would take it first -- but it is only valid
+     *  in a block whose slot has an active algo AND a valid solution, so including one
+     *  otherwise makes the block invalid (solutionpot-claim-nosolution, or
+     *  solutionpot-claim-noalgo) and CreateNewBlock would throw rather than return a
+     *  template. One relayed claim would otherwise stall every miner that has no solution.
+     *
+     *  Claims ARE relayable, deliberately: that is what lets anyone build one and have
+     *  whichever miner holds a solution collect it, so no node needs to hunt for pots. The
+     *  cost of that is this exclusion, which is the miner's own business rather than a
+     *  network rule. Shape test first (one 0-value unspendable output, every scriptSig a
+     *  lone selector-0 push), so the coin lookups that confirm it only happen for the
+     *  handful of transactions that could possibly be claims. */
+    void ExcludePotClaims(const CTxMemPool& mempool) EXCLUSIVE_LOCKS_REQUIRED(mempool.cs, ::cs_main);
 
     /** Bitmark: add the chosen solution tx and its unconfirmed ancestors, BEFORE any
      *  fee-driven selection, so it is the first solution-bearing tx in the block and

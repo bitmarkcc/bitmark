@@ -221,6 +221,9 @@ void BlockAssembler::resetBlock()
     // solution-bearing txs to be the one consensus reads (doc sec 7 step 3, 2.1quater).
     const std::optional<uint256> active_branch{
         m_chainstate.GetActiveAlgoBranch(static_cast<int>(algo))};
+    // Computed once: the per-algo supermajority walk is not cheap, and both the pot-claim
+    // exclusion below and the readiness marker further down need it.
+    const bool dynamic_fork_active{DynamicForkActive(pindexPrev, chainparams.GetConsensus())};
 
     int nPackagesSelected = 0;
     int nDescendantsUpdated = 0;
@@ -238,6 +241,13 @@ void BlockAssembler::resetBlock()
                           solution.iter->GetSharedTx()->GetHash().ToString());
                 solution.have = false;
             }
+        }
+        // Without a solution to present, a pot claim in the mempool would be selected on
+        // its enormous feerate and make this block invalid -- so keep claims out. Claims
+        // are relayable on purpose (anyone may build one and any miner holding a solution
+        // collects it), which is why this is the miner's job rather than a relay rule.
+        if (!solution.have && dynamic_fork_active) {
+            ExcludePotClaims(*m_mempool);
         }
         addPackageTxs(*m_mempool, nPackagesSelected, nDescendantsUpdated);
     }
@@ -298,7 +308,7 @@ void BlockAssembler::resetBlock()
     // ever rides on blocks the node itself assembles. -signalalgoreadiness=0 opts out,
     // for an operator who takes the node's template but rewrites the coinbase with their
     // own tooling and so cannot honestly make the claim.
-    if (!active_branch && DynamicForkActive(pindexPrev, chainparams.GetConsensus())) {
+    if (!active_branch && dynamic_fork_active) {
         pblocktemplate->readiness_signal.nValue = 0;
         pblocktemplate->readiness_signal.scriptPubKey = CScript() << OP_RETURN << OP_SOLUTIONPOT;
         if (m_options.signal_algo_readiness) {
@@ -619,6 +629,41 @@ void BlockAssembler::SelectSolution(const CTxMemPool& mempool, const CBlockIndex
         // are never the tx consensus reads, and they still pay their fees.)
         for (const CTxMemPool::txiter& it : verified_valid) {
             m_exclude.insert(it->GetSharedTx()->GetHash());
+        }
+    }
+}
+
+void BlockAssembler::ExcludePotClaims(const CTxMemPool& mempool)
+{
+    AssertLockHeld(mempool.cs);
+    const CCoinsViewCache& coins{m_chainstate.CoinsTip()};
+    for (auto it{mempool.mapTx.begin()}; it != mempool.mapTx.end(); ++it) {
+        const CTransaction& tx{it->GetTx()};
+        // Cheap shape test: a claim has exactly one 0-value unspendable output, and every
+        // scriptSig is the single selector-0 push. Nothing else looks like this, so no
+        // coins are touched for ordinary traffic.
+        if (tx.vout.size() != 1 || tx.vout[0].nValue != 0
+            || !tx.vout[0].scriptPubKey.IsUnspendable()) {
+            continue;
+        }
+        bool all_selector_zero{true};
+        for (const CTxIn& in : tx.vin) {
+            if (in.scriptSig.size() != 1 || in.scriptSig[0] != OP_0) {
+                all_selector_zero = false;
+                break;
+            }
+        }
+        if (!all_selector_zero || tx.vin.empty()) continue;
+        // Shape matches, so confirm it really spends pots before dropping the fee.
+        for (const CTxIn& in : tx.vin) {
+            const Coin& coin{coins.AccessCoin(in.prevout)};
+            std::vector<std::vector<unsigned char>> sols;
+            int algo{-1};
+            if (Solver(coin.out.scriptPubKey, sols) == TxoutType::SOLUTIONPOT
+                && SolutionPotAlgo(sols, algo)) {
+                m_exclude.insert(tx.GetHash());
+                break;
+            }
         }
     }
 }
