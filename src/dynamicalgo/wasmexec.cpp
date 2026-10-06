@@ -9,7 +9,6 @@
 #include <crypto/common.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -173,20 +172,38 @@ int32_t bitmark_slot_block(wasm_exec_env_t exec_env, int32_t index_raw, int32_t 
 // (instance structs, tables, the exec-env stack). Linear memory is mmap'd on a
 // separate path (capped by max_memory_pages), so linear + these two caps sum to
 // the 2 GiB total. A 16-byte header records each block's size for free/realloc
-// accounting and keeps the returned pointer 16-byte aligned. NOTE: this is a
-// process-global ceiling (WAMR installs one allocator), so it bounds concurrent
-// instances collectively; strictly per-instance only for one verify at a time.
-std::atomic<uint64_t> g_wamr_alloc_used{0};
+// accounting and keeps the returned pointer 16-byte aligned.
+//
+// PER-THREAD, and measured against a baseline taken at the start of each verify, so the
+// ceiling is genuinely per-RUN -- which is what a consensus constant has to be. WAMR
+// installs ONE allocator process-wide, so a single global counter would have bounded
+// concurrent runs COLLECTIVELY: two verifies at once (two RPC workers building templates,
+// or a block arriving while one is built) would share the 16 MiB, and a run needing 10 MiB
+// would trap because another run happened to hold the budget. The bridge reports a trap as
+// a module fault, i.e. "no valid solution", so a block's verdict would have depended on
+// what else the node was doing rather than on the block -- the same class of split as the
+// per-thread signal env below.
+//
+// A run frees everything it allocates (InstGuard destroys the exec env, deinstantiates and
+// unloads), so a thread's counter returns to its baseline between runs. The baseline is
+// what keeps allocations WAMR holds ACROSS runs -- the runtime globals from full_init,
+// charged to whichever thread happened to run it -- from eating into that thread's budget
+// and making its effective ceiling differ from every other thread's.
+//
+// No atomics: thread_local, and one verify per thread at a time.
+thread_local uint64_t g_wamr_alloc_used{0};
+thread_local uint64_t g_wamr_alloc_base{0};
+
+//! The ceiling applies to what THIS run has outstanding.
+static uint64_t AllocLimit() { return g_wamr_alloc_base + WASM_ALLOC_CEILING; }
 
 void* bm_malloc(unsigned size)
 {
     const uint64_t need = static_cast<uint64_t>(size) + 16;
-    if (g_wamr_alloc_used.fetch_add(need, std::memory_order_relaxed) + need > WASM_ALLOC_CEILING) {
-        g_wamr_alloc_used.fetch_sub(need, std::memory_order_relaxed);
-        return nullptr;
-    }
+    if (g_wamr_alloc_used + need > AllocLimit()) return nullptr;
     void* base = std::malloc(need);
-    if (base == nullptr) { g_wamr_alloc_used.fetch_sub(need, std::memory_order_relaxed); return nullptr; }
+    if (base == nullptr) return nullptr;
+    g_wamr_alloc_used += need;
     *static_cast<uint64_t*>(base) = need;
     return static_cast<char*>(base) + 16;
 }
@@ -195,7 +212,11 @@ void bm_free(void* ptr)
 {
     if (ptr == nullptr) return;
     void* base = static_cast<char*>(ptr) - 16;
-    g_wamr_alloc_used.fetch_sub(*static_cast<uint64_t*>(base), std::memory_order_relaxed);
+    const uint64_t had = *static_cast<uint64_t*>(base);
+    // Defensive: a free on a different thread than the malloc would otherwise wrap this
+    // unsigned counter. WAMR does all of a run's allocation and release on the calling
+    // thread, so this should never fire.
+    g_wamr_alloc_used -= std::min(had, g_wamr_alloc_used);
     std::free(base);
 }
 
@@ -205,21 +226,13 @@ void* bm_realloc(void* ptr, unsigned size)
     void* base = static_cast<char*>(ptr) - 16;
     const uint64_t old = *static_cast<uint64_t*>(base);
     const uint64_t need = static_cast<uint64_t>(size) + 16;
-    if (need > old) {
-        const uint64_t d = need - old;
-        if (g_wamr_alloc_used.fetch_add(d, std::memory_order_relaxed) + d > WASM_ALLOC_CEILING) {
-            g_wamr_alloc_used.fetch_sub(d, std::memory_order_relaxed);
-            return nullptr; // over ceiling; original block stays valid
-        }
-    } else {
-        g_wamr_alloc_used.fetch_sub(old - need, std::memory_order_relaxed);
+    if (need > old && g_wamr_alloc_used + (need - old) > AllocLimit()) {
+        return nullptr; // over ceiling; original block stays valid
     }
     void* nb = std::realloc(base, need);
-    if (nb == nullptr) { // realloc failed: block unchanged at `old`; undo the counter delta
-        if (need > old) g_wamr_alloc_used.fetch_sub(need - old, std::memory_order_relaxed);
-        else g_wamr_alloc_used.fetch_add(old - need, std::memory_order_relaxed);
-        return nullptr;
-    }
+    if (nb == nullptr) return nullptr; // block unchanged at `old`; counter untouched
+    if (need > old) g_wamr_alloc_used += need - old;
+    else g_wamr_alloc_used -= std::min(old - need, g_wamr_alloc_used);
     *static_cast<uint64_t*>(nb) = need;
     return static_cast<char*>(nb) + 16;
 }
@@ -315,6 +328,9 @@ AlgoVerifyResult RunAlgoVerify(Span<const unsigned char> module_bytes,
     // up and before anything touches guest memory.
     static thread_local WamrThreadEnv thread_env;
     if (!thread_env.ok) { res.error = "WAMR thread env init failed"; return res; }
+    // The alloc ceiling is per-RUN: baseline now, so anything WAMR keeps across runs does
+    // not count against this one (see the allocator above).
+    g_wamr_alloc_base = g_wamr_alloc_used;
 
     // WAMR references the module buffer until wasm_runtime_unload; keep our own
     // copy alive for the whole call (declared before the guard so it outlives it).

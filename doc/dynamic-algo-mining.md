@@ -1639,9 +1639,26 @@ not the guarantee.
   a different bounded compiler (Cranelift/wasmtime is the Rust analog other wasm chains
   use for exactly this bounded-compile reason).
 
-### 8.8bis Per-thread signal environment (a consensus requirement)
-WAMR's AOT mode bounds-checks guest memory with a **per-thread** signal handler, so every
-thread that executes a module must call `wasm_runtime_init_thread_env()` first or the
+### 8.8bis Per-thread runtime state (two consensus requirements)
+Both of these are consensus requirements rather than runtime details, and both have the
+same signature: a block's verdict coming out different depending on something other than
+the block.
+
+**The allocation ceiling is per-RUN, so it must be accounted per thread.**
+`WASM_ALLOC_CEILING` (16 MiB, §8.5) bounds everything WAMR allocates outside linear
+memory. WAMR installs ONE allocator process-wide, so a single global counter bounds
+concurrent runs *collectively*: two verifies at once — two RPC workers building templates,
+or a block arriving while one is built — would share the 16 MiB, and a run needing 10 MiB
+would trap because another run happened to hold the budget. A trap is reported as a module
+fault, i.e. "no valid solution" (§7 step 4), so the verdict would depend on what else the
+node was doing. The counter is therefore `thread_local`, measured against a baseline taken
+at the start of each run — the baseline so that whatever WAMR keeps *across* runs (the
+runtime globals from `full_init`, charged to whichever thread ran it) does not make that
+one thread's effective ceiling smaller than every other's.
+
+**The signal environment must be initialised on every thread.**
+AOT mode bounds-checks guest memory with a **per-thread** signal handler, so every thread
+that executes a module must call `wasm_runtime_init_thread_env()` first or the
 guest's first memory access traps with `thread signal env not inited`.
 `wasm_runtime_full_init()` only initialises it for whichever thread calls it, and
 consensus runs `verify()` from several — an RPC worker for `getblocktemplate` or
