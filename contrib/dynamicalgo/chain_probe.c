@@ -80,7 +80,11 @@ int verify(const u8 *anchor_hash,
 
     case MODE_BURN_BYTES:
         // Same, but the source serves large blocks so the byte budget binds first.
-        for (int i = 0; i < 1000; i++) (void)chain_slot_block(0, buf, BUFSZ);
+        // 4000 fetches of 1 MiB passes GAS_IO_BYTES_LIMIT (2 GiB) at ~2048 while staying
+        // under GAS_IO_CALLS_LIMIT (4096), so it is really the BYTE cap being tested.
+        // Hardcoded because this is freestanding wasm and cannot include gasclasses.h --
+        // raise it together with the limits.
+        for (int i = 0; i < 4000; i++) (void)chain_slot_block(0, buf, BUFSZ);
         return 0;
 
     case MODE_FETCH_LAST:

@@ -1478,6 +1478,10 @@ by 2xcount. Safe because the algo is data-oblivious => counts are fixed per inpu
   and adversarial spill assumed; the LLM's real forward is ~1.5 s). On 4x-slower
   hardware ~150 s -- so the reference-core figure has ~3x margin under the 120 s
   interval, and the hardware floor (§8.4) is set so conformant nodes stay under it.
+  COMPUTE ONLY: chain-access I/O is budgeted separately (§8.7) and adds ~4.3 s at the
+  SSD floor, for ~42 s total and ~2.8x margin rather than ~3x. That is what raising the
+  byte budget to 2 GiB cost, and why §8.4 now names a storage requirement instead of
+  leaving it implied.
 - **VAR dominates the worst case (16 s)** -- the LLM's stack-machine verbosity emits
   8.4 B local/const ops that cost ~0 in practice (register-resident) but ~1 ns if an
   adversary forces spills; we bound the adversarial case. The next tier is the

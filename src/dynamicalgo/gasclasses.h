@@ -103,19 +103,38 @@ static constexpr uint64_t GAS_BULK_LIMIT = 8ull * 1024 * 1024 * 1024;
 //!           deserialization) that even a tiny block pays; bounds IOPS.
 //!   BYTES - transfer volume; bounds throughput.
 //!
-//! They cross over usefully: 1024 x MAX_BLOCK_SERIALIZED_SIZE far exceeds the byte
-//! cap, so BYTES binds for large blocks and CALLS binds for small ones. Worst case
-//! is ~10 s on a spinning disk (1024 seeks at ~150 IOPS + 256 MiB at ~100 MB/s),
-//! an order below the ~38 s compute budget, and negligible on an SSD.
+//! Each bounds the cost it is named for, and BYTES is the one that binds in practice.
+//! Reaching a full 2 GiB takes 2148 fetches at the 1,000,000-byte effective block size
+//! (MAX_BLOCK_WEIGHT / WITNESS_SCALE_FACTOR), so 4096 -- the next power of two above
+//! that -- leaves BYTES the active constraint and CALLS as slack against a pathological
+//! many-small-reads pattern. 2048 was considered and rejected: it binds at 2.048 GB,
+//! making CALLS the constraint on volume, so neither limit would bound what it names.
 //!
-//! NOTE: these caps deliberately do NOT permit folding the whole accessible window
-//! (MIN_SLOT_BLOCKS_ON_DISK = 32850 blocks) in one call -- that would be minutes of
-//! I/O per block on any budget worth having. The window is REACHABLE (any index),
-//! not traversable in a single verify(); a stateful algo must receive its history
-//! pre-folded (on-chain checkpoint epochs or node-held state), not re-derive it.
+//! Worst case ~4.3 s (2 GiB at the 500 MB/s SSD floor, doc sec 8.4) next to the ~38 s
+//! compute budget. The 4096 fetches themselves are under 0.1 s on an SSD, where a ~1 MB
+//! read is transfer- rather than seek-bound. An SSD is REQUIRED for that reason: on a
+//! spinning disk this budget is ~20 s of transfer plus up to ~27 s of seeks.
+//!
+//! BYTES mirrors the memory cap (doc sec 8.5) on the principle that you may read as much
+//! as you could have held. That is what makes a large-state algo possible: the llm.c LoRA
+//! chain's ~1.76 GB of weights can be carried neither by a block (~1 MB) nor re-derived
+//! inside verify() (folding every delta since genesis is O(history) in fetches and
+//! compute), but a checkpoint published across ~1760 blocks of one slot IS streamable
+//! here -- folded block by block and discarded as it goes. Nothing mandates streaming:
+//! an algo whose state exceeds linear memory must fold-and-discard, which already follows
+//! from sec 8.5, and one whose state fits may buffer.
+//!
+//! NOTE: these caps still do NOT permit folding the whole accessible window
+//! (MIN_SLOT_BLOCKS_ON_DISK = 32850 blocks) in one call -- 4096 fetches is an eighth of
+//! it, and reading it all would be ~32 GB. The window is REACHABLE (any index), not
+//! traversable in a single verify().
+//!
+//! Per verify() and therefore per BLOCK: io_calls and io_bytes live in the per-run
+//! ExecState, so one block's budget is never shared with another's and parallel
+//! validation cannot change a single block's verdict.
 //! CONSENSUS constants, fixed network-wide.
-static constexpr uint64_t GAS_IO_CALLS_LIMIT = 1024;
-static constexpr uint64_t GAS_IO_BYTES_LIMIT = 256ull * 1024 * 1024;
+static constexpr uint64_t GAS_IO_CALLS_LIMIT = 4096;
+static constexpr uint64_t GAS_IO_BYTES_LIMIT = 2048ull * 1024 * 1024; // 2 GiB
 
 //! Byte-factor for a bulk sub-kind: multiply the raw N size operand to get bytes.
 //! memory ops already count bytes; memory.grow counts 64 KiB pages; table ops

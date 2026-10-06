@@ -86,21 +86,21 @@ expect "cap too small still charged"  "$(field "$o" host_reads)" "1"
 o=$(./aot_harness chain_probe.aot 4 7 200 2>/dev/null)
 expect "bad pointer traps"            "$(field "$o" ok)" "0"
 
-echo "== I/O budgets (GAS_IO_CALLS=1024, GAS_IO_BYTES=256MiB) =="
+echo "== I/O budgets (GAS_IO_CALLS=4096, GAS_IO_BYTES=2GiB) =="
 # Small blocks: the call cap binds first. Charged before the lookup, so the budget is
 # exceeded at limit+1 while only `limit` blocks were actually read from disk.
 o=$(./aot_harness chain_probe.aot 5 7 200 2>/dev/null)
 expect "calls budget trips"           "$(field "$o" out_of_gas)" "1"
 expect "calls budget class id"        "$(field "$o" gas_class)" "18"
-expect "calls charged limit+1"        "$(field "$o" io_calls)" "1025"
-expect "only limit reads happened"    "$(field "$o" host_reads)" "1024"
+expect "calls charged limit+1"        "$(field "$o" io_calls)" "4097"
+expect "only limit reads happened"    "$(field "$o" host_reads)" "4096"
 
-# 1 MiB blocks: the byte cap binds first, well before 1024 calls.
+# 1 MiB blocks: the byte cap binds first, at ~2048 of the 4096 calls.
 o=$(./aot_harness chain_probe.aot 6 7 1048576 2>/dev/null)
 expect "bytes budget trips"           "$(field "$o" out_of_gas)" "1"
 expect "bytes budget class id"        "$(field "$o" gas_class)" "19"
-expect "bytes exceeded the cap"       "$([ "$(field "$o" io_bytes)" -gt 268435456 ] && echo yes)" "yes"
-expect "calls stayed under its cap"   "$([ "$(field "$o" io_calls)" -lt 1024 ] && echo yes)" "yes"
+expect "bytes exceeded the cap"       "$([ "$(field "$o" io_bytes)" -gt 2147483648 ] && echo yes)" "yes"
+expect "calls stayed under its cap"   "$([ "$(field "$o" io_calls)" -lt 4096 ] && echo yes)" "yes"
 
 echo "== unreadable slot block is a LOCAL fault, not invalidity =="
 # It must be distinguishable from out-of-gas so the node escalates (fatal error)
