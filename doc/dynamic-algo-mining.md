@@ -378,10 +378,17 @@ the window entirely and use only the current block's chunk (the nonce).
 The window is **reachable, not traversable in one call**: the per-call I/O budgets
 (§8.7) are far below 32850 blocks, because reading the whole window every block would
 be minutes of disk I/O. An algo whose state is the fold of all history (the llm.c
-LoRA chain is one) therefore cannot re-derive that state inside `verify()`; it must
-receive it pre-folded — via on-chain weight-state checkpoint epochs, or node-held
-state. That is a separate mechanism, still open, and the accessor ABI forecloses
-neither.
+LoRA chain is one) therefore cannot re-derive that state inside `verify()` — folding
+every delta since genesis is O(history) in both fetches and compute.
+
+What it CAN do, since the byte budget was raised to 2 GiB (§8.7), is **stream a
+checkpoint**: a ~1.76 GB weight state published across ~1760 blocks of one slot
+(~20 days) is readable in ~1760 fetches, folded block by block and discarded as it
+goes. So the state travels on-chain like everything else, rather than arriving from a
+local file the chain never committed to — which could not work, because consensus
+cannot depend on state two nodes might disagree about. What remains open is the
+checkpoint *mechanism* (how often, committed how, and how the deltas since the last
+one are folded); the accessor ABI and the budgets now permit it.
 
 ---
 
@@ -1323,6 +1330,14 @@ These target flags are consensus parameters.
   required; a serial node just syncs slower. Parallel verification is also where the
   process-global allocator ceiling would need scaling to N x 16 MiB (§8.5); serial
   verification (the 4 GB case) sidesteps that.
+- **Disk: an SSD, with >= ~500 MB/s sequential read.** The §8.7 I/O budget allows 2 GiB
+  of block reads per `verify()`, which is ~4.3 s at a SATA-SSD rate and ~1.1 s on NVMe —
+  next to ~38 s of compute, affordable. On a spinning disk the same budget is ~20 s of
+  transfer plus up to ~27 s of seeks, which would roughly double the worst case and is why
+  the floor is now explicit about storage. This is the cost of raising the byte budget from
+  256 MiB: it spends margin §8.6 had deliberately left, so the floor has to be stated
+  rather than assumed. Like bandwidth, it cannot be a consensus parameter and only informs
+  the limit choice.
 - **A below-floor node does not split the chain.** It still computes the *identical*
   validity result (gas counts + trap decision are deterministic) -- it is merely
   *slower*, and if too slow it lags block production, exactly like an under-provisioned
@@ -1523,17 +1538,41 @@ So two dedicated consensus budgets, per `verify()` call, bounding different thin
 
 | Budget | Limit | Bounds | Worst case |
 |---|---|---|---|
-| `GAS_IO_CALLS_LIMIT` | 1024 fetches | fixed per-fetch overhead (index walk, seek, deserialize) that even a tiny block pays — i.e. IOPS | ~7 s at ~150 IOPS (HDD); negligible on SSD |
-| `GAS_IO_BYTES_LIMIT` | 256 MiB | transfer volume | ~2.5 s at ~100 MB/s (HDD); ~0.5 s on SSD |
+| `GAS_IO_CALLS_LIMIT` | 4096 fetches | fixed per-fetch overhead (index walk, seek, deserialize) that even a tiny block pays — i.e. IOPS | negligible on SSD (<0.1 s); ~27 s at ~150 IOPS, which is why §8.4 requires an SSD |
+| `GAS_IO_BYTES_LIMIT` | 2 GiB | transfer volume | ~4.3 s at 500 MB/s (SATA SSD floor); ~1.1 s at 2 GB/s (NVMe) |
 
-They cross over usefully: 1024 × `MAX_BLOCK_SERIALIZED_SIZE` far exceeds the byte
-cap, so BYTES binds for large blocks and CALLS binds for small ones. Combined worst
-case ≈ 10 s of I/O next to ≈ 38 s of compute — same order, not dominating. Exceeding
-either traps exactly like a count-class overrun. The call is charged BEFORE the
-lookup, so an out-of-range probe is not free.
+Each bounds the cost it is named for, and BYTES is the one that binds in practice.
+Reaching a full 2 GiB takes 2148 fetches at the 1,000,000-byte effective block size
+(§2.4), so 4096 — the next power of two above that — leaves the byte cap as the active
+constraint with the call cap as slack against a pathological many-small-reads pattern.
+(2048 was considered and rejected: it binds at 2.048 GB, making CALLS the volume
+constraint and leaving neither limit bounding what it names.) Exceeding either traps
+exactly like a count-class overrun. The call is charged BEFORE the lookup, so an
+out-of-range probe is not free.
 
-These caps deliberately do **not** permit folding the whole 32850-block window in one
-call (see §2.5): that would be minutes of I/O per block on any budget worth having.
+**Why 2 GiB** (raised from 256 MiB, 2026-10-06). The ceiling now mirrors the memory cap
+(§8.5): *you may read as much as you could have held*. That is what makes a large-state
+algo possible at all. The llm.c LoRA chain's weights are ~1.76 GB, which no block can
+carry (~1 MB) and which cannot be re-derived inside `verify()` — folding every delta
+since genesis is O(history) in both fetches and compute. At 256 MiB the state could not
+even be streamed in from blocks that already hold it. At 2 GiB it can: a checkpoint
+published across ~1760 blocks of one slot (~20 days) is readable in ~1760 fetches.
+
+Nothing is *mandated* about how an algo uses this. An algo whose state exceeds linear
+memory has to fold-and-discard rather than buffer, but that follows from §8.5 and needs no
+separate rule; one whose state fits may buffer freely. Approval checks only that it fits
+within the caps (§8.6).
+
+The budgets remain **per `verify()` call**, hence per block: `io_calls` and `io_bytes` live
+in the per-run `ExecState`, so one block's budget is never shared with another's and
+parallel validation cannot change any single block's verdict. (The allocation ceiling of
+§8.5 was the one budget that got this wrong — a process-global counter, so concurrent runs
+shared it and a verdict could depend on what else the node was doing. Now `thread_local`,
+on the same footing as these.)
+
+These caps still do **not** permit folding the whole 32850-block window in one call (see
+§2.5): 4096 fetches is an eighth of it, and reading it all would be ~32 GB. What changed is
+that a state *checkpoint* is now streamable; the history as a whole is not.
 
 ABI notes:
 
@@ -1837,15 +1876,25 @@ make a node recompute. `chain_unavailable` is the sole exclusion.
   in-window block escalating to a fatal error rather than invalidating the block.
   Node side: `SlotBlockSource` (`dynamicalgo/wasmexec.h`) + `ChainSlotBlockSource`
   (`validation.cpp`).
-- **Stateful-algo history delivery (OPEN, and the successor to the ABI work).** The
-  I/O budgets make the slot window reachable but not traversable in one call (§2.5),
-  so an algo whose state is the fold of all history — the llm.c LoRA chain — cannot
-  re-derive it inside `verify()`. Options: on-chain weight-state checkpoint epochs
-  (`llm.c doc/btm-proof-of-useful-work.md`, "checkpoint epochs"), or node-held state
-  passed to `verify()` (that doc's "resident state in an embedded node"). The
-  resident-RAM variant costs ~1.76 GB per stateful slot, ~14 GB if all 8 slots run
-  one, so the disk-backed form (a memoization like `llmc/btmcache.h`, loaded per
-  call) is the one to pursue. The accessor ABI forecloses neither.
+- **Stateful-algo history delivery (OPEN, but narrowed).** An algo whose state is the
+  fold of all history — the llm.c LoRA chain, ~1.76 GB — cannot re-derive it inside
+  `verify()`: folding every delta since genesis is O(history) in both fetches and
+  compute.
+  *Settled (2026-10-06):* the state must travel ON-CHAIN, and the §8.7 byte budget was
+  raised to 2 GiB so it can. A checkpoint published across ~1760 blocks of one slot is
+  streamable in ~1760 fetches, folded and discarded as it goes. Node-held state loaded
+  from a local file is rejected outright — not for its ~1.76 GB cost but because
+  consensus cannot depend on state the chain never committed to: two nodes with
+  different files reach different verdicts, which is unfixable rather than merely
+  awkward.
+  *Still open:* the checkpoint mechanism itself — how often an epoch is published, how
+  its root is committed so a streamed read can be checked against it, and how the deltas
+  between checkpoints are folded within one `verify()`'s compute budget. Note the
+  alternative that may make checkpoints unnecessary: verification that is SUBLINEAR in
+  the state, spot-checking a seeded random subset rather than re-running the forward
+  pass. The seed for that already exists and is already unpredictable
+  (`Hash256(payout ‖ anchor)`), and it connects to the open data-availability item below
+  (inline merkle-branch proofs in the `OP_SOLUTION` stream).
 - **Solution pot (§4.5): SPECIFIED, NOT YET IMPLEMENTED.** This is now the blocker for
   the miner-side work: it changes what the coinbase may claim, so the template builder
   (phase 6.7b) cannot be written against the old rule. Needs:
