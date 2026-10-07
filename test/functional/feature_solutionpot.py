@@ -14,6 +14,8 @@ Covers what does NOT require an algo to be activated in a slot:
     as a free marker;
   * getblocktemplate offering `coinbasesignal`, and offering NO `coinbaserequired`
     while the slot is primitive-only -- i.e. mining such a slot is unchanged;
+  * that an ORDINARY transaction is still held to CLEANSTACK, i.e. that the covenant
+    carve-out in PolicyScriptChecks has not loosened script policy for all traffic;
   * as a side effect of the restart, that a node can still connect blocks after startup
     verification has run with the dynamic-algo fork active (VerifyDB must not disturb the
     activation store or the code DB).
@@ -30,8 +32,9 @@ from io import BytesIO
 
 from test_framework.blocktools import NORMAL_GBT_REQUEST_PARAMS
 from test_framework.messages import CBlock
+from test_framework.script import CScript, OP_1
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, assert_greater_than
+from test_framework.util import assert_equal, assert_greater_than, assert_raises_rpc_error
 from test_framework.wallet import MiniWallet, MiniWalletMode
 
 NUM_ALGOS = 8
@@ -84,13 +87,48 @@ class SolutionPotTest(BitcoinTestFramework):
                 self.generate(wallet, 1)
         node.setminingalgo(0)
 
+    def check_cleanstack_still_enforced(self, p2pk):
+        """An ordinary input must still be judged with CLEANSTACK.
+
+        PolicyScriptChecks drops SCRIPT_VERIFY_CLEANSTACK when any input spends a
+        covenant output (a solution pot or a reserve fee): those are bare scripts that
+        leave more than one item on the stack by construction, and their arity varies
+        with the spend path, so the rule cannot hold for them -- ParseCovenantScriptSig
+        pins their scriptSig in consensus instead. That carve-out is decided per
+        transaction, on every mempool acceptance, for all traffic; nothing else in the
+        suite checks that it declines to fire for an ordinary input, so check it here.
+
+        P2PK rather than the test's usual anyone-can-spend output, because the point is
+        a spend that is valid, standard and relayable until one junk push is PREPENDED
+        to its scriptSig -- which the legacy sighash does not cover, so the signature
+        still verifies and only CLEANSTACK stands between the mempool and a third party
+        malleating someone else's transaction.
+        """
+        node = self.nodes[0]
+        tx = p2pk.create_self_transfer()["tx"]
+        honest = tx.serialize().hex()
+
+        tx.vin[0].scriptSig = CScript(bytes(CScript([OP_1])) + bytes(tx.vin[0].scriptSig))
+        assert_raises_rpc_error(
+            -26,
+            "non-mandatory-script-verify-flag (Stack size must be exactly one after execution)",
+            node.sendrawtransaction, tx.serialize().hex())
+
+        # And the unmalleated spend does relay -- without this the assertion above would
+        # also pass if the transaction were broken for some unrelated reason.
+        node.sendrawtransaction(honest)
+
     # ---- the test ---------------------------------------------------------------
 
     def run_test(self):
         node = self.nodes[0]
         wallet = MiniWallet(node, mode=MiniWalletMode.ADDRESS_OP_TRUE)
+        # Funded here, at the bottom of the chain, so that its coinbase is past the
+        # 720-block maturity by the time check_cleanstack_still_enforced spends it.
+        p2pk = MiniWallet(node, mode=MiniWalletMode.RAW_P2PK)
 
         self.log.info("pre-fork: no readiness marker, since no slot can be activated yet")
+        self.generate(p2pk, 1)
         self.generate(wallet, 20)
         for h in range(1, node.getblockcount() + 1):
             assert not self.has_marker(h), f"marker in pre-fork block {h}"
@@ -148,6 +186,10 @@ class SolutionPotTest(BitcoinTestFramework):
         # Coverage now reflects the opted-out blocks.
         r = node.getalgoreadiness(3)
         assert_equal(r["slots"][0]["signalled"], 0)
+
+        self.log.info("the covenant CLEANSTACK carve-out does not reach ordinary inputs")
+        p2pk.rescan_utxos()
+        self.check_cleanstack_still_enforced(p2pk)
 
         self.log.info("solution-pot miner-side checks OK")
 

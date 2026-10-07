@@ -664,6 +664,9 @@ class DynamicAlgoTest(BitcoinTestFramework):
         # A claim is an ordinary relayable transaction -- that is what lets anyone build
         # one and whichever miner holds a solution collect it, so no node has to hunt for
         # pots. maxfeerate off because its fee IS the whole pot.
+        # Relaying it at all depends on the CLEANSTACK carve-out for covenant inputs; the
+        # other half of that, that ordinary inputs keep CLEANSTACK, is in
+        # feature_solutionpot.py (check_cleanstack_still_enforced).
         node.sendrawtransaction(claim["hex"], 0)
         assert raw_txid(claim["hex"]) in node.getrawmempool()
 
